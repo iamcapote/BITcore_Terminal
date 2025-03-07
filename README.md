@@ -1,0 +1,2 @@
+# MCP
+Testing Cursor MCP
