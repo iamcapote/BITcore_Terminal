@@ -1,4 +1,4 @@
-import { ResearchEngine } from '../../infrastructure/research/research-engine.mjs';
+import { ResearchEngine } from '../../infrastructure/research/research.engine.mjs';
 
 /**
  * Fetches research data based on a query

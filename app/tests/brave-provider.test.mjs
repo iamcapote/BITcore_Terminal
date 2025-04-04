@@ -1,4 +1,4 @@
-import { BraveSearchProvider } from '../app/infrastructure/search/providers.mjs';
+import { BraveSearchProvider } from '../infrastructure/search/search.providers.mjs';
 import assert from 'assert';
 
 describe('BraveSearchProvider', () => {

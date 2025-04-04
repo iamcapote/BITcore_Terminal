@@ -2,7 +2,8 @@ import { generateQueries, processResults, trimPrompt } from '../../features/ai/r
 import { output } from '../../utils/research.output-manager.mjs';
 import { suggestSearchProvider, SearchError } from '../../infrastructure/search/search.providers.mjs';
 import { cleanQuery } from '../../utils/research.clean-query.mjs';
-import { trimPrompt } from '../../infrastructure/ai/venice.models.mjs';
+// Fix: Import trimPrompt from venice.models.mjs instead of importing it twice
+import { trimPrompt as trimModelPrompt } from '../../infrastructure/ai/venice.models.mjs';
 
 /**
  * Handles a single research path, managing its progress and results
@@ -54,7 +55,7 @@ export class ResearchPath {
       const content = searchResults
         .map(item => item.content)
         .filter(Boolean)
-        .map(text => trimPrompt(text, 25000));
+        .map(text => trimModelPrompt(text, 25000));
 
       output.log(`[processQuery] Found ${content.length} content items for "${cleanedQuery}"`);
 
