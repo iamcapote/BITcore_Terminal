@@ -1,4 +1,4 @@
-import { generateQueries, processResults } from '../app/features/ai/providers.mjs';
+import { generateQueries, processResults } from '../features/ai/research.providers.mjs';
 import assert from 'assert';
 
 describe('AI Providers', () => {

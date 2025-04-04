@@ -1,4 +1,4 @@
-import { getResearchData } from '../features/research/controller.mjs';
+import { getResearchData } from '../features/research/research.controller.mjs';
 import assert from 'assert';
 
 describe('Research Data Tests', () => {

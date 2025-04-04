@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Research CLI</title>
+  <style>
+    body {
+      font-family: monospace;
+      margin: 0;
+      padding: 10px;
+      background-color: black;
+      color: white;
+    }
+    #output {
+      white-space: pre-wrap;
+      overflow-y: auto;
+      height: 90vh;
+      background-color: black;
+      color: white;
+      padding: 5px;
+      border: 1px solid #333;
+    }
+    #input-container {
+      display: flex;
+      align-items: center;
+      margin-top: 10px;
+    }
+    #prompt {
+      margin-right: 5px;
+      color: #0f0;
+    }
+    #input {
+      flex-grow: 1;
+      background-color: black;
+      color: white;
+      border: none;
+      outline: none;
+      font-family: monospace;
+    }
+    .loading {
+      color: #aaa;
+      font-style: italic;
+    }
+    .error {
+      color: #f00;
+    }
+    .success {
+      color: #0f0;
+    }
+    #status {
+      position: fixed;
+      top: 5px;
+      right: 10px;
+      font-size: 0.8em;
+      padding: 2px 5px;
+      border-radius: 3px;
+    }
+    .status-disconnected {
+      background-color: #f00;
+      color: white;
+    }
+    .status-connected {
+      background-color: #0f0;
+      color: black;
+    }
+    .status-connecting {
+      background-color: #ff0;
+      color: black;
+    }
+  </style>
+</head>
+<body>
+<div id="status" class="status-connecting">Connecting...</div>
+<pre id="output">Initializing Research CLI...</pre>
+<div id="input-container">
+  <span id="prompt">> </span>
+  <input id="input" type="text" autofocus />
+</div>
+
+<!-- Use relative paths to load the scripts -->
+<script src="./terminal.js"></script>
+<script src="./research.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    console.log("DOM loaded, initializing terminal...");
+    const statusEl = document.getElementById('status');
+    
+    try {
+      const terminal = new Terminal('#output', '#input');
+      
+      const research = new Research(terminal);
+      
+      // Update connection status visually
+      function updateConnectionStatus() {
+        if (research.isConnected()) {
+          statusEl.textContent = 'Connected';
+          statusEl.className = 'status-connected';
+        } else {
+          statusEl.textContent = research.ws ? 'Connecting...' : 'Disconnected';
+          statusEl.className = research.ws ? 'status-connecting' : 'status-disconnected';
+        }
+      }
+      
+      // Check connection status periodically
+      setInterval(updateConnectionStatus, 1000);
+      
+      terminal.onInput(input => {
+        research.start(input);
+      });
+      
+      terminal.init();
+    } catch (e) {
+      console.error("Error initializing application:", e);
+      document.querySelector('#output').textContent += "\nError initializing application: " + e.message;
+      statusEl.textContent = 'Error';
+      statusEl.className = 'status-disconnected';
+    }
+  });
+</script>
+</body>
+</html>

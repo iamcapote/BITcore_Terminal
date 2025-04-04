@@ -1,4 +1,4 @@
-import { output } from '../app/utils/output-manager.mjs';
+import { output } from '../utils/research.output-manager.mjs';
 import assert from 'assert';
 
 describe('OutputManager', () => {

@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import { VENICE_MODELS, isValidModel } from './models.mjs';
+import { VENICE_MODELS, isValidModel } from './venice.models.mjs';
 
 export class LLMError extends Error {
   constructor(code, message, originalError) {
@@ -62,24 +62,46 @@ export class LLMClient {
   }
 
   async complete({ system, prompt, temperature = 0.7, maxTokens = 1000 }) {
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.config.model,
-        messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-        temperature,
-        max_tokens: maxTokens,
-      }),
-    });
+    const retryConfig = this.config.retry || defaultRetryConfig;
+    let attempt = 0;
 
-    if (!response.ok) {
-      throw new Error(`API error: ${response.statusText}`);
+    while (attempt < retryConfig.maxAttempts) {
+      try {
+        const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.config.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+            temperature,
+            max_tokens: maxTokens,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        if (!data.choices?.[0]?.message?.content) {
+          throw new LLMError('InvalidResponse', 'Invalid response format from Venice API', data);
+        }
+
+        return {
+          content: data.choices[0].message.content,
+          model: this.config.model,
+          timestamp: new Date().toISOString(),
+        };
+      } catch (error) {
+        if (attempt === retryConfig.maxAttempts - 1) {
+          throw new LLMError('MaxRetriesExceeded', `Failed after ${retryConfig.maxAttempts} attempts`, error);
+        }
+        attempt++;
+        await sleep(retryConfig.initialDelay * Math.pow(2, attempt));
+      }
     }
-
-    return await response.json();
   }
 }

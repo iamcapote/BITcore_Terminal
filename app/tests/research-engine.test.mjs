@@ -1,4 +1,4 @@
-import { ResearchEngine } from '../app/infrastructure/research/research-engine.mjs';
+import { ResearchEngine } from '../infrastructure/research/research-engine.mjs';
 import assert from 'assert';
 
 describe('ResearchEngine', () => {
