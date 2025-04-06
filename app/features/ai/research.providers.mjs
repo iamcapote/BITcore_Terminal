@@ -77,16 +77,23 @@ export async function generateOutput({ type, system, prompt, temperature = 0.7, 
   }
 }
 
-export async function generateQueries({ query, numQueries = 3, learnings = [] }) {
+// Update the generateQueries function to properly use the metadata
+export async function generateQueries({ query, numQueries = 3, learnings = [], metadata = null }) {
   if (!query || typeof query !== 'string' || !query.trim()) {
     throw new Error('Invalid query: must be a non-empty string.');
   }
 
-  const prompt = queryExpansionTemplate(query, learnings);
+  // Create an enriched prompt that includes metadata if available
+  let enrichedPrompt = queryExpansionTemplate(query, learnings);
+  if (metadata) {
+    // Better integration of token classification metadata into the prompt
+    enrichedPrompt = `${enrichedPrompt}\n\nAdditional context from query analysis:\n${metadata}\n\nPlease use this additional context to generate more precise and targeted questions that would better explore the subject, even if the original query is unclear or incomplete.`;
+  }
+
   const result = await generateOutput({
     type: 'query',
     system: systemPrompt(),
-    prompt,
+    prompt: enrichedPrompt,
     temperature: 0.7,
     maxTokens: 1000
   });
@@ -99,6 +106,7 @@ export async function generateQueries({ query, numQueries = 3, learnings = [] })
     }));
   }
 
+  // Fallback with a basic query
   return [
     {
       query: `What are the key aspects of ${query}?`,
@@ -107,35 +115,27 @@ export async function generateQueries({ query, numQueries = 3, learnings = [] })
   ];
 }
 
-export async function processResults({ query, content, numLearnings = 3, numFollowUpQuestions = 3 }) {
+// Also update processResults to use metadata
+export async function processResults({ query, content, numLearnings = 3, numFollowUpQuestions = 3, metadata = null }) {
   if (!Array.isArray(content) || content.length === 0) {
     throw new Error('Invalid content: must be a non-empty array of strings.');
   }
 
-  const prompt = `Analyze the following content about "${query}":
-
-Content:
-${content.map(txt => `---\n${txt}\n---`).join('\n')}
-
-Extract:
-1. Key Learnings (at least ${numLearnings}):
-   - Focus on specific facts, data points
-2. Follow-up Questions (at least ${numFollowUpQuestions}):
-   - Must start with What, How, Why, When, Where, or Which
-
-Format as:
-Key Learnings:
-1. ...
-2. ...
-Follow-up Questions:
-1. ...
-2. ...
-`;
+  // Build a prompt that better incorporates metadata if available
+  let analysisPrompt = `Analyze the following content about "${query}":\n\n`;
+  
+  // More effective use of metadata to guide analysis
+  if (metadata) {
+    analysisPrompt += `Context from query analysis:\n${metadata}\n\nUse this context to better interpret the query "${query}" and extract the most relevant information from the content below, even if the original query seems unclear.\n\n`;
+  }
+  
+  analysisPrompt += `Content:\n${content.map(txt => `---\n${txt}\n---`).join('\n')}\n\n`;
+  analysisPrompt += `Extract:\n1. Key Learnings (at least ${numLearnings}):\n   - Focus on specific facts, data points\n2. Follow-up Questions (at least ${numFollowUpQuestions}):\n   - Must start with What, How, Why, When, Where, or Which\n\nFormat as:\nKey Learnings:\n1. ...\n2. ...\nFollow-up Questions:\n1. ...\n2. ...`;
 
   const result = await generateOutput({
     type: 'learning',
     system: systemPrompt(),
-    prompt,
+    prompt: analysisPrompt,
     temperature: 0.5
   });
 
@@ -149,15 +149,16 @@ Follow-up Questions:
   throw new Error(`Failed to process: ${result.error}`);
 }
 
-export async function generateSummary({ query, learnings = [] }) {
-  const prompt = `Write a comprehensive narrative summary about "${query}" based on:
-${learnings.map((l, i) => `${i + 1}. ${l}`).join('\n')}
-
-Include:
-1. Clear structure
-2. Logical organization
-3. Technical accuracy
-`;
+// Update generateSummary to leverage metadata too
+export async function generateSummary({ query, learnings = [], metadata = null }) {
+  let prompt = `Write a comprehensive narrative summary about "${query}" based on:\n`;
+  
+  if (metadata) {
+    prompt += `Context from query analysis:\n${metadata}\n\n`;
+  }
+  
+  prompt += `${learnings.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\n`;
+  prompt += `Include:\n1. Clear structure\n2. Logical organization\n3. Technical accuracy\n`;
 
   const result = await generateOutput({
     type: 'report',

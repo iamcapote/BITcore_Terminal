@@ -2,7 +2,8 @@ import { output } from '../../utils/research.output-manager.mjs';
 import { ResearchPath } from './research.path.mjs';
 import fs from 'fs/promises';
 import path from 'path';
-import { generateSummary } from '../../features/ai/research.providers.mjs'; // Import summarization logic
+import { generateSummary } from '../../features/ai/research.providers.mjs';
+import { ensureDir } from '../../utils/research.ensure-dir.mjs';
 
 /**
  * Main research engine that coordinates research paths
@@ -29,18 +30,25 @@ export class ResearchEngine {
       const result = await path.research();
 
       const summary = await generateSummary({
-        query: this.config.query,
+        query: this.config.query.original || this.config.query,
         learnings: result.learnings,
+        // Ensure metadata is passed to summary generation
+        metadata: this.config.query.metadata || null
       });
 
       // Save results after research
-      await this.saveResults(this.config.query, result.learnings, result.sources, summary);
+      const filename = await this.saveResults(
+        this.config.query.original || this.config.query,
+        result.learnings,
+        result.sources,
+        summary
+      );
 
-      return result;
+      return { ...result, filename };
     } catch (error) {
       output.log(`[research] Error during research: ${error.message || error}`);
       return {
-        learnings: [`Research attempted on: ${this.config.query}`],
+        learnings: [`Research attempted on: ${this.config.query.original || this.config.query}`],
         sources: [],
       };
     }
@@ -48,27 +56,29 @@ export class ResearchEngine {
 
   async saveResults(query, learnings, sources, summary = 'No summary available.') {
     try {
+      await ensureDir('research');
+
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const subject = query.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase().substring(0, 30);
       const filename = path.join('research', `research-${subject}-${timestamp}.md`);
 
-      const report = [
+      // Generate a properly structured markdown document with all sections
+      const markdown = [
         '# Research Results',
-        '----------------',
-        `## Query: ${query}`,
+        '---',
+        `## Query\n\n${query}`,
         '',
-        '## Summary',
-        summary || 'No summary available.',
+        `## Summary\n\n${summary}`,
         '',
-        '## Key Learnings',
-        ...learnings.map((l, i) => `${i + 1}. ${l}`),
+        `## Key Learnings\n`,
+        // Use bullet points for learnings to prevent duplicate numbers
+        ...learnings.map(l => `- ${l}`),
         '',
-        '## Sources',
+        `## References\n`,
         ...sources.map(s => `- ${s}`),
       ].join('\n');
 
-      await fs.mkdir('research', { recursive: true });
-      await fs.writeFile(filename, report);
+      await fs.writeFile(filename, markdown);
       output.log(`[saveResults] Results saved to ${filename}`);
       return filename;
     } catch (error) {

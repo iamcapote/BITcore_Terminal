@@ -7,6 +7,18 @@ export class OutputManager {
       this.spinnerIndex = (this.spinnerIndex + 1) % this.spinnerStates.length;
     }, 80);
     this.lastProgressMessage = '';
+    this.logHandler = console.log; // Default log handler
+    this.errorHandler = console.error; // Default error handler
+  }
+
+  // Allow dynamic replacement of log and error handlers
+  use({ log, error }) {
+    if (typeof log === 'function') {
+      this.logHandler = log;
+    }
+    if (typeof error === 'function') {
+      this.errorHandler = error;
+    }
   }
 
   // Broadcast logs over all connected websockets
@@ -42,8 +54,14 @@ export class OutputManager {
 
   log(...args) {
     const message = args.map(String).join(' ');
-    console.log(message);
+    this.logHandler(message);
     this.broadcastLog(message, 'output');
+  }
+
+  error(...args) {
+    const message = args.map(String).join(' ');
+    this.errorHandler(message);
+    this.broadcastLog(message, 'error');
   }
 
   updateProgress(progress) {

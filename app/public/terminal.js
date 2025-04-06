@@ -4,9 +4,12 @@ class Terminal {
     this.input = document.querySelector(inputSelector);
     this.prompt = document.querySelector('#prompt');
     this.currentPrompt = "> ";
+    this.inputEnabled = true;
     
     this.input.addEventListener('keydown', (evt) => {
       if (evt.key === 'Enter') {
+        if (!this.inputEnabled) return;
+        
         const val = this.input.value;
         this.input.value = '';
         // Display both prompt and input
@@ -17,6 +20,15 @@ class Terminal {
       }
     });
     
+    this.progressBar = document.createElement('div');
+    this.progressBar.className = 'progress-bar';
+    this.progressBar.innerHTML = `
+      <div class="progress-fill"></div>
+      <div class="progress-text">Initializing...</div>
+    `;
+    this.progressBar.style.display = 'none';
+    document.body.insertBefore(this.progressBar, document.getElementById('input-container'));
+
     console.log("Terminal initialized");
   }
 
@@ -55,14 +67,36 @@ class Terminal {
     this.input.focus();
   }
 
+  enableInput() {
+    this.inputEnabled = true;
+    this.input.disabled = false;
+    this.input.focus();
+  }
+
+  disableInput() {
+    this.inputEnabled = false;
+    this.input.disabled = true;
+  }
+
   onInput(fn) {
     this.inputCallback = fn;
+  }
+
+  showProgressBar() {
+    this.progressBar.style.display = 'block';
+    document.getElementById('input-container').style.display = 'none';
+  }
+
+  hideProgressBar() {
+    this.progressBar.style.display = 'none';
+    document.getElementById('input-container').style.display = 'flex';
   }
 
   init() {
     this.clear();
     this.appendOutput("Research CLI Terminal");
     this.appendOutput("---------------------");
+    this.appendOutput("Type /research to start a research session");
     this.appendOutput("Initializing connection...");
   }
 

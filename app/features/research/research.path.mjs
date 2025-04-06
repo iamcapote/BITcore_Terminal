@@ -81,6 +81,8 @@ export class ResearchPath {
         query: cleanedQuery,
         content,
         numFollowUpQuestions: newBreadth,
+        // Add metadata to processResults call
+        metadata: this.config.query.metadata || null
       });
 
       output.log(`[processQuery] Found ${results.learnings.length} learnings, ${results.followUpQuestions.length} questions.`);
@@ -135,8 +137,31 @@ export class ResearchPath {
 
   async research() {
     const { query, breadth, depth } = this.config;
-    output.log(`[research] Generating queries for: "${query}" (breadth=${breadth})`);
-    const queries = await generateQueries({ query, numQueries: breadth });
+
+    // Ensure we always end up with a valid string query
+    let processedQuery;
+    if (typeof query === 'string') {
+      processedQuery = query.trim();
+    } else if (
+      query &&
+      typeof query === 'object' &&
+      typeof query.original === 'string'
+    ) {
+      processedQuery = query.original.trim();
+    } else {
+      throw new Error(
+        'Invalid query: must be a string or an object with a non-empty "original" property.'
+      );
+    }
+
+    // Now processedQuery is guaranteed to be a string
+    output.log(`[research] Generating queries for: "${processedQuery}" (breadth=${breadth})`);
+    const queries = await generateQueries({ 
+      query: processedQuery, 
+      numQueries: breadth,
+      // If we have metadata, pass it to the query generator
+      metadata: typeof query === 'object' ? query.metadata : null 
+    });
 
     this.updateProgress({ currentQuery: queries[0]?.query });
 
@@ -158,10 +183,8 @@ export class ResearchPath {
       }
     }
 
-    // Combine and deduplicate results
-    return {
-      learnings: [...new Set(results.flatMap(r => r.learnings))],
-      sources: [...new Set(results.flatMap(r => r.sources))],
-    };
+    const finalLearnings = [...new Set(results.flatMap(r => r.learnings))];
+    const finalSources = [...new Set(results.flatMap(r => r.sources))];
+    return { learnings: finalLearnings, sources: finalSources };
   }
 }

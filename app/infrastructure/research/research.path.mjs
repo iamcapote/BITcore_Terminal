@@ -37,37 +37,35 @@ export class ResearchPath {
   async processQuery(query, depth, breadth, learnings = [], sources = []) {
     output.log(`[processQuery] Depth=${depth}, Breadth=${breadth}, Query="${query}"`);
     try {
-      // Just remove numbering, but preserve the rest of the query
-      const cleanedQuery = query.replace(/^\d+\.\s*/, '').trim();
-      const searchResults = await this.search(cleanedQuery);
+      const searchResults = await this.search(query);
 
       if (!searchResults || searchResults.length === 0) {
-        output.log(`[processQuery] No results found for "${cleanedQuery}".`);
+        output.log(`[processQuery] No results found for "${query}".`);
         return { learnings: [`No search results found for: ${query}`], sources: [] };
       }
 
       const content = searchResults
         .map(item => item.content)
         .filter(Boolean)
-        .map(text => trimPrompt(text, 25000)); // Trim large text for LLM
+        .map(text => trimPrompt(text, 25000));
 
       if (content.length === 0) {
-        output.log(`[processQuery] No meaningful content for "${cleanedQuery}".`);
+        output.log(`[processQuery] No meaningful content for "${query}".`);
         return { learnings: [`No meaningful content found for: ${query}`], sources: searchResults.map(item => item.source).filter(Boolean) };
       }
 
       const results = await processResults({
-        query: cleanedQuery,
+        query,
         content,
         numFollowUpQuestions: Math.ceil(breadth / 2),
+        metadata: this.config.query.metadata || null,
       });
-      output.log(`[processQuery] Found ${results.learnings.length} learnings, ${results.followUpQuestions.length} questions.`);
 
       const allLearnings = [...learnings, ...results.learnings];
       const allSources = [...sources, ...searchResults.map(item => item.source).filter(Boolean)];
 
       if (depth > 1 && results.followUpQuestions?.length) {
-        const nextQuery = results.followUpQuestions[0] || `Tell me more about ${cleanedQuery}`;
+        const nextQuery = results.followUpQuestions[0] || `Tell me more about ${query}`;
         const deeperResults = await this.processQuery(
           nextQuery,
           depth - 1,
@@ -82,40 +80,28 @@ export class ResearchPath {
       return { learnings: allLearnings, sources: allSources };
     } catch (error) {
       if (error instanceof SearchError && error.code === 'RATE_LIMIT') {
-        throw error; // Propagate rate-limit errors for retry handling
+        throw error;
       }
       output.log(`[processQuery] Error: ${error.message || error}`);
       return { learnings: [`Error researching: ${query}`], sources: [] };
     }
   }
 
-  updateProgress(update) {
-    Object.assign(this.progress, update);
-    this.config.onProgress?.(this.progress);
-  }
-
   async research() {
     const { query, breadth, depth } = this.config;
-    output.log(`[research] Generating queries for: "${query}" (breadth=${breadth})`);
-    const queries = await generateQueries({ query, numQueries: breadth });
+    const processedQuery = `${query.original.trim()} ${query.metadata || ''}`.trim();
 
-    this.updateProgress({ currentQuery: queries[0]?.query });
+    output.log(`[research] Generating queries for: "${processedQuery}" (breadth=${breadth})`);
+    const queries = await generateQueries({
+      query: processedQuery,
+      numQueries: breadth,
+      metadata: query.metadata || null,
+    });
 
     const results = [];
     for (const serpQuery of queries) {
-      output.log(`[research] Processing top-level query: "${serpQuery.query}"`);
       const result = await this.processQuery(serpQuery.query, depth, breadth);
-
-      this.updateProgress({
-        completedQueries: (this.progress.completedQueries || 0) + 1,
-        currentQuery: serpQuery.query,
-      });
-
       results.push(result);
-
-      if (queries.indexOf(serpQuery) < queries.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 5000));
-      }
     }
 
     const finalLearnings = [...new Set(results.flatMap(r => r.learnings))];

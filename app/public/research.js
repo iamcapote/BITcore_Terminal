@@ -6,106 +6,88 @@ class Research {
     this.connectionAttempts = 0;
     this.maxConnectionAttempts = 3;
     this.reconnectDelay = 1000;
+    this.pendingPromptResolve = null;
+    this.awaitingResponse = false;
     this.connectToServer();
   }
 
   connectToServer() {
     try {
-      // Clear previous connection if exists
       if (this.ws) {
-        this.ws.onclose = null; // Prevent the old onclose from triggering
+        this.ws.onclose = null;
         this.ws.close();
       }
 
       this.connectionAttempts++;
-      
-      // Get the correct protocol (wss for https, ws for http)
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsURL = `${protocol}//${window.location.host}`;
-      
+
       this.terminal.appendOutput(`Connecting to server (attempt ${this.connectionAttempts})...`);
-      console.log(`Connecting to WebSocket server at ${wsURL}`);
-      
       this.ws = new WebSocket(wsURL);
-      
+
       this.ws.onopen = () => {
-        console.log("WebSocket connection established");
-        this.terminal.appendOutput("Connected to research server!");
-        this.connectionAttempts = 0; // Reset connection attempts on success
+        this.terminal.appendOutput('Connected to research server!');
+        this.connectionAttempts = 0;
       };
-      
-      this.ws.onmessage = (event) => {
-        console.log("Received message:", event.data);
-        try {
-          const { type, data } = JSON.parse(event.data);
-          
-          switch(type) {
-            case 'prompt':
-              this.terminal.setPrompt(data);
-              break;
-              
-            case 'output':
-              this.terminal.appendOutput(data);
-              break;
-              
-            case 'log':
-              this.terminal.appendOutput(data);
-              break;
-              
-            case 'progress':
-              if (data.message) {
-                this.terminal.updateLastLine(data.message);
-              } else if (data.completedQueries !== undefined && data.totalQueries !== undefined) {
-                const percent = Math.round((data.completedQueries / data.totalQueries) * 100);
-                const barBlocks = Math.floor(percent / 5);
-                const bar = `[${'█'.repeat(barBlocks)}${'░'.repeat(20 - barBlocks)}]`;
-                this.terminal.updateLastLine(`Progress: ${bar} ${percent}%`);
-              }
-              break;
-              
-            case 'error':
-              this.terminal.appendOutput(`Error: ${data}`);
-              this.running = false;
-              break;
-              
-            default:
-              console.warn("Unknown message type:", type);
-              break;
-          }
-        } catch (e) {
-          console.error("Error processing message:", e, event.data);
-          this.terminal.appendOutput(`Error processing server message: ${e.message}`);
-        }
-      };
-      
-      this.ws.onerror = (error) => {
-        console.error("WebSocket error:", error);
-        this.terminal.appendOutput('Connection error. Attempting to reconnect...');
-        this.running = false;
-      };
-      
-      this.ws.onclose = (event) => {
-        console.log("WebSocket connection closed", event.code, event.reason);
-        this.running = false;
-        
-        if (this.connectionAttempts < this.maxConnectionAttempts) {
-          this.terminal.appendOutput(`Connection lost. Reconnecting in ${this.reconnectDelay/1000}s...`);
-          setTimeout(() => this.connectToServer(), this.reconnectDelay);
-          this.reconnectDelay *= 2; // Exponential backoff
+
+      this.ws.onclose = () => {
+        const reconnectDelay = Math.pow(2, this.connectionAttempts - 1);
+        if (this.connectionAttempts <= this.maxConnectionAttempts) {
+          this.terminal.appendOutput(`Connection lost. Reconnecting in ${reconnectDelay}s...`);
+          setTimeout(() => this.connectToServer(), reconnectDelay * 1000);
         } else {
           this.terminal.appendOutput('Cannot connect to server after multiple attempts. Please refresh the page.');
         }
       };
+
+      this.ws.onerror = () => {
+        this.terminal.appendOutput('Connection error. Attempting to reconnect...');
+      };
+
+      // Add a message handler for all incoming WebSocket messages
+      this.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'output') {
+            this.terminal.appendOutput(data.data);
+          } else if (data.type === 'prompt') {
+            // Instead of just setting the prompt, we need to ask for input
+            this.terminal.setPrompt(data.data);
+            this.awaitingResponse = true;
+            
+            // If we have a pending promise resolver, don't create a new one
+            if (!this.pendingPromptResolve) {
+              this.terminal.enableInput();
+            }
+          } else if (data.type === 'classification_result') {
+            this.terminal.appendOutput('Token classification completed.');
+            this.terminal.appendOutput(`Token classification result: ${data.metadata}`);
+            this.terminal.appendOutput('Using token classification to enhance research quality...');
+          } else if (data.type === 'progress') {
+            if (typeof data.data === 'object' && data.data.message) {
+              this.terminal.updateLastLine(data.data.message);
+            } else {
+              this.terminal.updateLastLine(`Progress: ${data.data}`);
+            }
+          } else if (data.type === 'research_start') {
+            this.running = true;
+            this.terminal.appendOutput('Starting research session...');
+            this.terminal.disableInput();
+            this.terminal.showProgressBar();
+          } else if (data.type === 'research_complete') {
+            this.running = false;
+            this.terminal.appendOutput('Research complete!');
+            this.terminal.enableInput();
+            this.terminal.hideProgressBar();
+            this.terminal.setPrompt('> ');
+          }
+        } catch (error) {
+          this.terminal.appendOutput(`Error processing message: ${error.message}`);
+        }
+      };
     } catch (e) {
-      console.error("Error setting up WebSocket:", e);
       this.terminal.appendOutput(`Connection error: ${e.message}. Retrying...`);
-      
-      if (this.connectionAttempts < this.maxConnectionAttempts) {
-        setTimeout(() => this.connectToServer(), this.reconnectDelay);
-        this.reconnectDelay *= 2;
-      } else {
-        this.terminal.appendOutput('Failed to connect after multiple attempts. Please check your network or refresh the page.');
-      }
     }
   }
 
@@ -117,28 +99,41 @@ class Research {
     return this.ws && this.ws.readyState === WebSocket.OPEN;
   }
 
-  start(userInput) {
+  async start(userInput) {
     if (!this.isConnected()) {
       this.terminal.appendOutput('Not connected to server. Attempting to reconnect...');
       this.connectToServer();
-      // Store the input to send after connection
-      this.pendingInput = userInput;
       return;
     }
-    
-    // Set running state based on the current step
-    if (userInput.trim()) {
-      this.running = true;
+
+    if (this.running && !this.awaitingResponse) {
+      this.terminal.appendOutput('Research is in progress. Please wait until it completes.');
+      return;
     }
-    
-    try {
-      console.log("Sending input:", userInput);
+
+    if (this.awaitingResponse) {
+      // This is a response to a prompt from the server
+      this.awaitingResponse = false;
       this.ws.send(JSON.stringify({ input: userInput }));
-    } catch (e) {
-      console.error("Error sending message:", e);
-      this.terminal.appendOutput(`Error sending message: ${e.message}`);
-      this.running = false;
-      this.connectToServer(); // Try to reconnect
+      return;
     }
+
+    if (!userInput.trim()) {
+      this.terminal.appendOutput('Command cannot be empty.');
+      return;
+    }
+
+    // Handle commands
+    if (userInput.trim() === '/research') {
+      // This is a command, not a query
+      this.ws.send(JSON.stringify({ input: '/research' }));
+    } else {
+      this.terminal.appendOutput('Unknown command. Use /research');
+    }
+  }
+
+  handleClassificationResult(metadata) {
+    this.terminal.appendOutput('Token classification completed.');
+    this.terminal.appendOutput(`Classification metadata: ${metadata}`);
   }
 }

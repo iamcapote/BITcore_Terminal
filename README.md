@@ -56,55 +56,44 @@ app/
 
 ---
 
-## Features
+## Features and Technical Notes
 
-### 1. Dual-Mode Application
-The application can run in two different modes:
-- **Server Mode**: Web interface with API and WebSocket support.
-- **CLI Mode**: Interactive command-line interface.
+1. **Dual-Mode Application**  
+   - The application runs in Server Mode or CLI Mode.
 
-### 2. Server Mode
-The app includes an Express server that provides:
-- **REST API**: For programmatic access to research functionality.
-  - **Endpoint**: `/api/research`
-  - **Method**: `POST`
-  - **Request Body**:
-    ```json
-    {
-      "query": "Your research query",
-      "depth": 2,
-      "breadth": 3
-    }
-    ```
-- **WebSocket Interface**: For real-time updates during research.
-- **Web-Based Terminal**: Interactive browser-based research interface.
+2. **Server Mode**  
+   - Express server with REST API endpoints (`/api/research`) supporting POST requests for research functionality.
+   - WebSocket interface for real-time updates.
+   - Browser-based research interface.
 
-### 3. CLI Interface
-The app provides an interactive command-line interface:
-- **Activation**: Pass any argument when launching the app (e.g., `node app/start.mjs cli`).
-- **Interactive Prompts**:
-  - Research query input.
-  - Research breadth selection (2-10).
-  - Research depth selection (1-5).
-- **Real-Time Progress**: Visual progress bar during research.
-- **Results Display**: Formatted output with learnings and sources.
-- **Automatic Saving**: Research results saved as markdown files.
+3. **CLI Interface**  
+   - Launch with `node app/start.mjs cli`.
+   - Interactive prompts for query, breadth, depth, and real-time progress display.
+   - Research results saved as markdown files.
 
-### 4. Research Engine
-The core functionality that powers both interfaces:
-- **Multi-Depth Research**: Follows information paths to specified depth.
-- **Breadth Control**: Explores multiple avenues based on breadth setting.
-- **AI-Powered Analysis**: Uses LLM to generate queries and analyze content.
-- **Privacy-Focused Search**: Uses Brave Search API for web queries.
-- **Rate Limiting**: Respects API rate limits with automatic backoff.
-- **Summarization**: Generates comprehensive summaries of findings.
+4. **Research Engine**  
+   - Multi-depth exploration of search paths.
+   - Breadth-based generation of multiple queries.
+   - LLM-driven analysis and summarization of content from Brave Search API.
+   - Rate limiting with automatic backoff.
 
-### 5. Web-Based Terminal Interface
-User-friendly browser interface with:
-- **Terminal Emulation**: Similar experience to CLI.
-- **WebSocket Communication**: Real-time updates.
-- **Visual Connection Status**: Shows connection state.
-- **Progress Visualization**: Displays research progress.
+5. **Web-Based Terminal Interface**  
+   - Terminal-style display for running interactive research in a browser.
+   - Live progress updates via WebSockets.
+
+6. **Token Classification Module**  
+   - Analyzes user queries to extract metadata using the Venice API.
+   - Optional prompt for enabling classification.
+   - Merges classification data with the original query for enhanced research.
+
+7. **Connection Handling**  
+   - WebSocket reconnection attempts use exponential backoff with clear failure messages.
+
+8. **Technical File References**  
+   - `app/infrastructure/ai/venice.llm-client.mjs` implements robust LLM request retries on connection resets, timeouts, or server errors.  
+   - `app/commands/research.cli.mjs` contains CLI-based commands for running research and saving results.  
+   - `app/filetree.mjs` auto-generates the folder/file tree and saves it to `app/current_app_folder_file_tree.md`.  
+   - `app/utils/token-classifier.mjs` uses the Venice API to enrich user queries with metadata.
 
 ---
 
