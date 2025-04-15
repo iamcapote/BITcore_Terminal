@@ -1,5 +1,6 @@
 import { LLMClient } from '../../infrastructure/ai/venice.llm-client.mjs';
 import { systemPrompt, queryExpansionTemplate } from '../../utils/research.prompt.mjs';
+import { VENICE_CHARACTERS } from '../../infrastructure/ai/venice.characters.mjs';
 
 function processQueryResponse(rawText) {
   const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
@@ -77,17 +78,26 @@ export async function generateOutput({ type, system, prompt, temperature = 0.7, 
   }
 }
 
-// Update the generateQueries function to properly use the metadata
+// Simplified generateQueries function that focuses on basic queries without complex operators
 export async function generateQueries({ query, numQueries = 3, learnings = [], metadata = null }) {
   if (!query || typeof query !== 'string' || !query.trim()) {
     throw new Error('Invalid query: must be a non-empty string.');
   }
 
-  // Create an enriched prompt that includes metadata if available
+  // Create a simplified prompt that focuses on basic, effective queries without search operators
   let enrichedPrompt = queryExpansionTemplate(query, learnings);
+  
+  // Simple instructions for basic, effective queries
+  enrichedPrompt += `\n\nGenerate ${numQueries} simple, clear search queries about this topic.
+  Focus on straightforward questions that will yield relevant results.
+  DO NOT use any special search operators or syntax.
+  Each query should be a simple phrase or question.`;
+
   if (metadata) {
-    // Better integration of token classification metadata into the prompt
-    enrichedPrompt = `${enrichedPrompt}\n\nAdditional context from query analysis:\n${metadata}\n\nPlease use this additional context to generate more precise and targeted questions that would better explore the subject, even if the original query is unclear or incomplete.`;
+    // Include metadata but keep instructions very simple
+    enrichedPrompt = `${enrichedPrompt}\n\nAdditional context from query analysis:\n${metadata}\n\n
+    Based on this context and the query "${query}", generate simple search queries that a person would naturally type.
+    Keep queries plain, clear, and focused on the core concepts.`;
   }
 
   const result = await generateOutput({
@@ -106,11 +116,19 @@ export async function generateQueries({ query, numQueries = 3, learnings = [], m
     }));
   }
 
-  // Fallback with a basic query
+  // Very basic fallback queries with no operators
   return [
     {
-      query: `What are the key aspects of ${query}?`,
-      researchGoal: `Research and analyze: ${query}`
+      query: `${query}`,
+      researchGoal: `Research basic information about: ${query}`
+    },
+    {
+      query: `${query} definition`,
+      researchGoal: `Research definitions related to: ${query}`
+    },
+    {
+      query: `${query} examples`,
+      researchGoal: `Research examples of: ${query}`
     }
   ];
 }
@@ -127,6 +145,7 @@ export async function processResults({ query, content, numLearnings = 3, numFoll
   // More effective use of metadata to guide analysis
   if (metadata) {
     analysisPrompt += `Context from query analysis:\n${metadata}\n\nUse this context to better interpret the query "${query}" and extract the most relevant information from the content below, even if the original query seems unclear.\n\n`;
+    analysisPrompt += `Character context: archon-01v\n\n`;
   }
   
   analysisPrompt += `Content:\n${content.map(txt => `---\n${txt}\n---`).join('\n')}\n\n`;

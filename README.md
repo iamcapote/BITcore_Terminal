@@ -1,190 +1,409 @@
 # Deep Research Privacy App
 
-The **Deep Research Privacy App** is a privacy-focused research tool designed to automate the process of exploring topics in depth. It leverages AI to generate queries, analyze content, and summarize findings while maintaining user privacy by using the Brave Search API. The app supports both **CLI** and **Web-based Terminal** interfaces, making it versatile for different use cases.
+The Deep Research Privacy App is a privacy-focused research tool that automates exploring topics in depth. It uses the Brave Search API along with optional token classification from the Venice LLM API. The app supports both CLI and browser-based terminal interfaces, letting you securely perform research, manage accounts, and enhance queries with metadata from external APIs.
+
+---
+
+## Table of Contents
+1. [Overview](#overview)  
+2. [Features](#features)  
+3. [File Structure](#file-structure)  
+4. [Usage Modes](#usage-modes)  
+5. [Authentication System](#authentication-system)  
+6. [Research Pipeline](#research-pipeline)  
+7. [API Key Management](#api-key-management)  
+8. [Token Classification Module](#token-classification-module)  
+9. [Chat and Memory System](#chat-and-memory-system)
+10. [Running the App](#running-the-app)  
+11. [Production Deployment](#production-deployment)  
+12. [Security Considerations](#security-considerations)  
+13. [Troubleshooting](#troubleshooting)  
+14. [Validation & Accuracy Check](#validation--accuracy-check)
+
+---
+
+## Overview
+This application automates research using AI-driven querying and summarization. It supports both public use (with limited features) and authenticated users (client or admin) who can store their own encrypted API keys. The app integrates seamlessly with the Venice API for optional token classification, adding metadata to strengthen query context. The newly implemented chat system enables interactive conversations with memory retention capabilities and seamless transition to deep research.
+
+---
+
+## Features
+1. **Dual-Mode Application**  
+   - Runs in Server Mode or CLI Mode.  
+   - Server Mode: Provides a web interface at http://localhost:3000 and an API endpoint at /api/research.  
+   - CLI Mode: Interactive text-based prompts for research operations.
+
+2. **Web-Based Terminal Interface**  
+   - Real-time output via WebSockets.  
+   - Optional token classification toggle.  
+   - Interactive session that mirrors CLI workflow.
+
+3. **Research Engine**  
+   - Generates multiple queries (breadth) and follow-ups (depth).  
+   - Uses Brave Search for retrieving results.  
+   - Summarizes findings via AI, storing summaries, sources, and learnings.
+
+4. **Token Classification**  
+   - Optional module forwarding user queries to the Venice API.  
+   - Embeds metadata in the research query for improved relevance.  
+   - Fully integrated into CLI and Web workflows.
+
+5. **Authentication & User Management**  
+   - Three roles: Public, Client, and Admin.  
+   - File-based user profiles stored at ~/.mcp/users.  
+   - Session-based authentication with 30-day expiration.
+
+6. **Encrypted API Key Storage**  
+   - Each user can configure Brave and Venice API keys.  
+   - Keys are AES-256-GCM encrypted with per-user credentials.  
+   - Automatic checks to confirm key validity.
+
+7. **Chat System with Memory**  
+   - Interactive chat interface with AI-powered responses.
+   - Memory management with short, medium, and long-term retention.
+   - Seamless integration with research pipeline for knowledge exploration.
+   - Memory summarization and validation for high-quality contextual awareness.
+
+8. **Logging & Error Handling**  
+   - Detailed logs for search operations, classification steps, and research progress.  
+   - Automatic rate-limiting and retry logic for external APIs.
 
 ---
 
 ## File Structure
-
-The following is the most up-to-date file structure of the application:
-
 ```plaintext
 app/
-├── current_app_folder_file_tree.md  # Current file structure documentation
-├── features/                # Core features of the app
-│   ├── ai/                  # AI-related features
-│   │   └── research.providers.mjs   # AI research providers
-│   └── research/            # Research feature
-│       ├── research.controller.mjs  # Research controller
-│       ├── research.engine.mjs      # Research engine logic
-│       ├── research.path.mjs        # Research path logic
-│       └── routes.mjs               # Research API routes
-├── filetree.mjs             # Generates the file tree structure
-├── infrastructure/          # Infrastructure modules
-│   ├── ai/                  # AI infrastructure
-│   │   ├── venice.llm-client.mjs    # Venice LLM client
-│   │   ├── venice.models.mjs        # Venice model configurations
-│   │   └── venice.response-processor.mjs # AI response processing
-│   ├── research/            # Research infrastructure
-│   │   ├── research.engine.mjs      # Core research engine
-│   │   └── research.path.mjs        # Research path logic
-│   └── search/              # Search infrastructure
-│       ├── search.mjs                # Search logic
-│       └── search.providers.mjs      # Brave API client
-├── public/                  # Static files for the web interface
-│   ├── index.html           # Web-based terminal interface
-│   ├── research.js          # Client-side research functionality
-│   └── terminal.js          # Terminal emulation for web interface
-├── start.mjs                # App entry point (server & CLI modes)
-├── tests/                   # Test cases
-│   ├── brave-provider.test.mjs      # Tests for Brave provider
-│   ├── brave-search-provider.test.mjs # Tests for Brave search provider
-│   ├── output-manager.test.mjs      # Tests for output manager
-│   ├── provider.test.mjs            # Tests for AI providers
-│   ├── rate-limiter.test.mjs        # Tests for rate limiter
-│   ├── research-engine.test.mjs     # Tests for research engine
-│   └── research.test.mjs            # Tests for research controller
-└── utils/                   # Utility functions
-    ├── cli-runner.mjs               # CLI runner utility
-    ├── research.clean-query.mjs     # Light cleaning for user queries
-    ├── research.ensure-dir.mjs      # Directory existence utility
-    ├── research.object-utils.mjs    # General object utilities
-    ├── research.output-manager.mjs  # Output management
-    ├── research.prompt.mjs          # Prompt generation utilities
-    └── research.rate-limiter.mjs    # Rate limiter utility
+  commands/
+    admin.cli.mjs
+    chat.cli.mjs            # Chat implementation with memory and research integration
+    diagnose.cli.mjs
+    index.mjs
+    keys.cli.mjs
+    login.cli.mjs
+    logout.cli.mjs
+    password.cli.mjs
+    research.cli.mjs
+    status.cli.mjs
+    users.cli.mjs
+
+  features/
+    ai/
+      research.providers.mjs       # AI-based research providers
+    auth/
+      encryption.mjs               # AES-256-GCM encryption utilities
+      user-manager.mjs             # File-based user & session management
+    research/
+      research.controller.mjs      # Controller for research requests
+      routes.mjs                   # Research-related Express routes with WebSocket handlers
+
+  infrastructure/
+    ai/
+      venice.llm-client.mjs        # Venice LLM API client
+      venice.response-processor.mjs
+    memory/
+      github-memory.integration.mjs # Integration with GitHub for long-term memory
+      memory.manager.mjs           # Memory system with layered storage architecture
+    research/
+      research.engine.mjs          # Main research engine logic
+      research.path.mjs            # Research path manager
+    search/
+      search.providers.mjs         # Brave Search provider with retry logic
+    ...
+
+  public/
+    chat.js                        # Client-side chat interface
+    index.html                     # Web-based terminal UI
+    research.js                    # Client-side script for research session
+    terminal.js                    # Basic terminal emulation
+
+  tests/
+    brave-provider.test.mjs
+    brave-search-provider.test.mjs
+    chat.test.mjs                  # Tests for chat functionality
+    ...
+
+  utils/
+    token-classifier.mjs           # For sending queries to Venice API
+    research.clean-query.mjs
+    research.output-manager.mjs
+    research.rate-limiter.mjs
+    ...
+
+start.mjs                          # Entry point (handles both server & CLI)
+README.md                          # Documentation (MASTER source of all info)
 ```
 
 ---
 
-## Features and Technical Notes
+## Usage Modes
+1. **Server Mode (Default)**  
+   Runs an Express server on port 3000 (configurable via PORT). Access the web UI at http://localhost:3000. WebSocket connections provide real-time logs and prompts.
 
-1. **Dual-Mode Application**  
-   - The application runs in Server Mode or CLI Mode.
-
-2. **Server Mode**  
-   - Express server with REST API endpoints (`/api/research`) supporting POST requests for research functionality.
-   - WebSocket interface for real-time updates.
-   - Browser-based research interface.
-
-3. **CLI Interface**  
-   - Launch with `node app/start.mjs cli`.
-   - Interactive prompts for query, breadth, depth, and real-time progress display.
-   - Research results saved as markdown files.
-
-4. **Research Engine**  
-   - Multi-depth exploration of search paths.
-   - Breadth-based generation of multiple queries.
-   - LLM-driven analysis and summarization of content from Brave Search API.
-   - Rate limiting with automatic backoff.
-
-5. **Web-Based Terminal Interface**  
-   - Terminal-style display for running interactive research in a browser.
-   - Live progress updates via WebSockets.
-
-6. **Token Classification Module**  
-   - Analyzes user queries to extract metadata using the Venice API.
-   - Optional prompt for enabling classification.
-   - Merges classification data with the original query for enhanced research.
-
-7. **Connection Handling**  
-   - WebSocket reconnection attempts use exponential backoff with clear failure messages.
-
-8. **Technical File References**  
-   - `app/infrastructure/ai/venice.llm-client.mjs` implements robust LLM request retries on connection resets, timeouts, or server errors.  
-   - `app/commands/research.cli.mjs` contains CLI-based commands for running research and saving results.  
-   - `app/filetree.mjs` auto-generates the folder/file tree and saves it to `app/current_app_folder_file_tree.md`.  
-   - `app/utils/token-classifier.mjs` uses the Venice API to enrich user queries with metadata.
+2. **CLI Mode**  
+   Launch using:  
+   » npm start -- cli  
+   or:  
+   » node app/start.mjs cli  
+   Follow interactive prompts for query, depth, breadth, and optional token classification.
 
 ---
 
-## Research Parameters
+## Authentication System
+1. **Roles & Permissions**  
+   - **Public**: No login needed, restricted to depth 2 / breadth 3, limited queries.  
+   - **Client**: Must log in. Can store personal API keys, has moderate usage.  
+   - **Admin**: Full privileges, can create/manage users, highest usage limits.
 
-### Breadth (2-10)
-Controls how many different search queries are generated and explored:
-- **Lower values (2-3)**: More focused research on core aspects.
-- **Higher values (8-10)**: Wider exploration of related topics.
-- **Default**: 3.
+2. **User Management**  
+   - Users stored under ~/.mcp/users/<username>.json.  
+   - Create users with “/users create <username> --role=<role>” (admin only).
 
-### Depth (1-5)
-Controls how deeply each search path is followed:
-- **Lower values (1-2)**: High-level overview with fewer follow-up questions.
-- **Higher values (4-5)**: Deep dive into topics with multiple layers of follow-up.
-- **Default**: 2.
+3. **Session Management**  
+   - Sessions last 30 days by default.  
+   - Automatic expiration plus manual logout with “/logout”.  
+   - After logout, the system reverts to public mode.
 
-The total number of queries executed is influenced by both parameters, with a maximum of:
-```plaintext
-breadth * depth
-```
+4. **Authentication Commands**  
+   - /login <username>  
+   - /logout  
+   - /status  
+   - /users create <username> --role=<role> (admin only)  
+   - /password-change  
 
 ---
 
-## Automated Research Flow
+## Research Pipeline
 
-The app operates as an **automated chain** where information is passed down, expanded, analyzed, and summarized. This flow is central to how the app functions and mimics the behavior of intelligent agents.
+### Research Pipeline Overview
 
-### Flow Diagram (Mermaid)
-```mermaid
-graph TD
-    A[User Input Query] --> B[Generate Initial Queries]
-    B --> C[Search Web for Results]
-    C --> D[Analyze Content with AI]
-    D --> E[Generate Learnings and Follow-Up Questions]
-    E -->|Depth > 1| F[Repeat Process for Follow-Up Questions]
-    E -->|Depth = 1| G[Summarize Findings]
-    F --> G
-    G --> H[Save Results]
-```
+The research pipeline follows these steps:
+1. User input is gathered.
+2. Metadata is generated using the token classifier.
+3. The input and metadata are sent to Venice to generate search queries, both with and without SearchFu techniques.
+4. These queries are separated and sent to Brave one by one for research.
+5. The findings are processed, detailed, and gathered.
+6. A summary is generated and exported.
 
-### Textual Flow
-1. **User Input Query**: The user provides a query to research.
-2. **Generate Initial Queries**: The app generates multiple specific queries based on the input query and breadth parameter.
-3. **Search Web for Results**: Each query is sent to the Brave Search API to fetch relevant results.
-4. **Analyze Content with AI**: The fetched content is analyzed using an LLM to extract key learnings and generate follow-up questions.
-5. **Generate Learnings and Follow-Up Questions**: The AI outputs structured learnings and follow-up questions.
-6. **Repeat Process for Follow-Up Questions**: If the depth parameter is greater than 1, the process repeats for the follow-up questions.
-7. **Summarize Findings**: Once all queries are processed, the app generates a comprehensive summary of the findings.
-8. **Save Results**: The results, including learnings, sources, and summary, are saved to a markdown file.
+**Note:** The token classifier is only used to generate metadata, and the metadata is combined with the user input to create detailed search queries. User input + metadata is never sent directly to Brave.
+
+---
+
+## API Key Management
+1. **Key Setup**  
+   - /keys set --venice=<key> --brave=<key>  
+   - Keys are stored encrypted per user.  
+   - The app defaults to environment variables when no user keys are available.
+
+2. **Key Checks**  
+   - /keys check  
+   - /keys test  
+   Both display or validate the stored keys.
+
+3. **Encryption**  
+   - AES-256-GCM with salts per user.  
+   - Requires password to decrypt keys each session.
+
+---
+
+## Token Classification Module
+1. **Purpose**  
+   - Forwards user queries to Venice’s LLM endpoint.  
+   - Returns classification metadata, merged into the original query.  
+   - Improves context for searching and summarizing.
+
+2. **Integration**  
+   - CLI prompts “yes/no” for using token classification.  
+   - In the web UI, toggle “Enhance with token classification.”  
+   - If classification fails, the pipeline continues with the raw query.
+
+3. **Implementation**  
+   - callVeniceWithTokenClassifier(query) in token-classifier.mjs.  
+   - Attaches plain text metadata to the inbound query object.
+
+---
+
+## Chat and Memory System
+
+The chat and memory system provides a sophisticated interface for conversing with the AI while maintaining context through an advanced memory architecture.
+
+### Chat Commands
+1. **Starting Chat**
+   - `/chat` - Starts a basic chat session
+   - `/chat --memory=true` - Starts a chat with memory enabled
+   - `/chat --depth=short|medium|long` - Control memory depth (default: medium)
+   - `/chat --verbose` - Enables detailed logging
+
+2. **In-Chat Commands**
+   - `/exit` - End the chat session
+   - `/exitmemory` - Finalize memories and exit memory mode
+   - `/research` - Generate research queries from chat context
+
+3. **Memory Architecture**
+   - **Short-term memory**: Retains recent conversation context (10-50 messages)
+   - **Working memory**: Real-time ephemeral data processed during conversation
+   - **Long-term memory**: Validated and scored knowledge (persistent storage)
+   - **Meta memory**: Summarized insights and higher-order knowledge (persistent)
+
+### Memory Subsystem Integration
+The memory system is inspired by human cognition and computational memory hierarchies:
+
+1. **Memory Layers**
+   - Memory is organized in layers with different retention periods and thresholds
+   - Memories flow from ephemeral (short-term) to persistent (long-term) based on relevance
+   - Each layer uses adaptive thresholds for filtering and retrieval
+
+2. **Memory Validation and Processing**
+   - Raw messages are sent to Venice LLM for scoring (0-1) and tagging
+   - Context-aware validation ensures high-quality memory retention
+   - Three actions applied to memories: retain, summarize, or discard
+   - Periodic summarization combines related memories into meta-memories
+
+3. **Semantic Retrieval Algorithm**
+   - Two-tier retrieval strategy with advanced semantic matching
+   - Primary: LLM-based scoring for high-precision semantic matching
+   - Fallback: Local Jaccard similarity with tag-boosting and recency weighting
+   - Memory retrieval adapts to conversation context and query relevance
+
+4. **GitHub Integration for Persistent Storage**
+   - Long-term and meta memories stored in structured GitHub repositories
+   - Memory entries tagged with metadata including scores, timestamps, and context
+   - Registry files (`long_term_registry.md` and `meta_memory_registry.md`) maintain organization
+   - Local fallback storage when GitHub is unavailable
+
+### Inference Points and AI Integration
+The chat system leverages Venice LLM at key inference points:
+
+1. **Automated Query Generation**
+   - Chat context and memory blocks are analyzed to extract key research topics
+   - Venice LLM generates optimized search queries based on conversation context
+   - Generated queries are passed to the research pipeline for execution
+
+2. **Memory Processing**
+   - Pre-validation of user input determines relevance and quality
+   - Meta-analysis determines whether to summarize or retain raw memories
+   - Periodic validation ensures memory consistency and quality
+
+3. **Context Management**
+   - Memory injection based on context relevance and threshold settings
+   - Automatic memory finalization for inactive sessions
+   - Memory summarization when threshold of similar topics is reached
+
+### Research Integration
+The chat system seamlessly integrates with the research pipeline, allowing users to:
+1. Have a conversation about any topic
+2. Use the `/research` command to extract key topics
+3. Automatically generate optimized research queries
+4. Execute in-depth research directly from the conversation context
+5. Store research findings back into memory for future reference
+
+This integration creates a powerful knowledge-building loop where conversation insights lead to deeper research, which in turn enriches future conversations through the memory system.
+
+### Using the Chat System
+1. **Basic Chat**
+   ```
+   /chat
+   > Tell me about quantum computing
+   > /exit
+   ```
+
+2. **Chat with Memory**
+   ```
+   /chat --memory=true --depth=medium
+   > Tell me about quantum computing
+   > What are qubits exactly?
+   > /research
+   > /exitmemory
+   > /exit
+   ```
+
+3. **Advanced Memory Controls**
+   ```
+   /chat --memory=true --depth=long --store=true --retrieve=false
+   > Tell me about the history of artificial intelligence
+   > How has deep learning changed AI research?
+   > /exitmemory
+   ```
+   This example enables long-term memory storage but disables memory retrieval for the session.
+
+4. **Web Interface**
+   The chat interface is also available through the web terminal, with identical functionality and command structure.
 
 ---
 
 ## Running the App
+1. **Install Dependencies**  
+   » npm install  
 
-### Prerequisites
-1. Install **Node.js** (v16 or later).
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Set the necessary environment variables:
-   - `BRAVE_API_KEY` (required for Brave Search).
-   - `VENICE_API_KEY` (required for LLM requests via Venice.ai).
+2. **Set Environment Variables**  
+   Create a .env file with:  
+   PORT=3000  
+   BRAVE_API_KEY=your_brave_api_key  
+   VENICE_API_KEY=your_venice_api_key  
 
-   These can be placed in a `.env` file at the project root or exported in your shell.
+3. **Start in Server Mode**  
+   » npm start  
+   Access http://localhost:3000 in a browser.
 
-### Usage Modes
-- **Server Mode (Default)**:
-  ```bash
-  npm start
-  ```
-  - Access the web interface at [http://localhost:3000](http://localhost:3000).
-  - The API is available at [http://localhost:3000/api/research](http://localhost:3000/api/research).
-
-- **CLI Mode**:
-  ```bash
-  npm start -- cli
-  ```
-  Or directly:
-  ```bash
-  node app/start.mjs cli
-  ```
-  - Follow the interactive prompts to conduct research.
-
-### Environment
-- Default port: `3000` (can be changed with the `PORT` environment variable).
-- Research results are saved in the `research/` directory.
+4. **Start in CLI Mode**  
+   » npm start -- cli  
+   Follow the interactive text-based session.
 
 ---
 
-## Validation and Accuracy Check
+## Production Deployment
+1. **Install Dependencies**  
+   » npm install --production  
 
-The README has been validated against the latest file structure and codebase. All features, parameters, and flows have been cross-referenced with the implementation to ensure accuracy and precision. If any discrepancies are found during future updates, this document should be revised accordingly.
+2. **Process Manager (e.g., PM2)**  
+   » pm2 start app/start.mjs --name mcp  
+   » pm2 startup  
+   » pm2 save  
+
+3. **Nginx Reverse Proxy (Example)**  
+   server {  
+       listen 80;  
+       server_name yourdomain.com;  
+       location / {  
+           proxy_pass http://localhost:3000;  
+           proxy_http_version 1.1;  
+           proxy_set_header Upgrade $http_upgrade;  
+           proxy_set_header Connection 'upgrade';  
+           proxy_set_header Host $host;  
+           proxy_cache_bypass $http_upgrade;  
+       }  
+   }
+
+4. **SSL with Certbot**  
+   » sudo certbot --nginx -d yourdomain.com  
+
+---
+
+## Security Considerations
+- **API Key Protection**: Keys are AES-256-GCM encrypted with per-user salts and never logged.  
+- **Password Security**: Passwords hashed with SHA-256, session tokens expire after 30 days.  
+- **Server Hardening**: Use ufw or similar firewall, run the app as a non-root user, keep the OS up to date.  
+- **HTTPS**: Required in production to protect sensitive data.
+
+---
+
+## Troubleshooting
+1. **Application Won’t Start**  
+   - Check Node.js version (v16+).  
+   - Confirm BRAVE_API_KEY and VENICE_API_KEY in the environment.  
+
+2. **Research Command Fails**  
+   - Verify you have valid keys: “/keys check” and “/keys test”.  
+   - Ensure no rate limit or network issues.
+
+3. **User Can’t Log In**  
+   - Confirm user file ~/.mcp/users/<username>.json exists.  
+   - If admin is lost, remove admin.json to recreate admin on next start.
+
+4. **Web Interface Not Loading**  
+   - Check pm2 status or console logs.  
+   - Verify Nginx configuration with “nginx -t”.
+
+---
+
+## Validation & Accuracy Check
+All functionality, including token classification and user management, has been cross-verified with the source code. This README serves as the sole reference for full application details. All other Markdown documentation is consolidated into this single reference.

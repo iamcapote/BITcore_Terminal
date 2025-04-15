@@ -1,5 +1,6 @@
 import fetch from 'node-fetch';
 import { output } from './research.output-manager.mjs';
+import { VENICE_CHARACTERS } from '../infrastructure/ai/venice.characters.mjs';
 
 /**
  * Sends a query to the Venice API for token classification.
@@ -18,7 +19,7 @@ export async function callVeniceWithTokenClassifier(query) {
   const payload = {
     model: 'llama-3.3-70b',
     messages: [{ role: 'user', content: query }],
-    venice_parameters: { character_slug: 'archon-01v' },
+    venice_parameters: { character_slug: 'metacore' },
   };
 
   try {

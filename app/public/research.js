@@ -1,139 +1,331 @@
+/**
+ * Research module for the web terminal interface
+ * 
+ * Handles terminal integration for the web client.
+ * Command processing is delegated to command-processor.js
+ */
 class Research {
   constructor(terminal) {
     this.terminal = terminal;
-    this.ws = null;
+    this.activeMode = 'command'; // 'command', 'research', 'chat'
     this.running = false;
-    this.connectionAttempts = 0;
-    this.maxConnectionAttempts = 3;
-    this.reconnectDelay = 1000;
-    this.pendingPromptResolve = null;
-    this.awaitingResponse = false;
-    this.connectToServer();
+    this.currentUser = { username: 'public', role: 'public' };
+    this.chatSessionId = null; // Add property to store chat session ID
+    
+    // Set up WebSocket message handlers for specific messages
+    this.setupMessageHandlers();
+    
+    // Initial connection check
+    this.checkConnection();
   }
-
-  connectToServer() {
+  
+  /**
+   * Set up WebSocket message handlers for research-specific messages
+   */
+  setupMessageHandlers() {
+    if (!window.webcomm) {
+      console.error('WebSocket communicator not initialized.');
+      return;
+    }
+    
+    // Register handlers for research-related message types
+    webcomm.registerHandler('research_start', this.handleResearchStart.bind(this));
+    webcomm.registerHandler('research_complete', this.handleResearchComplete.bind(this));
+    webcomm.registerHandler('progress', this.handleProgress.bind(this));
+    webcomm.registerHandler('auth-status-change', this.handleAuthStatusChange.bind(this));
+    webcomm.registerHandler('mode_change', this.handleModeChange.bind(this));
+    webcomm.registerHandler('connection', this.handleConnectionChange.bind(this));
+    webcomm.registerHandler('chat-ready', this.handleChatReady.bind(this));
+    webcomm.registerHandler('chat-response', this.handleChatResponse.bind(this));
+    webcomm.registerHandler('system-message', this.handleSystemMessage.bind(this));
+  }
+  
+  /**
+   * Check WebSocket connection status
+   */
+  checkConnection() {
+    if (window.webcomm) {
+      const status = webcomm.getStatus();
+      this.handleConnectionChange({
+        type: 'connection',
+        connected: status.connected
+      });
+    }
+  }
+  
+  /**
+   * Process user input from the terminal
+   * 
+   * @param {string} input - User input from terminal
+   * @returns {Promise<void>}
+   */
+  async processInput(input) {
+    if (!input || !input.trim()) {
+      return;
+    }
+    
+    // Don't allow new input while a command is running
+    if (this.running && !this.terminal.passwordMode) {
+      this.terminal.appendOutput('Please wait for the current operation to complete.');
+      return;
+    }
+    
     try {
-      if (this.ws) {
-        this.ws.onclose = null;
-        this.ws.close();
-      }
-
-      this.connectionAttempts++;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsURL = `${protocol}//${window.location.host}`;
-
-      this.terminal.appendOutput(`Connecting to server (attempt ${this.connectionAttempts})...`);
-      this.ws = new WebSocket(wsURL);
-
-      this.ws.onopen = () => {
-        this.terminal.appendOutput('Connected to research server!');
-        this.connectionAttempts = 0;
-      };
-
-      this.ws.onclose = () => {
-        const reconnectDelay = Math.pow(2, this.connectionAttempts - 1);
-        if (this.connectionAttempts <= this.maxConnectionAttempts) {
-          this.terminal.appendOutput(`Connection lost. Reconnecting in ${reconnectDelay}s...`);
-          setTimeout(() => this.connectToServer(), reconnectDelay * 1000);
-        } else {
-          this.terminal.appendOutput('Cannot connect to server after multiple attempts. Please refresh the page.');
-        }
-      };
-
-      this.ws.onerror = () => {
-        this.terminal.appendOutput('Connection error. Attempting to reconnect...');
-      };
-
-      // Add a message handler for all incoming WebSocket messages
-      this.ws.onmessage = (event) => {
+      console.log('[Research] Processing input:', input.substring(0, 20) + (input.length > 20 ? '...' : ''));
+      
+      // Handle based on active mode
+      if (this.activeMode === 'chat' && !input.startsWith('/')) {
+        // In chat mode, send as chat message
+        this.terminal.disableInput();
         try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'output') {
-            this.terminal.appendOutput(data.data);
-          } else if (data.type === 'prompt') {
-            // Instead of just setting the prompt, we need to ask for input
-            this.terminal.setPrompt(data.data);
-            this.awaitingResponse = true;
-            
-            // If we have a pending promise resolver, don't create a new one
-            if (!this.pendingPromptResolve) {
-              this.terminal.enableInput();
+          if (!this.chatSessionId) {
+            throw new Error('No active chat session. Please restart the chat session with /chat');
+          }
+          await webcomm.sendInput(input, { mode: 'chat', sessionId: this.chatSessionId });
+          this.terminal.appendOutput(`You: ${input}`);
+        } catch (error) {
+          console.error('[Research] Error sending chat message:', error);
+          this.terminal.appendOutput(`Error sending message: ${error.message}`);
+        } finally {
+          this.terminal.enableInput();
+        }
+        return;
+      }
+      
+      // Input is a command or we're in command mode
+      if (input.startsWith('/')) {
+        this.running = true;
+        this.terminal.disableInput();
+        
+        try {
+          if (window.commandProcessor) {
+            const result = await window.commandProcessor.executeCommand(input);
+            if (!result.success && result.error) {
+              this.terminal.appendOutput(`Error: ${result.error}`);
             }
-          } else if (data.type === 'classification_result') {
-            this.terminal.appendOutput('Token classification completed.');
-            this.terminal.appendOutput(`Token classification result: ${data.metadata}`);
-            this.terminal.appendOutput('Using token classification to enhance research quality...');
-          } else if (data.type === 'progress') {
-            if (typeof data.data === 'object' && data.data.message) {
-              this.terminal.updateLastLine(data.data.message);
-            } else {
-              this.terminal.updateLastLine(`Progress: ${data.data}`);
+            if (result.mode) {
+              this.setMode(result.mode);
             }
-          } else if (data.type === 'research_start') {
-            this.running = true;
-            this.terminal.appendOutput('Starting research session...');
-            this.terminal.disableInput();
-            this.terminal.showProgressBar();
-          } else if (data.type === 'research_complete') {
-            this.running = false;
-            this.terminal.appendOutput('Research complete!');
-            this.terminal.enableInput();
-            this.terminal.hideProgressBar();
-            this.terminal.setPrompt('> ');
+          } else {
+            await webcomm.sendInput(input);
           }
         } catch (error) {
-          this.terminal.appendOutput(`Error processing message: ${error.message}`);
+          console.error('[Research] Error executing command:', error);
+          this.terminal.appendOutput(`Error executing command: ${error.message}`);
+        } finally {
+          this.running = false;
+          this.terminal.enableInput();
         }
-      };
-    } catch (e) {
-      this.terminal.appendOutput(`Connection error: ${e.message}. Retrying...`);
+      } else if (this.activeMode === 'command') {
+        this.terminal.appendOutput("Please start commands with / (e.g., /research, /login, /status)");
+      } else {
+        this.terminal.disableInput();
+        try {
+          await webcomm.sendInput(input, { mode: this.activeMode });
+        } catch (error) {
+          console.error('[Research] Error sending input:', error);
+          this.terminal.appendOutput(`Error: ${error.message}`);
+        } finally {
+          this.terminal.enableInput();
+        }
+      }
+    } catch (error) {
+      console.error('[Research] Error processing input:', error);
+      this.terminal.appendOutput(`Error: ${error.message}`);
+      this.running = false;
+      this.terminal.enableInput();
     }
   }
-
-  isRunning() {
-    return this.running;
+  
+  /**
+   * Set the active mode
+   * 
+   * @param {string} mode - New mode ('command', 'research', 'chat')
+   */
+  setMode(mode) {
+    if (!mode || typeof mode !== 'string') {
+      return;
+    }
+    
+    const normalizedMode = mode.toLowerCase();
+    
+    if (['command', 'research', 'chat'].includes(normalizedMode)) {
+      // Clear chat session ID if exiting chat mode
+      if (this.activeMode === 'chat' && normalizedMode !== 'chat') {
+        this.chatSessionId = null;
+        console.log('[Research] Chat session ended, session ID cleared');
+      }
+      
+      this.activeMode = normalizedMode;
+      
+      // Update prompt based on mode
+      if (normalizedMode === 'command') {
+        this.terminal.setPrompt("> ");
+      } else if (normalizedMode === 'chat') {
+        this.terminal.setPrompt("chat> ");
+      } else if (normalizedMode === 'research') {
+        this.terminal.setPrompt("research> ");
+      }
+      
+      console.log(`[Research] Mode changed to: ${this.activeMode}`);
+    }
   }
-
-  isConnected() {
-    return this.ws && this.ws.readyState === WebSocket.OPEN;
+  
+  /**
+   * Handle research start event
+   * 
+   * @param {Object} message - Research start message
+   */
+  handleResearchStart(message) {
+    console.log('[Research] Research started');
+    this.running = true;
+    this.setMode('research');
+    this.terminal.showProgressBar();
+    this.terminal.disableInput();
   }
-
-  async start(userInput) {
-    if (!this.isConnected()) {
-      this.terminal.appendOutput('Not connected to server. Attempting to reconnect...');
-      this.connectToServer();
-      return;
+  
+  /**
+   * Handle research complete event
+   * 
+   * @param {Object} message - Research complete message
+   */
+  handleResearchComplete(message) {
+    console.log('[Research] Research completed');
+    this.running = false;
+    this.setMode('command');
+    this.terminal.hideProgressBar();
+    this.terminal.enableInput();
+  }
+  
+  /**
+   * Handle progress update event
+   * 
+   * @param {Object} message - Progress update message
+   */
+  handleProgress(message) {
+    if (message.data) {
+      let progressText;
+      if (typeof message.data === 'string') {
+        progressText = message.data;
+      } else {
+        progressText = message.data.message || `Progress: ${JSON.stringify(message.data)}`;
+      }
+      
+      this.terminal.updateLastLine(progressText);
     }
-
-    if (this.running && !this.awaitingResponse) {
-      this.terminal.appendOutput('Research is in progress. Please wait until it completes.');
-      return;
+  }
+  
+  /**
+   * Handle auth status change event
+   * 
+   * @param {Object} message - Auth status message
+   */
+  handleAuthStatusChange(message) {
+    if (message.user) {
+      this.currentUser = message.user;
+      console.log(`[Research] User changed: ${this.currentUser.username} (${this.currentUser.role})`);
     }
-
-    if (this.awaitingResponse) {
-      // This is a response to a prompt from the server
-      this.awaitingResponse = false;
-      this.ws.send(JSON.stringify({ input: userInput }));
-      return;
+  }
+  
+  /**
+   * Handle mode change event
+   * 
+   * @param {Object} message - Mode change message
+   */
+  handleModeChange(message) {
+    if (message.mode) {
+      this.setMode(message.mode);
     }
-
-    if (!userInput.trim()) {
-      this.terminal.appendOutput('Command cannot be empty.');
-      return;
-    }
-
-    // Handle commands
-    if (userInput.trim() === '/research') {
-      // This is a command, not a query
-      this.ws.send(JSON.stringify({ input: '/research' }));
+  }
+  
+  /**
+   * Handle WebSocket connection change event
+   * 
+   * @param {Object} message - Connection change message
+   */
+  handleConnectionChange(message) {
+    const status = message.connected ? 'connected' : 'disconnected';
+    console.log(`[Research] Connection status: ${status}`);
+    this.terminal.setStatus(status);
+    
+    if (message.connected) {
+      this.terminal.appendOutput('Connected to server.');
+      this.terminal.enableInput();
     } else {
-      this.terminal.appendOutput('Unknown command. Use /research');
+      this.terminal.appendOutput('Connection lost. Attempting to reconnect...');
     }
   }
-
-  handleClassificationResult(metadata) {
-    this.terminal.appendOutput('Token classification completed.');
-    this.terminal.appendOutput(`Classification metadata: ${metadata}`);
+  
+  /**
+   * Handle chat ready event
+   * 
+   * @param {Object} message - Chat ready message
+   */
+  handleChatReady(message) {
+    // Store the session ID for future chat messages
+    if (message.sessionId) {
+      this.chatSessionId = message.sessionId;
+      console.log('[Research] Chat session ID stored:', this.chatSessionId);
+    }
+    
+    this.terminal.appendOutput('Chat session initialized.');
+    this.setMode('chat');
+    this.terminal.enableInput();
+  }
+  
+  /**
+   * Handle chat response event
+   * 
+   * @param {Object} message - Chat response message
+   */
+  handleChatResponse(message) {
+    if (message.message) {
+      // Format as AI response
+      this.terminal.appendOutput(`AI: ${message.message}`);
+    }
+    this.terminal.enableInput();
+  }
+  
+  /**
+   * Handle system message
+   * 
+   * @param {Object} message - System message
+   */
+  handleSystemMessage(message) {
+    if (message.message) {
+      this.terminal.appendOutput(`[System] ${message.message}`);
+    }
+  }
+  
+  /**
+   * Get current user information
+   * 
+   * @returns {Object} Current user object
+   */
+  getCurrentUser() {
+    return this.currentUser || { username: 'public', role: 'public' };
+  }
+  
+  /**
+   * Request information about the current user
+   */
+  async requestUserInfo() {
+    try {
+      await webcomm.sendCommand('/status');
+    } catch (error) {
+      console.error('Error requesting user info:', error);
+    }
+  }
+  
+  /**
+   * Handle recovery from timeout or error
+   */
+  recoverFromTimeout() {
+    this.running = false;
+    this.terminal.enableInput();
+    if (this.activeMode === 'chat') {
+      this.terminal.appendOutput('Chat session timed out. Please restart the session.');
+      this.setMode('command');
+    }
   }
 }

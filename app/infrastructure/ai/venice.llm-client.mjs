@@ -104,4 +104,58 @@ export class LLMClient {
       }
     }
   }
+  
+  /**
+   * Complete a conversation with multiple message history
+   * 
+   * @param {Object} options - Chat completion options
+   * @param {Array<Object>} options.messages - Array of message objects with role and content
+   * @param {number} options.temperature - Temperature parameter (0-1)
+   * @param {number} options.maxTokens - Maximum tokens to generate
+   * @returns {Promise<Object>} Response with content and metadata
+   */
+  async completeChat({ messages, temperature = 0.7, maxTokens = 1000 }) {
+    const retryConfig = this.config.retry || defaultRetryConfig;
+    let attempt = 0;
+
+    while (attempt < retryConfig.maxAttempts) {
+      try {
+        const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.config.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: messages,
+            temperature,
+            max_tokens: maxTokens,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        if (!data.choices?.[0]?.message?.content) {
+          throw new LLMError('InvalidResponse', 'Invalid response format from Venice API', data);
+        }
+
+        return {
+          content: data.choices[0].message.content,
+          model: this.config.model,
+          timestamp: new Date().toISOString(),
+          usage: data.usage || {},
+        };
+      } catch (error) {
+        if (attempt === retryConfig.maxAttempts - 1) {
+          throw new LLMError('MaxRetriesExceeded', `Failed after ${retryConfig.maxAttempts} attempts`, error);
+        }
+        attempt++;
+        await sleep(retryConfig.initialDelay * Math.pow(2, attempt));
+      }
+    }
+  }
 }

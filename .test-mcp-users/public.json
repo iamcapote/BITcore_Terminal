@@ -1,0 +1,10 @@
+{
+  "username": "public",
+  "role": "public",
+  "created": "2025-04-09T21:40:46.491Z",
+  "limits": {
+    "maxQueriesPerHour": 3,
+    "maxDepth": 2,
+    "maxBreadth": 3
+  }
+}

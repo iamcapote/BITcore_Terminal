@@ -1,0 +1,13 @@
+{
+  "username": "test-user-08992",
+  "role": "client",
+  "passwordHash": "$argon2id$v=19$m=65536,t=3,p=4$eKTB2puk0KUEi1U4k5vK1Q$10clnuqyEO8Ba8f8Pidc2TKzA6zjLIk4PtW0FQAqjQk",
+  "salt": "4f0c71763af6e1b877666702c6a158f9",
+  "created": "2025-04-09T21:41:49.123Z",
+  "encryptedApiKeys": {},
+  "limits": {
+    "maxQueriesPerDay": 20,
+    "maxDepth": 3,
+    "maxBreadth": 5
+  }
+}

@@ -1,3 +1,199 @@
+/**
+ * Venice LLM Response Processor
+ * Processes and transforms raw LLM responses for integration with the memory system
+ */
+
+/**
+ * Extract structured data from an LLM response
+ * 
+ * @param {string} text - Raw LLM response text
+ * @param {Object} options - Processing options
+ * @param {string} options.format - Expected format ('json', 'markdown', 'text')
+ * @param {boolean} options.strictMode - Whether to throw error on parse failure
+ * @returns {Object} Parsed response object
+ */
+export function extractStructuredData(text, options = {}) {
+  const { format = 'json', strictMode = false } = options;
+  
+  try {
+    if (format === 'json') {
+      return extractJson(text, strictMode);
+    } else if (format === 'markdown') {
+      return extractMarkdown(text, strictMode);
+    } else {
+      return { content: text, format: 'text' };
+    }
+  } catch (error) {
+    if (strictMode) {
+      throw new Error(`Failed to extract structured data: ${error.message}`);
+    }
+    return { content: text, format: 'text', parseError: error.message };
+  }
+}
+
+/**
+ * Extract JSON data from text
+ * 
+ * @param {string} text - Text containing JSON
+ * @param {boolean} strictMode - Whether to throw error on parse failure
+ * @returns {Object} Parsed JSON object
+ */
+function extractJson(text, strictMode = false) {
+  try {
+    // Try to find JSON block in the text
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch && strictMode) {
+      throw new Error('No valid JSON object found in response');
+    } else if (!jsonMatch) {
+      return { content: text, format: 'text' };
+    }
+    
+    const jsonText = jsonMatch[0];
+    const parsed = JSON.parse(jsonText);
+    return { ...parsed, format: 'json', raw: text };
+  } catch (error) {
+    if (strictMode) {
+      throw error;
+    }
+    return { content: text, format: 'text', parseError: error.message };
+  }
+}
+
+/**
+ * Extract structured data from markdown text
+ * 
+ * @param {string} text - Markdown text
+ * @param {boolean} strictMode - Whether to throw error on parse failure
+ * @returns {Object} Structured data from markdown
+ */
+function extractMarkdown(text, strictMode = false) {
+  try {
+    const sections = {};
+    
+    // Split by markdown headings
+    const headerSections = text.split(/^#+\s+(.*)/m).filter(Boolean);
+    
+    if (headerSections.length <= 1) {
+      // No clear markdown structure, return as plain text
+      return { content: text, format: 'markdown' };
+    }
+    
+    // Process sections
+    for (let i = 0; i < headerSections.length; i += 2) {
+      if (i + 1 < headerSections.length) {
+        const heading = headerSections[i].trim();
+        const content = headerSections[i + 1].trim();
+        sections[heading] = content;
+      }
+    }
+    
+    return { sections, format: 'markdown', raw: text };
+  } catch (error) {
+    if (strictMode) {
+      throw error;
+    }
+    return { content: text, format: 'text', parseError: error.message };
+  }
+}
+
+/**
+ * Process memory scoring response
+ * 
+ * @param {string} response - Raw LLM response
+ * @returns {Array} Array of memory evaluations
+ */
+export function processMemoryScoring(response) {
+  try {
+    const data = extractStructuredData(response, { format: 'json' });
+    
+    // Check if we have valid memory evaluations
+    if (data.format !== 'json' || !data.memories || !Array.isArray(data.memories)) {
+      throw new Error('Invalid memory evaluation format');
+    }
+    
+    // Validate and normalize each memory evaluation
+    return data.memories.map(memory => {
+      if (!memory.id) {
+        throw new Error('Memory evaluation missing ID');
+      }
+      
+      return {
+        id: memory.id,
+        score: typeof memory.score === 'number' ? memory.score : 0.5,
+        tags: Array.isArray(memory.tags) ? memory.tags : [],
+        action: ['retain', 'summarize', 'discard'].includes(memory.action) 
+          ? memory.action 
+          : 'retain'
+      };
+    });
+  } catch (error) {
+    console.error('Error processing memory scoring:', error);
+    return [];
+  }
+}
+
+/**
+ * Process memory summarization response
+ * 
+ * @param {string} response - Raw LLM response
+ * @returns {Array} Array of memory summaries
+ */
+export function processMemorySummarization(response) {
+  try {
+    const data = extractStructuredData(response, { format: 'json' });
+    
+    // Check if we have valid summaries
+    if (data.format !== 'json' || !data.summaries || !Array.isArray(data.summaries)) {
+      throw new Error('Invalid memory summarization format');
+    }
+    
+    // Validate and normalize each summary
+    return data.summaries.map(summary => {
+      if (!summary.content) {
+        throw new Error('Memory summary missing content');
+      }
+      
+      return {
+        content: summary.content,
+        tags: Array.isArray(summary.tags) ? summary.tags : [],
+        importance: typeof summary.importance === 'number' ? summary.importance : 0.5
+      };
+    });
+  } catch (error) {
+    console.error('Error processing memory summarization:', error);
+    return [];
+  }
+}
+
+/**
+ * Clean and format chat responses
+ * 
+ * @param {string} response - Raw LLM response
+ * @returns {string} Cleaned and formatted response
+ */
+export function cleanChatResponse(response) {
+  // Remove any JSON formatting artifacts that might appear
+  const cleaned = response
+    .replace(/^```(json|javascript)\s*/, '')
+    .replace(/```$/, '')
+    .trim();
+  
+  // If it looks like JSON, try to extract just textual content
+  if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(cleaned);
+      if (parsed.content) return parsed.content;
+      if (parsed.response) return parsed.response;
+      if (parsed.message) return parsed.message;
+      if (parsed.text) return parsed.text;
+    } catch (e) {
+      // Not valid JSON, return as is
+    }
+  }
+  
+  return response;
+}
+
 export function processAIResponse(response) {
   if (!response || typeof response !== 'object') {
     throw new Error('Invalid response');

@@ -1,0 +1,16 @@
+{
+  "username": "admin",
+  "role": "admin",
+  "passwordHash": "$argon2id$v=19$m=65536,t=3,p=4$Cb5ucQ3bj3hL3UG9IDZREQ$YbAfsI9KgRP9W12cL0udXQeX3/aHFYOE55fKCcfqxE8",
+  "salt": "9f0464547bf28502423f6504f9130cc4",
+  "created": "2025-04-09T21:40:46.492Z",
+  "limits": {
+    "maxQueriesPerDay": 100,
+    "maxDepth": 5,
+    "maxBreadth": 10
+  },
+  "encryptedApiKeys": {
+    "venice": "{\"iv\":\"a1fe3f01f9e6b2bd61802eb41a91b969\",\"encrypted\":\"009379961fac2007eead8d5ad9ef3480ae8e8c4c382ceb6dc3d0c329ca4d0cfe1e54a78636d57db7b5b8\",\"authTag\":\"3033373767de7a965da2075e1ce326b0\"}",
+    "brave": "{\"iv\":\"7faf480405a7d9f2cbd49ca0c4115891\",\"encrypted\":\"e40ad8234a6110ed34402ab790d2e63398ceb543f09fa2d673f6011f23757d\",\"authTag\":\"170d5615bc7f60b3c85510cab2f5ed3d\"}"
+  }
+}

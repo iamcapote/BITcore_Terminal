@@ -55,13 +55,25 @@
       color: #0af;
       font-style: italic;
     }
-    #status {
+    #status-bar {
+      display: flex;
+      justify-content: space-between;
       position: fixed;
       top: 5px;
       right: 10px;
       font-size: 0.8em;
       padding: 2px 5px;
+    }
+    #connection-status {
+      margin-right: 10px;
+      padding: 2px 5px;
       border-radius: 3px;
+    }
+    #user-status {
+      margin-right: 10px;
+      padding: 2px 5px;
+      border-radius: 3px;
+      background-color: #333;
     }
     .status-disconnected {
       background-color: #f00;
@@ -99,6 +111,40 @@
       justify-content: center;
       align-items: center;
     }
+    #commands-help {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      background-color: #222;
+      padding: 10px;
+      border: 1px solid #444;
+      border-radius: 5px;
+      display: none;
+      max-width: 300px;
+      z-index: 10;
+    }
+    #help-toggle {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      background-color: #0f0;
+      color: black;
+      border: none;
+      border-radius: 5px;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    #reset-btn {
+      position: fixed;
+      bottom: 10px;
+      right: 80px;
+      background-color: #f00;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
     @keyframes pulse {
       0% { opacity: 0.6; }
       50% { opacity: 1; }
@@ -107,39 +153,135 @@
   </style>
 </head>
 <body>
-<div id="status" class="status-connecting">Connecting...</div>
+<div id="status-bar">
+  <div id="user-status">User: public</div>
+  <div id="connection-status" class="status-connecting">Connecting...</div>
+</div>
 <pre id="output">Initializing Research CLI...</pre>
 <div id="input-container">
   <span id="prompt">> </span>
   <input id="input" type="text" autofocus />
 </div>
 
-<!-- Use relative paths to load the scripts -->
-<script src="./terminal.js"></script>
-<script src="./research.js"></script>
+<button id="reset-btn">Reset Terminal</button>
+<button id="help-toggle">Help</button>
+<div id="commands-help">
+  <h3>Available Commands</h3>
+  <ul>
+    <li><strong>/login &lt;username&gt;</strong> - Log in as a user</li>
+    <li><strong>/logout</strong> - Log out of current session</li>
+    <li><strong>/status</strong> - Show current user status</li>
+    <li><strong>/keys set</strong> - Set API keys</li>
+    <li><strong>/keys check</strong> - Check API key status</li>
+    <li><strong>/keys test</strong> - Test API key validity</li>
+    <li><strong>/password-change</strong> - Change your password</li>
+    <li><strong>/users create</strong> - Create a new user (admin only)</li>
+    <li><strong>/research</strong> - Start a research session</li>
+    <li><strong>/chat</strong> - Start a chat session</li>
+    <li><strong>/exit</strong> - Exit chat mode</li>
+    <li><strong>/exitmemory</strong> - Exit memory mode in chat</li>
+    <li><strong>/help</strong> - Show available commands</li>
+  </ul>
+</div>
+
+<!-- Load scripts in the correct order -->
+<script src="webcomm.js"></script>
+<script src="command-processor.js"></script>
+<script src="terminal.js"></script>
+<script src="research.js"></script>
+<script src="chat.js"></script>
+
 <script>
-  document.addEventListener('DOMContentLoaded', function() {
-    const statusEl = document.getElementById('status');
-    const terminal = new Terminal('#output', '#input');
-    const research = new Research(terminal);
+  document.addEventListener('DOMContentLoaded', async function() {
+    const connectionStatusEl = document.getElementById('connection-status');
+    const userStatusEl = document.getElementById('user-status');
+    const helpToggleBtn = document.getElementById('help-toggle');
+    const commandsHelpEl = document.getElementById('commands-help');
+    const resetBtn = document.getElementById('reset-btn');
+    
+    // Wait for terminal to be initialized (it's created in terminal.js)
+    setTimeout(() => {
+      if (!window.terminal) {
+        console.error('Terminal not initialized');
+        return;
+      }
+      
+      // Initialize research system using the global terminal
+      if (!window.research) {
+        window.research = new Research(window.terminal);
+      }
+      
+      // Create a basic chat client (if needed)
+      if (!window.chat) {
+        window.chat = {
+          handleCommand: async () => false,
+          currentUser: 'public'
+        };
+      }
+      
+      // Don't set up event listeners here if they're already defined in terminal.js
+      console.log('Terminal setup complete');
+    }, 100);
+    
+    // Toggle help panel
+    helpToggleBtn.addEventListener('click', () => {
+      if (commandsHelpEl.style.display === 'block') {
+        commandsHelpEl.style.display = 'none';
+        helpToggleBtn.textContent = 'Help';
+      } else {
+        commandsHelpEl.style.display = 'block';
+        helpToggleBtn.textContent = 'Hide';
+      }
+    });
+    
+    // Reset terminal button functionality
+    resetBtn.addEventListener('click', () => {
+      if (confirm('Are you sure you want to reset the terminal? This will clear any ongoing operations.')) {
+        if (window.terminal) {
+          window.terminal.appendOutput('Resetting terminal state...');
+          window.terminal.enableInput();
+          
+          if (window.research) {
+            // Reset research state
+            window.research.running = false;
+            window.research.setMode('command');
+            window.terminal.setPrompt('> ');
+          }
+          
+          window.terminal.appendOutput('Terminal reset complete. You may continue working.');
+        }
+      }
+    });
 
     function updateConnectionStatus() {
-      if (research.isConnected()) {
-        statusEl.textContent = 'Connected';
-        statusEl.className = 'status-connected';
+      const isConnected = window.webcomm && window.webcomm.isConnected();
+      
+      if (isConnected) {
+        connectionStatusEl.textContent = 'Connected';
+        connectionStatusEl.className = 'status-connected';
       } else {
-        statusEl.textContent = research.ws ? 'Connecting...' : 'Disconnected';
-        statusEl.className = research.ws ? 'status-connecting' : 'status-disconnected';
+        connectionStatusEl.textContent = window.webcomm && window.webcomm.ws ? 'Connecting...' : 'Disconnected';
+        connectionStatusEl.className = window.webcomm && window.webcomm.ws ? 'status-connecting' : 'status-disconnected';
       }
     }
 
+    // Update connection status every second
     setInterval(updateConnectionStatus, 1000);
 
-    terminal.onInput((input) => {
-      research.start(input);
+    // Handle keyboard shortcuts - define only once
+    document.addEventListener('keydown', function(event) {
+      // Ctrl+L clears the terminal
+      if (event.ctrlKey && event.key === 'l') {
+        event.preventDefault();
+        if (window.terminal) {
+          window.terminal.clear();
+          window.terminal.appendOutput('Terminal cleared.');
+          if (window.terminal.input) {
+            window.terminal.input.focus();
+          }
+        }
+      }
     });
-
-    terminal.init();
   });
 </script>
 </body>

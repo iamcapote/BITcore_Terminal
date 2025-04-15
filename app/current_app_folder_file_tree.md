@@ -2,27 +2,46 @@
 
 ```plaintext
 commands/
+  admin.cli.mjs
+  chat.cli.mjs
+  diagnose.cli.mjs
   index.mjs
+  keys.cli.mjs
+  login.cli.mjs
+  logout.cli.mjs
+  password.cli.mjs
   research.cli.mjs
+  status.cli.mjs
+  users.cli.mjs
 
 current_app_folder_file_tree.md
 features/
   ai/
     research.providers.mjs
 
+  auth/
+    encryption.mjs
+    user-manager.mjs
+    user-manager.mjs.bak
+
   research/
     research.controller.mjs
-    research.engine.mjs
-    research.path.mjs
     routes.mjs
 
 
 filetree.mjs
 infrastructure/
   ai/
+    venice.characters.mjs
     venice.llm-client.mjs
     venice.models.mjs
     venice.response-processor.mjs
+
+  auth/
+
+  memory/
+    github-memory.integration.mjs
+    memory.manager.mjs
 
   research/
     research.engine.mjs
@@ -34,21 +53,32 @@ infrastructure/
 
 
 public/
+  chat.js
+  command-processor.js
   index.html
   research.js
   terminal.js
+  webcomm.js
 
 start.mjs
 tests/
   brave-provider.test.mjs
   brave-search-provider.test.mjs
+  chat.test.mjs
+  fix-validation-issues.mjs
   output-manager.test.mjs
   provider.test.mjs
   rate-limiter.test.mjs
   research-engine.test.mjs
+  research-pipeline.test.mjs
   research.test.mjs
+  system-validation.mjs
+  test-setup.mjs
+  token-classifier.test.mjs
 
 utils/
+  cli-args-parser.mjs
+  cli-error-handler.mjs
   cli-runner.mjs
   research.clean-query.mjs
   research.ensure-dir.mjs

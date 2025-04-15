@@ -83,11 +83,17 @@ export class BraveSearchProvider {
       console.warn('[BraveSearchProvider] Query too short, skipping search.');
       return [];
     }
+    
+    // Truncate query to 1000 characters to avoid 422 Unprocessable Entity errors
+    const truncatedQuery = sanitizedQuery.length > 1000 ? sanitizedQuery.substring(0, 1000) : sanitizedQuery;
+    if (truncatedQuery.length < sanitizedQuery.length) {
+      console.log(`[BraveSearchProvider] Query truncated from ${sanitizedQuery.length} to ${truncatedQuery.length} characters`);
+    }
 
     let retryCount = 0;
     while (retryCount <= this.maxRetries) {
       try {
-        return await this.makeRequest(sanitizedQuery);
+        return await this.makeRequest(truncatedQuery);
       } catch (error) {
         if (error instanceof SearchError && error.code === 'RATE_LIMIT') {
           const delay = this.retryDelay * Math.pow(2, retryCount); // Exponential backoff

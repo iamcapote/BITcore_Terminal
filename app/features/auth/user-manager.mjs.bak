@@ -1,0 +1,614 @@
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
+import { randomBytes } from 'crypto';
+import argon2 from 'argon2';
+import { encryptApiKey, decryptApiKey, deriveKey } from './encryption.mjs';
+import readline from 'readline';
+
+// Rate limiting for login attempts
+class RateLimiter {
+  constructor(maxAttempts = 5, windowMs = 15 * 60 * 1000) { // 5 attempts per 15 minutes
+    this.attempts = new Map();
+    this.maxAttempts = maxAttempts;
+    this.windowMs = windowMs;
+  }
+
+  async attempt(key) {
+    const now = Date.now();
+    const record = this.attempts.get(key) || { count: 0, firstAttempt: now, blockedUntil: 0 };
+    
+    // Check if currently blocked
+    if (record.blockedUntil > now) {
+      const waitTimeMinutes = Math.ceil((record.blockedUntil - now) / 60000);
+      throw new Error(`Too many failed attempts. Please try again in ${waitTimeMinutes} minutes.`);
+    }
+    
+    // Reset if window has passed
+    if ((now - record.firstAttempt) > this.windowMs) {
+      record.count = 1;
+      record.firstAttempt = now;
+      record.blockedUntil = 0;
+      this.attempts.set(key, record);
+      return true;
+    }
+    
+    // Increment attempt count
+    record.count += 1;
+    
+    // Block if exceeded max attempts
+    if (record.count > this.maxAttempts) {
+      // Exponential backoff: block time increases with each consecutive violation
+      const blockMultiplier = Math.floor(record.count / this.maxAttempts);
+      record.blockedUntil = now + (this.windowMs * blockMultiplier);
+      this.attempts.set(key, record);
+      const waitTimeMinutes = Math.ceil(this.windowMs * blockMultiplier / 60000);
+      throw new Error(`Too many failed attempts. Please try again in ${waitTimeMinutes} minutes.`);
+    }
+    
+    this.attempts.set(key, record);
+    return true;
+  }
+
+  reset(key) {
+    this.attempts.delete(key);
+  }
+
+  // Clean up old entries periodically
+  cleanup() {
+    const now = Date.now();
+    for (const [key, record] of this.attempts.entries()) {
+      if (record.blockedUntil < now && (now - record.firstAttempt) > this.windowMs) {
+        this.attempts.delete(key);
+      }
+    }
+  }
+}
+
+export class UserManager {
+  constructor() {
+    // Support test environment with separate user directory
+    if (process.env.MCP_TEST_USER_DIR) {
+      this.userDir = process.env.MCP_TEST_USER_DIR;
+      this.sessionFile = path.join(this.userDir, 'session.json');
+      console.log(`[Auth] Using test user directory: ${this.userDir}`);
+    } else {
+      this.userDir = path.join(os.homedir(), '.mcp', 'users');
+      this.sessionFile = path.join(os.homedir(), '.mcp', 'session.json');
+    }
+    
+    this.currentUser = null;
+    this.sessionDuration = 30 * 24 * 60 * 60 * 1000; // 30 days
+    this.loginLimiter = new RateLimiter();
+    
+    // Start cleanup interval
+    setInterval(() => this.loginLimiter.cleanup(), 60 * 60 * 1000); // Cleanup every hour
+  }
+
+  /**
+   * Initializes on startup. Ensures the public user exists,
+   * then tries to load the last session or defaults to public.
+   * If no admin exists, prompts for admin creation (one-time).
+   */
+  async ensureUserDir() {
+    try {
+      await fs.mkdir(this.userDir, { recursive: true });
+      return true;
+    } catch (error) {
+      console.error(`[Auth] Error creating user directory: ${error.message}`);
+      return false;
+    }
+  }
+  
+  async initialize() {
+    await this.ensureUserDir();
+
+    // Ensure public user JSON exists
+    const publicUserPath = path.join(this.userDir, 'public.json');
+    try {
+      await fs.access(publicUserPath);
+    } catch {
+      await this.createPublicProfile();
+    }
+
+    // Check if an admin user exists
+    const adminExists = await this.adminExists();
+    if (!adminExists) {
+      return null; // Return null to indicate no admin exists
+    }
+
+    // Try loading last session
+    try {
+      const sessionData = JSON.parse(await fs.readFile(this.sessionFile, 'utf8'));
+      
+      // Check if session exists and is still valid
+      if (sessionData?.username && sessionData?.expiresAt) {
+        const now = Date.now();
+        
+        if (now < sessionData.expiresAt) {
+          // Session is still valid
+          console.log(`[Auth] Valid session found for user: ${sessionData.username}`);
+          await this.loadUser(sessionData.username);
+        } else {
+          // Session has expired
+          console.log(`[Auth] Session expired for user: ${sessionData.username}`);
+          await this.loadUser('public');
+          try {
+            await fs.unlink(this.sessionFile);
+          } catch (e) {
+            console.error(`[Auth] Error removing expired session file: ${e.message}`);
+          }
+        }
+      } else {
+        // Invalid session format
+        console.log('[Auth] Invalid session format, falling back to public user');
+        await this.loadUser('public');
+      }
+    } catch (error) {
+      // No session or invalid session, fallback to public
+      console.log(`[Auth] No valid session found: ${error.message}`);
+      await this.loadUser('public');
+    }
+
+    return this.currentUser;
+  }
+
+  /**
+   * Checks if an admin user exists in the user directory.
+   * @returns {Promise<boolean>} True if an admin user exists, false otherwise.
+   */
+  async adminExists() {
+    try {
+      const files = await fs.readdir(this.userDir);
+      for (const file of files) {
+        const userData = JSON.parse(await fs.readFile(path.join(this.userDir, file), 'utf8'));
+        if (userData.role === 'admin') {
+          return true;
+        }
+      }
+      return false;
+    } catch (err) {
+      console.error(`[Auth] Error checking admin existence: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Creates an admin user with the given username and password.
+   * Bypasses the normal admin-only restriction for creating users.
+   * This should only be called during initialization when no admin exists.
+   */
+  async createInitialAdmin(username, password) {
+    if (await this.adminExists()) {
+      console.log('[Auth] Admin user already exists. Skipping admin creation.');
+      return this.currentUser;
+    }
+
+    console.log(`[Auth] Creating initial admin user: ${username}`);
+    try {
+      const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+      const salt = randomBytes(16).toString('hex');
+      const adminUser = {
+        username,
+        role: 'admin',
+        passwordHash,
+        salt,
+        created: new Date().toISOString(),
+        limits: { maxQueriesPerDay: 100, maxDepth: 5, maxBreadth: 10 },
+        encryptedApiKeys: {}
+      };
+
+      const userPath = path.join(this.userDir, `${username}.json`);
+      await fs.writeFile(userPath, JSON.stringify(adminUser, null, 2));
+
+      console.log(`[Auth] Admin user '${username}' created successfully with password '${password}'`);
+      console.log('[Auth] Please login with this account and change the password immediately.');
+
+      this.currentUser = adminUser;
+      await this.createSession(username);
+
+      return adminUser;
+    } catch (error) {
+      console.error(`[Auth] Failed to create admin user: ${error.message}`);
+      await this.loadUser('public');
+      return this.currentUser;
+    }
+  }
+
+  async createPublicProfile() {
+    const publicUser = {
+      username: 'public',
+      role: 'public',
+      created: new Date().toISOString(),
+      limits: { maxQueriesPerHour: 3, maxDepth: 2, maxBreadth: 3 }
+    };
+    await fs.writeFile(
+      path.join(this.userDir, 'public.json'),
+      JSON.stringify(publicUser, null, 2)
+    );
+    return publicUser;
+  }
+
+  async loadUser(username) {
+    console.log(`[DEBUG] Loading user: ${username}`);
+    try {
+      const userData = await fs.readFile(
+        path.join(this.userDir, `${username}.json`),
+        'utf8'
+      );
+      this.currentUser = JSON.parse(userData);
+      console.log(`[DEBUG] Current user set to:`, this.currentUser);
+      return this.currentUser;
+    } catch (error) {
+      if (username !== 'public') {
+        console.error(`[DEBUG] Failed to load user ${username}: ${error.message}`);
+        return this.loadUser('public');
+      }
+      throw new Error(`Failed to load public profile: ${error.message}`);
+    }
+  }
+
+  async login(username, password) {
+    console.log(`[DEBUG] Attempting login for username: ${username}`);
+    try {
+      await this.loginLimiter.attempt(username);
+      if (username === 'public') {
+        await this.loadUser('public');
+        return this.currentUser;
+      }
+      const userPath = path.join(this.userDir, `${username}.json`);
+      try {
+        await fs.access(userPath);
+      } catch {
+        throw new Error(`User ${username} not found`);
+      }
+
+      const userData = JSON.parse(await fs.readFile(userPath, 'utf8'));
+      console.log(`[DEBUG] User data loaded:`, userData);
+
+      let passwordValid = false;
+      if (userData.passwordHash.startsWith('$argon2')) {
+        passwordValid = await argon2.verify(userData.passwordHash, password);
+      } else {
+        const { createHash } = await import('crypto');
+        const legacyHash = createHash('sha256').update(password).digest('hex');
+        passwordValid = userData.passwordHash === legacyHash;
+
+        if (passwordValid) {
+          console.log(`[DEBUG] Upgrading password hash for ${username} to argon2`);
+          userData.passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+          await fs.writeFile(userPath, JSON.stringify(userData, null, 2));
+        }
+      }
+
+      if (!passwordValid) {
+        throw new Error('Invalid password');
+      }
+
+      this.currentUser = userData;
+      console.log(`[DEBUG] Current user set to:`, this.currentUser);
+      await this.createSession(username);
+      this.loginLimiter.reset(username);
+      return this.currentUser;
+    } catch (error) {
+      console.error(`[DEBUG] Login failed: ${error.message}`);
+      throw new Error(`Login failed: ${error.message}`);
+    }
+  }
+
+  async createSession(username) {
+    const session = {
+      username,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + this.sessionDuration
+    };
+    console.log(`[DEBUG] Creating session for username: ${username}`);
+    console.log(`[DEBUG] Session data:`, session);
+    await fs.mkdir(path.dirname(this.sessionFile), { recursive: true });
+    await fs.writeFile(this.sessionFile, JSON.stringify(session, null, 2));
+    console.log(`[DEBUG] Session created for ${username}. Current user:`, this.currentUser);
+  }
+
+  async logout() {
+    console.log('[DEBUG] Logging out current user...');
+    try {
+      try {
+        await fs.unlink(this.sessionFile);
+      } catch {}
+      await this.loadUser('public');
+      console.log('[DEBUG] User logged out. Current user set to public.');
+      return this.currentUser;
+    } catch (error) {
+      console.error(`[DEBUG] Logout failed: ${error.message}`);
+      throw new Error(`Logout failed: ${error.message}`);
+    }
+  }
+
+  async createUser(username, role = 'client', password = null) {
+    // For tests, bypass admin check if TEST_MODE is enabled
+    if (!process.env.MCP_TEST_MODE && !this.isAdmin() && role !== 'admin') {
+      throw new Error('Only administrators can manage users');
+    }
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+      throw new Error('Username must contain only letters, numbers, underscores, and hyphens');
+    }
+
+    await this.ensureUserDir();
+    const userPath = path.join(this.userDir, `${username}.json`);
+    
+    try {
+      await fs.access(userPath);
+      console.warn(`User ${username} already exists. Skipping creation.`);
+      return JSON.parse(await fs.readFile(userPath, 'utf8')); // Return existing user data
+    } catch (error) {
+      if (!error.message.includes('ENOENT')) {
+        throw error;
+      }
+    }
+
+    const finalPassword = password || this.generatePassword();
+    const passwordHash = await argon2.hash(finalPassword, { type: argon2.argon2id });
+    const salt = randomBytes(16).toString('hex');
+    const newUser = {
+      username,
+      role,
+      passwordHash,
+      salt,
+      created: new Date().toISOString(),
+      encryptedApiKeys: {},
+      limits: role === 'admin'
+        ? { maxQueriesPerDay: 100, maxDepth: 5, maxBreadth: 10 }
+        : { maxQueriesPerDay: 20, maxDepth: 3, maxBreadth: 5 }
+    };
+
+    await fs.writeFile(userPath, JSON.stringify(newUser, null, 2));
+    return { ...newUser, password: finalPassword };
+  }
+
+    if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+      throw new Error('Username must contain only letters, numbers, underscores, and hyphens');
+    }
+
+    await this.ensureUserDir();
+    const userPath = path.join(this.userDir, `${username}.json`);
+    
+    try {
+      await fs.access(userPath);
+      console.warn(`User ${username} already exists. Skipping creation.`);
+      return JSON.parse(await fs.readFile(userPath, 'utf8')); // Return existing user data
+    } catch (error) {
+      if (!error.message.includes('ENOENT')) {
+        throw error;
+      }
+    }
+
+    const finalPassword = password || this.generatePassword();
+    const passwordHash = await argon2.hash(finalPassword, { type: argon2.argon2id });
+    const salt = randomBytes(16).toString('hex');
+    const newUser = {
+      username,
+      role,
+      passwordHash,
+      salt,
+      created: new Date().toISOString(),
+      encryptedApiKeys: {},
+      limits: role === 'admin'
+        ? { maxQueriesPerDay: 100, maxDepth: 5, maxBreadth: 10 }
+        : { maxQueriesPerDay: 20, maxDepth: 3, maxBreadth: 5 }
+    };
+
+    await fs.writeFile(userPath, JSON.stringify(newUser, null, 2));
+    return { ...newUser, password: finalPassword };
+  }
+
+  generatePassword(length = 12) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const bytes = randomBytes(length);
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(bytes[i] % chars.length);
+    }
+    return result;
+  }
+
+  async changePassword(currentPassword, newPassword) {
+    if (!this.currentUser || this.currentUser.username === 'public') {
+      throw new Error('Cannot change password for public user');
+    }
+    if (!await argon2.verify(this.currentUser.passwordHash, currentPassword)) {
+      throw new Error('Current password is incorrect');
+    }
+    if (newPassword.length < 8) {
+      throw new Error('New password must be at least 8 characters long');
+    }
+    const newHash = await argon2.hash(newPassword, { type: argon2.argon2id });
+    if (this.currentUser.encryptedApiKeys && Object.keys(this.currentUser.encryptedApiKeys).length) {
+      const oldKey = await deriveKey(currentPassword, this.currentUser.salt);
+      const decryptedKeys = {};
+      for (const [service, enc] of Object.entries(this.currentUser.encryptedApiKeys)) {
+        decryptedKeys[service] = await decryptApiKey(enc, oldKey);
+      }
+      const newSalt = randomBytes(16).toString('hex');
+      const newKey = await deriveKey(newPassword, newSalt);
+      const reEncrypted = {};
+      for (const [service, rawKey] of Object.entries(decryptedKeys)) {
+        reEncrypted[service] = await encryptApiKey(rawKey, newKey);
+      }
+      this.currentUser.encryptedApiKeys = reEncrypted;
+      this.currentUser.salt = newSalt;
+    } else {
+      this.currentUser.salt = randomBytes(16).toString('hex');
+    }
+    this.currentUser.passwordHash = newHash;
+    this.currentUser.passwordChanged = new Date().toISOString();
+    await fs.writeFile(
+      path.join(this.userDir, `${this.currentUser.username}.json`),
+      JSON.stringify(this.currentUser, null, 2)
+    );
+    return true;
+  }
+
+  // Enhance debug logs in setApiKey to include file path and currentUser state
+  async setApiKey(service, apiKey, password) {
+    console.log(`[DEBUG] setApiKey called for service: ${service}`);
+    
+    // Validate session before continuing
+    if (!(await this.validateSession())) {
+      throw new Error('Session expired. Please log in again before setting API keys');
+    }
+    
+    if (!this.currentUser || this.currentUser.username === 'public') {
+        console.error('[DEBUG] Cannot set API keys for public user');
+        throw new Error('Cannot set API keys for public user');
+    }
+
+    console.log('[DEBUG] Verifying password for current user');
+    if (!await argon2.verify(this.currentUser.passwordHash, password)) {
+        console.error('[DEBUG] Password verification failed');
+        throw new Error('Password is incorrect');
+    }
+
+    console.log('[DEBUG] Password verified successfully');
+    if (!this.currentUser.salt) {
+        console.log('[DEBUG] Generating new salt for user');
+        this.currentUser.salt = randomBytes(16).toString('hex');
+    }
+
+    if (!this.currentUser.encryptedApiKeys) {
+        console.log('[DEBUG] Initializing encryptedApiKeys object');
+        this.currentUser.encryptedApiKeys = {};
+    }
+
+    console.log(`[DEBUG] Deriving encryption key for service: ${service}`);
+    const key = await deriveKey(password, this.currentUser.salt);
+    const encryptedKey = await encryptApiKey(apiKey, key);
+    this.currentUser.encryptedApiKeys[service] = encryptedKey;
+
+    const userFilePath = path.join(this.userDir, `${this.currentUser.username}.json`);
+    console.log(`[DEBUG] Writing updated user profile to: ${userFilePath}`);
+    await fs.writeFile(userFilePath, JSON.stringify(this.currentUser, null, 2));
+
+    console.log(`[DEBUG] API key for ${service} set successfully.`);
+    console.log(`[DEBUG] Current user state after setting API key:`, this.currentUser);
+    return true;
+}
+
+  async getApiKey(service, password) {
+    // Validate session before continuing
+    if (!(await this.validateSession())) {
+      throw new Error('Session expired. Please log in again before accessing API keys');
+    }
+    
+    if (!this.currentUser || this.currentUser.username === 'public') {
+      return null;
+    }
+    if (!this.currentUser.encryptedApiKeys || !this.currentUser.encryptedApiKeys[service]) {
+      console.warn(`[DEBUG] No API key found for ${service}.`);
+      return null;
+    }
+    if (!await argon2.verify(this.currentUser.passwordHash, password)) {
+      throw new Error('Password is incorrect');
+    }
+    const key = await deriveKey(password, this.currentUser.salt);
+    const decryptedKey = await decryptApiKey(this.currentUser.encryptedApiKeys[service], key);
+    console.log(`[DEBUG] API key for ${service} retrieved successfully.`);
+    return decryptedKey;
+  }
+
+  // Add debug logs to confirm setApiKey and hasApiKey behavior
+  async hasApiKey(service) {
+    console.log(`[DEBUG] Checking if API key exists for service: ${service}`);
+    if (!this.currentUser?.encryptedApiKeys?.[service]) {
+      console.warn(`[DEBUG] No API key found for ${service}.`);
+      return false;
+    }
+    console.log(`[DEBUG] API key exists for service: ${service}`);
+    return true;
+  }
+
+  isAdmin() {
+    return this.currentUser && this.currentUser.role === 'admin';
+  }
+
+  isAuthenticated() {
+    return this.currentUser && this.currentUser.username !== 'public';
+  }
+
+  getUsername() {
+    return this.currentUser ? this.currentUser.username : 'public';
+  }
+
+  getRole() {
+    return this.currentUser ? this.currentUser.role : 'public';
+  }
+
+  getLimits() {
+    if (!this.currentUser) {
+      return { maxQueriesPerHour: 3, maxDepth: 2, maxBreadth: 3 };
+    }
+    return this.currentUser.limits || { maxQueriesPerHour: 3, maxDepth: 2, maxBreadth: 3 };
+  }
+
+  /**
+   * Checks if the current session is valid and not expired
+   * @returns {Promise<boolean>} True if session is valid, false otherwise
+   */
+  async isSessionValid() {
+    try {
+      console.log('[DEBUG] Validating session...');
+
+      // If not authenticated, there's no session to validate
+      if (!this.isAuthenticated()) {
+        console.log('[DEBUG] No authenticated user, session invalid.');
+        return false;
+      }
+
+      // Try to read the session file
+      const sessionData = JSON.parse(await fs.readFile(this.sessionFile, 'utf8'));
+      console.log('[DEBUG] Session data loaded:', sessionData);
+
+      if (!sessionData?.username || !sessionData?.expiresAt) {
+        console.log('[DEBUG] Invalid session format');
+        return false;
+      }
+
+      // Check if session matches current user
+      if (sessionData.username !== this.getUsername()) {
+        console.log('[DEBUG] Session username mismatch');
+        return false;
+      }
+
+      // Check if session has expired
+      const now = Date.now();
+      if (now >= sessionData.expiresAt) {
+        console.log('[DEBUG] Session has expired');
+        return false;
+      }
+
+      console.log('[DEBUG] Session is valid');
+      return true;
+    } catch (error) {
+      console.error(`[DEBUG] Error validating session: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Validates current session and logs user out if invalid
+   * @returns {Promise<boolean>} True if session is valid, false if logged out
+   */
+  async validateSession() {
+    console.log('[DEBUG] Validating current session...');
+    const isValid = await this.isSessionValid();
+    if (!isValid && this.isAuthenticated()) {
+      console.log('[DEBUG] Invalid session detected, logging out user');
+      await this.logout();
+      return false;
+    }
+    console.log('[DEBUG] Session is valid');
+    return isValid;
+  }
+}
+
+export const userManager = new UserManager();
