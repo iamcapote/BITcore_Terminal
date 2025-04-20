@@ -2,28 +2,58 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Research CLI</title>
+  <title>MCP Web Terminal</title>
+  <link rel="stylesheet" href="style.css">
   <style>
     body {
-      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
       margin: 0;
-      padding: 10px;
+      font-family: monospace;
       background-color: black;
       color: white;
     }
+    .header {
+      padding: 5px 10px;
+      background-color: #1a1a1a;
+      border-bottom: 1px solid #333;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .status-indicators span {
+      margin-left: 15px;
+    }
+    .status-connected { color: #0f0; }
+    .status-disconnected { color: #f00; }
     #output {
-      white-space: pre-wrap;
+      flex-grow: 1;
       overflow-y: auto;
-      height: 90vh;
+      padding: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
       background-color: black;
       color: white;
-      padding: 5px;
-      border: 1px solid #333;
+      border: none;
+    }
+    #progress-bar {
+        display: none;
+        padding: 5px 10px;
+        background-color: #333;
+        color: #eee;
+        text-align: center;
+        font-size: 0.9em;
+        flex-shrink: 0;
     }
     #input-container {
       display: flex;
       align-items: center;
-      margin-top: 10px;
+      padding: 5px 10px;
+      background-color: #1a1a1a;
+      border-top: 1px solid #333;
+      flex-shrink: 0;
     }
     #prompt {
       margin-right: 5px;
@@ -31,258 +61,47 @@
     }
     #input {
       flex-grow: 1;
-      background-color: black;
+      background-color: transparent;
       color: white;
       border: none;
       outline: none;
       font-family: monospace;
+      font-size: 1em;
+      padding: 2px 0;
     }
-    #input:disabled {
-      background-color: #333;
-      color: #999;
-    }
-    .loading {
-      color: #aaa;
-      font-style: italic;
-    }
-    .error {
-      color: #f00;
-    }
-    .success {
-      color: #0f0;
-    }
-    .processing {
-      color: #0af;
-      font-style: italic;
-    }
-    #status-bar {
-      display: flex;
-      justify-content: space-between;
-      position: fixed;
-      top: 5px;
-      right: 10px;
-      font-size: 0.8em;
-      padding: 2px 5px;
-    }
-    #connection-status {
-      margin-right: 10px;
-      padding: 2px 5px;
-      border-radius: 3px;
-    }
-    #user-status {
-      margin-right: 10px;
-      padding: 2px 5px;
-      border-radius: 3px;
-      background-color: #333;
-    }
-    .status-disconnected {
-      background-color: #f00;
-      color: white;
-    }
-    .status-connected {
-      background-color: #0f0;
-      color: black;
-    }
-    .status-connecting {
-      background-color: #ff0;
-      color: black;
-    }
-    .progress-bar {
-      margin-top: 10px;
-      height: 30px;
-      background: #111;
-      border: 1px solid #0f0;
-      border-radius: 4px;
-      overflow: hidden;
-      position: relative;
-    }
-    .progress-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(to right, #0a0, #0f0);
-      animation: pulse 2s infinite;
-      transition: width 0.5s ease;
-    }
-    .progress-text {
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-    #commands-help {
-      position: fixed;
-      bottom: 10px;
-      right: 10px;
+    #input:disabled, #input.disabled {
       background-color: #222;
-      padding: 10px;
-      border: 1px solid #444;
-      border-radius: 5px;
-      display: none;
-      max-width: 300px;
-      z-index: 10;
+      color: #888;
+      cursor: not-allowed;
     }
-    #help-toggle {
-      position: fixed;
-      bottom: 10px;
-      right: 10px;
-      background-color: #0f0;
-      color: black;
-      border: none;
-      border-radius: 5px;
-      padding: 5px 10px;
-      cursor: pointer;
+    .terminal-line {
+        margin-bottom: 2px;
     }
-    #reset-btn {
-      position: fixed;
-      bottom: 10px;
-      right: 80px;
-      background-color: #f00;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      padding: 5px 10px;
-      cursor: pointer;
-    }
-    @keyframes pulse {
-      0% { opacity: 0.6; }
-      50% { opacity: 1; }
-      100% { opacity: 0.6; }
+    .password-input {
     }
   </style>
 </head>
 <body>
-<div id="status-bar">
-  <div id="user-status">User: public</div>
-  <div id="connection-status" class="status-connecting">Connecting...</div>
-</div>
-<pre id="output">Initializing Research CLI...</pre>
-<div id="input-container">
-  <span id="prompt">> </span>
-  <input id="input" type="text" autofocus />
-</div>
 
-<button id="reset-btn">Reset Terminal</button>
-<button id="help-toggle">Help</button>
-<div id="commands-help">
-  <h3>Available Commands</h3>
-  <ul>
-    <li><strong>/login &lt;username&gt;</strong> - Log in as a user</li>
-    <li><strong>/logout</strong> - Log out of current session</li>
-    <li><strong>/status</strong> - Show current user status</li>
-    <li><strong>/keys set</strong> - Set API keys</li>
-    <li><strong>/keys check</strong> - Check API key status</li>
-    <li><strong>/keys test</strong> - Test API key validity</li>
-    <li><strong>/password-change</strong> - Change your password</li>
-    <li><strong>/users create</strong> - Create a new user (admin only)</li>
-    <li><strong>/research</strong> - Start a research session</li>
-    <li><strong>/chat</strong> - Start a chat session</li>
-    <li><strong>/exit</strong> - Exit chat mode</li>
-    <li><strong>/exitmemory</strong> - Exit memory mode in chat</li>
-    <li><strong>/help</strong> - Show available commands</li>
-  </ul>
-</div>
+  <div class="header">
+    <h1>MCP Web Terminal</h1>
+    <div class="status-indicators">
+      <span id="user-status">User: public</span>
+      <span id="connection-status" class="status-disconnected">Disconnected</span>
+    </div>
+  </div>
 
-<!-- Load scripts in the correct order -->
-<script src="webcomm.js"></script>
-<script src="command-processor.js"></script>
-<script src="terminal.js"></script>
-<script src="research.js"></script>
-<script src="chat.js"></script>
+  <div id="output">Initializing MCP Web Terminal...</div>
 
-<script>
-  document.addEventListener('DOMContentLoaded', async function() {
-    const connectionStatusEl = document.getElementById('connection-status');
-    const userStatusEl = document.getElementById('user-status');
-    const helpToggleBtn = document.getElementById('help-toggle');
-    const commandsHelpEl = document.getElementById('commands-help');
-    const resetBtn = document.getElementById('reset-btn');
-    
-    // Wait for terminal to be initialized (it's created in terminal.js)
-    setTimeout(() => {
-      if (!window.terminal) {
-        console.error('Terminal not initialized');
-        return;
-      }
-      
-      // Initialize research system using the global terminal
-      if (!window.research) {
-        window.research = new Research(window.terminal);
-      }
-      
-      // Create a basic chat client (if needed)
-      if (!window.chat) {
-        window.chat = {
-          handleCommand: async () => false,
-          currentUser: 'public'
-        };
-      }
-      
-      // Don't set up event listeners here if they're already defined in terminal.js
-      console.log('Terminal setup complete');
-    }, 100);
-    
-    // Toggle help panel
-    helpToggleBtn.addEventListener('click', () => {
-      if (commandsHelpEl.style.display === 'block') {
-        commandsHelpEl.style.display = 'none';
-        helpToggleBtn.textContent = 'Help';
-      } else {
-        commandsHelpEl.style.display = 'block';
-        helpToggleBtn.textContent = 'Hide';
-      }
-    });
-    
-    // Reset terminal button functionality
-    resetBtn.addEventListener('click', () => {
-      if (confirm('Are you sure you want to reset the terminal? This will clear any ongoing operations.')) {
-        if (window.terminal) {
-          window.terminal.appendOutput('Resetting terminal state...');
-          window.terminal.enableInput();
-          
-          if (window.research) {
-            // Reset research state
-            window.research.running = false;
-            window.research.setMode('command');
-            window.terminal.setPrompt('> ');
-          }
-          
-          window.terminal.appendOutput('Terminal reset complete. You may continue working.');
-        }
-      }
-    });
+  <div id="progress-bar"><span></span></div>
 
-    function updateConnectionStatus() {
-      const isConnected = window.webcomm && window.webcomm.isConnected();
-      
-      if (isConnected) {
-        connectionStatusEl.textContent = 'Connected';
-        connectionStatusEl.className = 'status-connected';
-      } else {
-        connectionStatusEl.textContent = window.webcomm && window.webcomm.ws ? 'Connecting...' : 'Disconnected';
-        connectionStatusEl.className = window.webcomm && window.webcomm.ws ? 'status-connecting' : 'status-disconnected';
-      }
-    }
+  <div id="input-container">
+    <span id="prompt">&gt; </span>
+    <input type="text" id="input" autocomplete="off" spellcheck="false" autocapitalize="off" autofocus />
+  </div>
 
-    // Update connection status every second
-    setInterval(updateConnectionStatus, 1000);
-
-    // Handle keyboard shortcuts - define only once
-    document.addEventListener('keydown', function(event) {
-      // Ctrl+L clears the terminal
-      if (event.ctrlKey && event.key === 'l') {
-        event.preventDefault();
-        if (window.terminal) {
-          window.terminal.clear();
-          window.terminal.appendOutput('Terminal cleared.');
-          if (window.terminal.input) {
-            window.terminal.input.focus();
-          }
-        }
-      }
-    });
-  });
-</script>
+  <script src="webcomm.js"></script>
+  <script src="terminal.js"></script>
+  <script src="command-processor.js"></script>
 </body>
 </html>

@@ -2,20 +2,55 @@ import express from 'express';
 import crypto from 'crypto';
 import { ResearchEngine } from '../../infrastructure/research/research.engine.mjs';
 import { cleanQuery } from '../../utils/research.clean-query.mjs';
-import { commands, parseCommandArgs } from '../../commands/index.mjs';
+// --- FIX: Import executeExitResearch ---
+import { commands as commandFunctions, displayHelp } from '../../commands/index.mjs';
 import { output } from '../../utils/research.output-manager.mjs';
 import { userManager } from '../auth/user-manager.mjs';
-import { runResearch } from './research.controller.mjs';
 import { MemoryManager } from '../../infrastructure/memory/memory.manager.mjs';
-import { startResearchFromChat } from '../../commands/chat.cli.mjs';
-import { WebSocketServer } from 'ws';
+// --- FIX: Import executeExitResearch (already imported via commandFunctions) ---
+import { startResearchFromChat, exitMemory, executeExitResearch } from '../../commands/chat.cli.mjs';
+import { WebSocketServer, WebSocket } from 'ws';
 import { LLMClient } from '../../infrastructure/ai/venice.llm-client.mjs';
 import { callVeniceWithTokenClassifier } from '../../utils/token-classifier.mjs';
+import os from 'os';
+import { safeSend } from '../../utils/websocket.utils.mjs'; // Use utils - Removed safePing
+import { cleanChatResponse } from '../../infrastructure/ai/venice.response-processor.mjs';
+import { executeResearch } from '../../commands/research.cli.mjs';
+// --- FIX: Removed incorrect import ---
+// import { wsPrompt } from './ws-prompt.util.mjs'; // wsPrompt is defined in this file
 
 const router = express.Router();
 
 // Store active chat sessions with their memory managers
 const activeChatSessions = new Map();
+const wsSessionMap = new WeakMap(); // Maps WebSocket instance to Session ID
+
+// Timeout for inactive sessions (e.g., 1 hour)
+const SESSION_INACTIVITY_TIMEOUT = 60 * 60 * 1000;
+// Timeout for pending prompts (e.g., 2 minutes)
+const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
+
+// --- NEW: Helper to explicitly control client input state ---
+function enableClientInput(ws) {
+  // Add check for open state before sending
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    console.log("[WebSocket] Sending enable_input");
+    safeSend(ws, { type: 'enable_input' }); // Use imported safeSend
+  } else {
+    console.warn("[WebSocket] Tried to enable input on closed/invalid socket.");
+  }
+}
+
+function disableClientInput(ws) {
+   // Add check for open state before sending
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    console.log("[WebSocket] Sending disable_input");
+    safeSend(ws, { type: 'disable_input' }); // Use imported safeSend
+  } else {
+     console.warn("[WebSocket] Tried to disable input on closed/invalid socket.");
+  }
+}
+// ---
 
 router.post('/', async (req, res) => {
   try {
@@ -24,10 +59,17 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Query is required and must be a string' });
     }
 
-    const engine = new ResearchEngine({ query, depth, breadth });
-    const result = await engine.research();
-    res.json(result);
+    // TODO: Add authentication/authorization check here if needed for HTTP endpoint
+    // const engine = new ResearchEngine({ query, depth, breadth });
+    // For now, assuming HTTP endpoint might be less used or secured differently
+    // Placeholder:
+    console.warn("[HTTP POST /api/research] Endpoint hit - consider security implications.");
+    // const result = await engine.research();
+    // res.json(result);
+    res.status(501).json({ error: "HTTP research endpoint not fully implemented/secured." });
+
   } catch (error) {
+    console.error("[HTTP POST /api/research] Error:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -35,1073 +77,1315 @@ router.post('/', async (req, res) => {
 /**
  * Handle WebSocket connection for the research interface
  * @param {WebSocket} ws WebSocket connection
+ * @param {Object} req The initial HTTP request (useful for session info if using express-session)
  */
-export function handleResearchSocket(ws) {
-  // Create a map to track active prompts and prevent duplicate processing
-  const activePrompts = new Map();
-  // Flag to track if research is in progress
-  let researchInProgress = false;
-  
-  // Track processed message IDs to prevent duplicates
-  const processedMessageIds = new Set();
-  
-  // Send initial welcome message
-  ws.send(JSON.stringify({
-    type: 'output',
-    data: 'Welcome to the Research WebSocket interface!',
-    messageId: `welcome-${Date.now()}`
-  }));
-  
-  // Ensure we're starting fresh with no lingering message listeners
-  ws.removeAllListeners('message');
-  
-  ws.on('message', async (raw) => {
-    try {
-      const message = JSON.parse(raw.toString());
-      console.log(`[WebSocket] Research socket received message:`, JSON.stringify(message).substring(0, 100));
-      
-      // Check for duplicate messages using messageId
-      const messageId = message.messageId || `msg-${Date.now()}`;
-      if (processedMessageIds.has(messageId)) {
-        console.log(`Skipping duplicate message with ID: ${messageId}`);
-        return;
-      }
-      
-      // Add this message ID to the processed set
-      processedMessageIds.add(messageId);
-      
-      // Limit the size of the processed IDs set
-      if (processedMessageIds.size > 100) {
-        // Convert to array, take the last 50 items, and convert back to set
-        processedMessageIds = new Set([...processedMessageIds].slice(-50));
-      }
-      
-      // Handle cancel command
-      if (message.input && message.input.trim().toLowerCase() === '/cancel') {
-        if (researchInProgress) {
-          researchInProgress = false;
-          ws.send(JSON.stringify({
-            type: 'system-message',
-            message: 'Research cancelled by user',
-            messageId: `cancel-${Date.now()}`
-          }));
-          
-          // Clear all active prompts
-          activePrompts.forEach((handler, id) => {
-            ws.removeListener('message', handler);
-          });
-          activePrompts.clear();
-        }
-        return;
-      }
+export function handleWebSocketConnection(ws, req) {
+  console.log('[WebSocket] New connection established');
 
-      // Handle /chat command specifically
-      if (message.input && message.input.trim().toLowerCase().startsWith('/chat')) {
-        wsOutput("Executing command: chat");
-        
-        // Parse the chat command options
-        const inputParts = message.input.trim().split(' ');
-        const chatOptions = {};
-        
-        // Extract options like --memory=true from the command
-        for (let i = 1; i < inputParts.length; i++) {
-          if (inputParts[i].startsWith('--')) {
-            const [key, value] = inputParts[i].substring(2).split('=');
-            chatOptions[key] = value === 'true' ? true : 
-                             value === 'false' ? false : 
-                             value || true;
-          }
-        }
-        
-        // Set websocket flag to indicate this is running in web mode
-        chatOptions.websocket = true;
-        chatOptions.webSocketClient = ws;
-        
-        // Initialize chat session for web
-        await initializeWebChatSession(ws, chatOptions);
-        
-        // Notify client to switch to chat mode
-        ws.send(JSON.stringify({
-          type: 'mode_change',
-          mode: 'chat',
-          messageId: `mode-${Date.now()}`
-        }));
-        
-        return;
-      }
-      
-      // Block new inputs if research is already in progress
-      if (researchInProgress && activePrompts.size === 0) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          error: 'Research already in progress. Please wait or type /cancel to stop.',
-          messageId: `busy-${Date.now()}`
-        }));
-        return;
-      }
-      
-      // Start new research session
-      if (message.input && message.input.trim().toLowerCase() === '/research') {
-        // Prevent multiple simultaneous research processes
-        if (researchInProgress) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: 'Research already in progress. Please wait or type /cancel to stop.',
-            messageId: `busy-${Date.now()}`
-          }));
-          return;
-        }
-        
-        researchInProgress = true;
-        
-        // Tell client to enter research mode
-        ws.send(JSON.stringify({
-          type: 'research_start',
-          messageId: `start-${Date.now()}`
-        }));
-        
-        // Gather inputs for research
-        const researchParams = await gatherResearchInputs();
-        
-        if (!researchParams) {
-          researchInProgress = false;
-          ws.send(JSON.stringify({
-            type: 'research_complete',
-            messageId: `complete-cancelled-${Date.now()}`
-          }));
-          return;
-        }
-        
-        try {
-          // Run the research
-          await runResearch(researchParams.query, researchParams.breadth, researchParams.depth);
-          
-          ws.send(JSON.stringify({
-            type: 'research_complete',
-            messageId: `complete-${Date.now()}`
-          }));
-        } catch (error) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: `Error during research: ${error.message}`,
-            messageId: `error-${Date.now()}`
-          }));
-          
-          // Still send research_complete to reset client state
-          ws.send(JSON.stringify({
-            type: 'research_complete',
-            messageId: `complete-error-${Date.now()}`
-          }));
-        } finally {
-          researchInProgress = false;
-        }
-      } 
-      // Handle direct input (for prompts)
-      else if (message.input !== undefined) {
-        console.log('[WebSocket] Processing input in handleResearchSocket:', message.input);
-        // If there's an active prompt waiting for this input, it will be handled by the prompt's message handler
-      }
-    } catch (error) {
-      ws.send(JSON.stringify({
-        type: 'error',
-        error: `Error processing message: ${error.message}`,
-        messageId: `error-${Date.now()}`
-      }));
-    }
-  });
-  
-  // Helper function to prompt the user for input via WebSocket
-  async function wsPrompt(prompt) {
-    return new Promise(resolve => {
-      const promptId = `prompt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
-      const messageHandler = function(raw) {
-        try {
-          const message = JSON.parse(raw.toString());
-          if (message.input !== undefined) {
-            // Remove this specific listener to prevent duplicate processing
-            ws.removeListener('message', messageHandler);
-            activePrompts.delete(promptId);
-            resolve(message.input ? message.input.trim() : '');
-          }
-        } catch (e) {
-          // In case of parse error, just continue
-        }
-      };
-      
-      // Add message handler for this specific prompt
-      ws.addListener('message', messageHandler);
-      activePrompts.set(promptId, messageHandler);
-      
-      // Send prompt to client
-      ws.send(JSON.stringify({
-        type: 'prompt',
-        data: prompt,
-        messageId: promptId
-      }));
-      
-      // Set timeout to prevent hanging
-      setTimeout(() => {
-        if (activePrompts.has(promptId)) {
-          ws.removeListener('message', messageHandler);
-          activePrompts.delete(promptId);
-          resolve(''); // Resolve with empty string after timeout
-          ws.send(JSON.stringify({
-            type: 'output',
-            data: 'Input timed out.',
-            messageId: `timeout-${Date.now()}`
-          }));
-        }
-      }, 60000); // 1 minute timeout
-    });
-  }
-  
-  // Helper function to send output to client
-  function wsOutput(message) {
-    const outputId = `output-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    ws.send(JSON.stringify({
-      type: 'output',
-      data: message,
-      messageId: outputId
-    }));
-  }
-  
-  // Helper function to gather research inputs from user
-  async function gatherResearchInputs() {
-    try {
-      // Get research query
-      wsOutput("Enter your research query:");
-      const researchQuery = await wsPrompt("Query: ");
-      
-      if (!researchQuery || researchQuery.trim().length === 0) {
-        wsOutput("Empty query. Research cancelled.");
-        return null;
-      }
-      
-      // Get research depth
-      wsOutput("Enter research depth (1-5):");
-      const depthStr = await wsPrompt("Depth [2]: ");
-      let depth = parseInt(depthStr || '2', 10);
-      
-      if (isNaN(depth) || depth < 1 || depth > 5) {
-        wsOutput(`Invalid depth: ${depthStr}. Using default depth: 2`);
-        depth = 2;
-      }
-      
-      // Get research breadth
-      wsOutput("Enter research breadth (2-10):");
-      const breadthStr = await wsPrompt("Breadth [3]: ");
-      let breadth = parseInt(breadthStr || '3', 10);
-      
-      if (isNaN(breadth) || breadth < 2 || breadth > 10) {
-        wsOutput(`Invalid breadth: ${breadthStr}. Using default breadth: 3`);
-        breadth = 3;
-      }
-      
-      // Ask about token classification
-      wsOutput("Would you like to use token classification to enhance your query? (y/n)");
-      const useTokenClassifierStr = await wsPrompt("[y/n]: ");
-      const useTokenClassifier = useTokenClassifierStr.toLowerCase() === 'y';
-      
-      // Create enhanced query object
-      let enhancedQuery = { original: researchQuery };
-      
-      if (useTokenClassifier) {
-        try {
-          wsOutput("Classifying query with token classifier...");
-          const tokenMetadata = await callVeniceWithTokenClassifier(researchQuery);
-          enhancedQuery.metadata = tokenMetadata;
-          
-          ws.send(JSON.stringify({
-            type: 'classification_result',
-            metadata: tokenMetadata,
-            messageId: `class-${Date.now()}`
-          }));
-          
-        } catch (error) {
-          wsOutput(`Error during token classification: ${error.message}`);
-          wsOutput("Continuing with basic query...");
-        }
-      }
-      
-      return { query: enhancedQuery, breadth, depth };
-    } catch (error) {
-      wsOutput(`Error gathering research inputs: ${error.message}`);
-      return null;
-    }
-  }
-  
-  // Helper function to run research with the gathered inputs
-  async function runResearch(query, breadth, depth) {
-    wsOutput(`\nStarting research...\nQuery: "${query.original}"\nDepth: ${depth} Breadth: ${breadth}` 
-      + `${query.metadata ? "\nUsing enhanced metadata from token classification" : ""}\n`);
-    
-    const engine = new ResearchEngine({
-      query,
-      breadth,
-      depth,
-      onProgress: (progress) => {
-        ws.send(JSON.stringify({
-          type: 'progress',
-          data: `${progress.completedQueries}/${progress.totalQueries}`,
-          messageId: `progress-${Date.now()}`
-        }));
-      }
-    });
-    
-    const result = await engine.research();
-    
-    wsOutput("\nResearch complete!");
-    if (result.learnings.length === 0) {
-      wsOutput("No learnings were found.");
-    } else {
-      wsOutput("\nKey Learnings:");
-      result.learnings.forEach((learning, i) => {
-        wsOutput(`${i + 1}. ${learning}`);
-      });
-    }
-    
-    if (result.sources.length > 0) {
-      wsOutput("\nSources:");
-      result.sources.forEach(source => {
-        wsOutput(`- ${source}`);
-      });
-    }
-    
-    wsOutput(`\nResults saved to: ${result.filename || "research folder"}`);
-    return result;
-  }
-}
-
-/**
- * Handle WebSocket connection for the chat interface
- * @param {WebSocket} ws WebSocket connection
- */
-export function handleChatSocket(ws) {
-  // Track this client's session
-  const sessionId = crypto.randomUUID();
-  let memoryManager = null;
-  
-  ws.on('message', async (message) => {
-    console.log(`[WebSocket] Received message in handleChatSocket:`, message.toString().substring(0, 100)); // Log incoming message
-    try {
-      const data = JSON.parse(message);
-      
-      // Log parsed data
-      console.log('[WebSocket] Parsed message data:', data);
-      
-      // Handle direct /chat command from the web-CLI
-      if (data.input && data.input.trim().toLowerCase().startsWith('/chat')) {
-        console.log('[WebSocket] Processing /chat command in handleChatSocket');
-        
-        // Parse the chat command options
-        const inputParts = data.input.trim().split(' ');
-        const chatOptions = {};
-        
-        // Extract options like --memory=true from the command
-        for (let i = 1; i < inputParts.length; i++) {
-          if (inputParts[i].startsWith('--')) {
-            const [key, value] = inputParts[i].substring(2).split('=');
-            chatOptions[key] = value === 'true' ? true : 
-                            value === 'false' ? false : 
-                            value || true;
-          }
-        }
-        
-        // Set websocket flag to indicate this is running in web mode
-        chatOptions.websocket = true;
-        chatOptions.webSocketClient = ws;
-        
-        // Acknowledge command receipt before initialization
-        ws.send(JSON.stringify({
-          type: 'output',
-          data: 'Executing command: chat',
-          messageId: `chat-cmd-${Date.now()}`
-        }));
-        
-        // Initialize chat session for web
-        await initializeWebChatSession(ws, chatOptions);
-        return;
-      }
-      
-      // Handle other message types
-      if (data.type === 'chat-init') {
-        // Initialize chat session
-        const username = data.username;
-        const password = data.password;
-        const memoryEnabled = data.memoryEnabled || false;
-        const memoryDepth = data.memoryDepth || 'medium';
-        
-        try {
-          // Authenticate user
-          const authResult = await userManager.authenticateUser(username, password);
-          if (!authResult.success) {
-            ws.send(JSON.stringify({
-              type: 'auth-error',
-              error: 'Authentication failed'
-            }));
-            return;
-          }
-          
-          // Check for Venice API key
-          const hasVeniceKey = await userManager.hasApiKey('venice');
-          if (!hasVeniceKey) {
-            ws.send(JSON.stringify({
-              type: 'api-key-error',
-              error: 'Venice API key is required for chat'
-            }));
-            return;
-          }
-          
-          // Get Venice API key
-          const veniceKey = await userManager.getApiKey('venice', password);
-          if (!veniceKey) {
-            ws.send(JSON.stringify({
-              type: 'api-key-error',
-              error: 'Failed to decrypt Venice API key'
-            }));
-            return;
-          }
-          
-          // Set API key for the session
-          process.env.VENICE_API_KEY = veniceKey;
-          
-          // Initialize memory manager if enabled
-          if (memoryEnabled) {
-            memoryManager = new MemoryManager({
-              depth: memoryDepth,
-              user: userManager.currentUser
-            });
-            
-            // Store active session
-            activeChatSessions.set(sessionId, {
-              username,
-              memoryManager,
-              chatHistory: [],
-              lastActivity: Date.now()
-            });
-          } else {
-            // Store session without memory manager
-            activeChatSessions.set(sessionId, {
-              username,
-              memoryManager: null,
-              chatHistory: [],
-              lastActivity: Date.now()
-            });
-          }
-          
-          // Send successful initialization
-          ws.send(JSON.stringify({
-            type: 'chat-ready',
-            sessionId,
-            memoryEnabled,
-            memoryDepth: memoryManager ? memoryManager.getDepthLevel() : null
-          }));
-          
-        } catch (error) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: `Failed to initialize chat: ${error.message}`
-          }));
-        }
-      } 
-      else if (data.type === 'chat-message') {
-        console.log('[WebSocket] Processing chat message:', data.message); // Log chat message
-        // Handle chat message
-        const userMessage = data.message;
-        
-        // Check session validity
-        if (data.sessionId && activeChatSessions.has(data.sessionId)) {
-          // Update last activity
-          const session = activeChatSessions.get(data.sessionId);
-          session.lastActivity = Date.now();
-          memoryManager = session.memoryManager;
-          
-          // Add user message to chat history
-          if (!session.chatHistory) {
-            session.chatHistory = [];
-          }
-          session.chatHistory.push({ role: 'user', content: userMessage });
-        }
-        
-        try {
-          // Process special commands
-          if (userMessage.trim().toLowerCase() === '/exitmemory' && memoryManager) {
-            // Finalize memories
-            await commands.exitmemory({ sessionId });
-            
-            ws.send(JSON.stringify({
-              type: 'system-message',
-              message: 'Memory finalization complete. Memory mode disabled.'
-            }));
-            
-            // Remove memory manager
-            memoryManager = null;
-            if (activeChatSessions.has(data.sessionId)) {
-              const session = activeChatSessions.get(data.sessionId);
-              session.memoryManager = null;
-            }
-            
-            return;
-          }
-          
-          // Handle research command
-          if (userMessage.trim().toLowerCase() === '/research') {
-            // Check if session exists
-            if (!activeChatSessions.has(data.sessionId)) {
-              ws.send(JSON.stringify({
-                type: 'error',
-                error: 'No active chat session found'
-              }));
-              return;
-            }
-            
-            const session = activeChatSessions.get(data.sessionId);
-            const chatHistory = session.chatHistory || [];
-            
-            // Check if there's enough conversation context
-            if (chatHistory.length < 2) {
-              ws.send(JSON.stringify({
-                type: 'system-message',
-                message: 'Not enough conversation context to generate research queries. Continue chatting first.'
-              }));
-              return;
-            }
-            
-            ws.send(JSON.stringify({
-              type: 'system-message',
-              message: 'Generating research queries from chat context...'
-            }));
-            
-            // Get memory blocks if available
-            let memoryBlocks = [];
-            if (session.memoryManager) {
-              // Get all recent memories for research context
-              const lastMessage = chatHistory[chatHistory.length - 1].content;
-              memoryBlocks = await session.memoryManager.retrieveRelevantMemories(lastMessage);
-            }
-            
-            // Request research parameters
-            const depth = 2; // Default depth
-            const breadth = 3; // Default breadth
-            
-            // Start research process
-            ws.send(JSON.stringify({
-              type: 'system-message',
-              message: 'Starting research based on chat context...'
-            }));
-            
-            ws.send(JSON.stringify({
-              type: 'research_start'
-            }));
-            
-            // Execute research
-            const result = await startResearchFromChat(chatHistory, memoryBlocks, {
-              depth,
-              breadth,
-              verbose: true
-            }, (output) => {
-              ws.send(JSON.stringify({
-                type: 'output',
-                data: output
-              }));
-            });
-            
-            if (result.success) {
-              ws.send(JSON.stringify({
-                type: 'research_complete'
-              }));
-              
-              ws.send(JSON.stringify({
-                type: 'system-message',
-                message: 'Research completed successfully!'
-              }));
-              
-              // Send research results
-              ws.send(JSON.stringify({
-                type: 'chat-response',
-                message: `Research on topic "${result.topic}" completed. Here are the key learnings:\n\n${
-                  result.results.learnings.map((learning, i) => `${i+1}. ${learning}`).join('\n')
-                }`,
-                timestamp: new Date().toISOString()
-              }));
-              
-              // Store research results in memory if enabled
-              if (session.memoryManager) {
-                const researchSummary = `Research on "${result.topic}" found: ${result.results.learnings.join(' ')}`;
-                await session.memoryManager.storeMemory(researchSummary, 'research-summary');
-                
-                // Add to chat history
-                session.chatHistory.push({ 
-                  role: 'assistant', 
-                  content: `I conducted research on "${result.topic}" and found: ${result.results.learnings.join(' ')}`
-                });
-              }
-            } else {
-              ws.send(JSON.stringify({
-                type: 'error',
-                error: `Failed to complete research: ${result.error}`
-              }));
-              
-              ws.send(JSON.stringify({
-                type: 'research_complete'
-              }));
-            }
-            
-            return;
-          }
-          
-          // Process regular chat message
-          const responseTimeout = setTimeout(() => {
-            ws.send(JSON.stringify({
-              type: 'error',
-              error: 'Response from LLMClient timed out.'
-            }));
-          }, 30000); // 30-second timeout
-
-          try {
-            // Get the session to access chat history
-            const session = activeChatSessions.get(data.sessionId);
-            const chatHistory = session ? session.chatHistory : [];
-
-            // Bail out if we don't have a valid session or API key
-            if (!session) {
-              clearTimeout(responseTimeout);
-              ws.send(JSON.stringify({
-                type: 'error',
-                error: 'No active chat session found. Please restart your chat session.'
-              }));
-              return;
-            }
-            
-            // Initialize LLMClient for this request
-            if (!process.env.VENICE_API_KEY) {
-              clearTimeout(responseTimeout);
-              ws.send(JSON.stringify({
-                type: 'error',
-                error: 'Missing Venice API key. Please restart your chat session.'
-              }));
-              return;
-            }
-            
-            const llmClient = new LLMClient({
-              apiKey: process.env.VENICE_API_KEY,
-              model: 'llama-3.3-70b'
-            });
-            
-            // Complete the chat with the user's message
-            const response = await llmClient.completeChat({
-              messages: chatHistory,
-              temperature: 0.7,
-              maxTokens: 1000
-            });
-            
-            clearTimeout(responseTimeout);
-            
-            // Add assistant message to chat history
-            const assistantMessage = { role: 'assistant', content: response.content };
-            session.chatHistory.push(assistantMessage);
-            
-            // Send response back to client
-            ws.send(JSON.stringify({
-              type: 'chat-response',
-              message: response.content,
-              model: response.model,
-              timestamp: response.timestamp,
-              memoryEnabled: !!memoryManager,
-              messageId: `response-${Date.now()}`
-            }));
-            
-            // Store in memory if enabled
-            if (memoryManager) {
-              try {
-                await memoryManager.storeMemory(response.content, 'assistant-message');
-              } catch (memError) {
-                console.error('Error storing memory:', memError);
-              }
-            }
-            
-          } catch (error) {
-            clearTimeout(responseTimeout);
-            console.error('Chat error:', error);
-            ws.send(JSON.stringify({
-              type: 'error',
-              error: `Chat error: ${error.message}`
-            }));
-          }
-          
-        } catch (error) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: `Chat error: ${error.message}`
-          }));
-        }
-      }
-      else if (data.type === 'memory-stats' && data.sessionId) {
-        // Get memory stats if session exists
-        if (activeChatSessions.has(data.sessionId)) {
-          const session = activeChatSessions.get(data.sessionId);
-          if (session.memoryManager) {
-            const stats = session.memoryManager.getStats();
-            ws.send(JSON.stringify({
-              type: 'memory-stats',
-              stats
-            }));
-          } else {
-            ws.send(JSON.stringify({
-              type: 'memory-stats',
-              stats: null,
-              enabled: false
-            }));
-          }
-        }
-      }
-      // Fix: Check for chat messages without relying on this.activeMode
-      // Chat messages can come from regular input with mode='chat'
-      else if (data.input && (data.mode === 'chat' || data.sessionId)) {
-        console.log('[WebSocket] Processing chat message in chat mode:', data.input);
-        
-        // Check if we have a session
-        if (!data.sessionId || !activeChatSessions.has(data.sessionId)) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: 'No active chat session found. Please start a new chat session.',
-            messageId: `error-${Date.now()}`
-          }));
-          return;
-        }
-        
-        // Get the session and update activity
-        const session = activeChatSessions.get(data.sessionId);
-        session.lastActivity = Date.now();
-        
-        // Add message to chat history
-        const userMessage = { role: 'user', content: data.input };
-        if (!session.chatHistory) {
-          session.chatHistory = [];
-        }
-        session.chatHistory.push(userMessage);
-        
-        try {
-          // Initialize LLMClient for this request
-          if (!process.env.VENICE_API_KEY) {
-            ws.send(JSON.stringify({
-              type: 'error',
-              error: 'Missing Venice API key. Please restart your chat session.',
-              messageId: `error-${Date.now()}`
-            }));
-            return;
-          }
-          
-          // Create LLM client
-          const llmClient = new LLMClient({
-            apiKey: process.env.VENICE_API_KEY,
-            model: 'llama-3.3-70b'
-          });
-          
-          // Send thinking indicator
-          ws.send(JSON.stringify({
-            type: 'output',
-            data: 'Assistant is thinking...',
-            messageId: `thinking-${Date.now()}`
-          }));
-          
-          // Process the message with the LLM
-          const response = await llmClient.completeChat({
-            messages: session.chatHistory,
-            temperature: 0.7,
-            maxTokens: 1000
-          });
-          
-          // Add response to history
-          session.chatHistory.push({ role: 'assistant', content: response.content });
-          
-          // Send response back to client
-          ws.send(JSON.stringify({
-            type: 'chat-response',
-            message: response.content,
-            mode: 'chat',
-            messageId: `response-${Date.now()}`
-          }));
-          
-        } catch (error) {
-          console.error('Error processing chat message:', error);
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: `Chat error: ${error.message}`,
-            messageId: `error-${Date.now()}`
-          }));
-        }
-        
-        return;
-      }
-    } catch (error) {
-      console.error(`[WebSocket] Error in handleChatSocket: ${error.message}`);
-      ws.send(JSON.stringify({
-        type: 'error',
-        error: `Error processing message: ${error.message}`
-      }));
-    }
-  });
-  
-  ws.on('close', () => {
-    console.log(`[WebSocket] Connection closed for chat session: ${sessionId}`);
-    // Clean up session resources
-    if (activeChatSessions.has(sessionId)) {
-      activeChatSessions.delete(sessionId);
-    }
-  });
-}
-
-/**
- * Periodically clean up inactive chat sessions
- */
-function cleanupChatSessions() {
-  const now = Date.now();
-  const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-  
-  for (const [sessionId, session] of activeChatSessions.entries()) {
-    if (now - session.lastActivity > SESSION_TIMEOUT) {
-      // Finalize memories if memory manager exists
-      if (session.memoryManager) {
-        try {
-          session.memoryManager.validateMemories().catch(err => {
-            console.error('Error validating memories during cleanup:', err);
-          });
-        } catch (error) {
-          console.error('Error during session cleanup:', error);
-        }
-      }
-      
-      // Remove session
-      activeChatSessions.delete(sessionId);
-    }
-  }
-}
-
-// Run cleanup every 15 minutes
-setInterval(cleanupChatSessions, 15 * 60 * 1000);
-
-/**
- * Set up research routes and WebSocket handlers
- * 
- * @param {Express} app - Express application
- * @param {Server} server - HTTP server
- * @param {WebSocketServer} wss - WebSocket server instance (optional)
- */
-export function setupRoutes(app, server, existingWss = null) {
-  // Register REST API routes
-  app.use('/api/research', router);
-  
-  // Either use the provided WebSocketServer or create a new one if none is provided
-  // This prevents duplicate WebSocketServer instances
-  const wss = existingWss || new WebSocketServer({ server });
-  
-  // Register output manager for WebSocket connections
-  output.addWebSocketClient = function(ws) {
-    this.webSocketClients.add(ws);
-    
-    // Send the last progress message to new clients
-    if (this.lastProgressMessage) {
-      ws.send(JSON.stringify({ 
-        type: 'progress', 
-        data: { message: this.lastProgressMessage } 
-      }));
-    }
-    
-    ws.on('close', () => {
-      this.webSocketClients.delete(ws);
-    });
-  };
-  
-  // Only set up connection handling if we created a new WebSocketServer
-  if (!existingWss) {
-    // Handle WebSocket connections
-    wss.on('connection', (ws) => {
-      // Add this client to the output manager
-      output.addWebSocketClient(ws);
-      
-      console.log('[WebSocket] New connection established');
-      
-      // Set initial endpoint - will be changed based on first message
-      ws.endpoint = null;
-      
-      // Handle the first message to determine endpoint
-      const handleFirstMessage = (message) => {
-        try {
-          console.log('[WebSocket] Processing first message:', message.toString().substring(0, 100));
-          const data = JSON.parse(message);
-          
-          // Determine the correct endpoint based on the first message
-          if (data.type === 'chat-init' || data.type === 'chat-message' || 
-              (data.input && data.input.trim().toLowerCase().startsWith('/chat'))) {
-            console.log('[WebSocket] Routing to chat handler');
-            ws.endpoint = 'chat';
-            handleChatSocket(ws);
-          } else {
-            console.log('[WebSocket] Routing to research handler');
-            ws.endpoint = 'research';
-            handleResearchSocket(ws);
-          }
-          
-          // Remove this handler after the first message
-          ws.off('message', handleFirstMessage);
-          
-          // Re-emit this message to be handled by the appropriate handler
-          ws.emit('message', message);
-        } catch (error) {
-          console.error('[WebSocket] Error handling first message:', error);
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: 'Invalid message format'
-          }));
-        }
-      };
-      
-      // Listen for the first message to determine endpoint
-      ws.on('message', handleFirstMessage);
-    });
-  }
-}
-
-/**
- * Initialize a chat session for web-CLI
- * @param {WebSocket} ws WebSocket connection
- * @param {Object} options Chat options
- */
-async function initializeWebChatSession(ws, options = {}) {
-  // Define wsPrompt without any timeout
-  async function wsPrompt(promptText) {
-    return new Promise((resolve, reject) => {
-      const promptId = `prompt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const messageHandler = (raw) => {
-        try {
-          const msg = JSON.parse(raw.toString());
-          if (msg.input !== undefined) {
-            ws.removeListener('message', messageHandler);
-            resolve(msg.input ? msg.input.trim() : '');
-          }
-        } catch (e) {
-          // Ignore errors and wait for a correctly formatted message
-        }
-      };
-      ws.send(JSON.stringify({ type: 'prompt', data: promptText, messageId: promptId }));
-      ws.on('message', messageHandler);
-      // Removed timeout: now waits indefinitely for user input.
-    });
-  }
-
+  // --- Start: Added Try/Catch for Initial Setup ---
   try {
-    const { memory = false, depth = 'medium' } = options;
-    
-    // Send status update to client
-    const wsOutput = (message) => {
-      const outputId = `output-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      ws.send(JSON.stringify({
-        type: 'output',
-        data: message,
-        messageId: outputId
-      }));
-    };
-    
-    // Verify user authentication
-    if (!userManager.isAuthenticated()) {
-      wsOutput('You must be logged in to use the chat feature. Use /login first.');
-      return false;
-    }
-    
-    // Check API keys
-    if (!await userManager.hasApiKey('venice')) {
-      wsOutput('Missing Venice API key required for chat. Use /keys set to configure your API key.');
-      return false;
-    }
-    
-    // Create a session ID
     const sessionId = crypto.randomUUID();
-    
-    // For web-CLI, we need to ask for the password to decrypt API keys
-    const password = await wsPrompt('Please enter your password to decrypt API keys:');
-    
-    // Verify the password by attempting to decrypt the API key
-    if (!password) {
-      wsOutput('Password is required to decrypt API keys.');
-      return false;
-    }
-    
-    try {
-      // Retrieve decrypted API key
-      const veniceKey = await userManager.getApiKey('venice', password);
-      
-      if (!veniceKey) {
-        wsOutput('Failed to decrypt Venice API key with the provided password. Please try again.');
-        
-        // Give one more chance with a direct retry
-        const retryPassword = await wsPrompt('Please re-enter your password:');
-        if (!retryPassword) {
-          wsOutput('Password is required to decrypt API keys.');
-          return false;
-        }
-        
-        const retryVeniceKey = await userManager.getApiKey('venice', retryPassword);
-        if (!retryVeniceKey) {
-          wsOutput('Failed to decrypt Venice API key. Please restart the chat session with /chat.');
-          return false;
-        }
-        
-        // If we got here, the retry worked
-        process.env.VENICE_API_KEY = retryVeniceKey;
-      } else {
-        // First attempt worked
-        process.env.VENICE_API_KEY = veniceKey;
-      }
-    } catch (error) {
-      wsOutput(`Authentication error: ${error.message}. Please try again with /chat.`);
-      return false;
-    }
-    
-    // Initialize memory manager if enabled
-    let memoryManager = null;
-    if (memory) {
-      try {
-        memoryManager = new MemoryManager({
-          depth,
-          user: userManager.currentUser
-        });
-        wsOutput('Memory mode enabled. Use /exitmemory to finalize and exit memory mode.');
-      } catch (error) {
-        wsOutput(`Failed to initialize memory system: ${error.message}`);
-        return false;
-      }
-    }
-    
-    // Create and store the chat session
-    activeChatSessions.set(sessionId, {
-      username: userManager.currentUser.username,
-      memoryManager,
+    const sessionData = {
+      sessionId: sessionId,
+      webSocketClient: ws,
+      isChatActive: false,
       chatHistory: [],
-      lastActivity: Date.now()
-    });
-    
-    // Notify the client that the chat session is ready
-    ws.send(JSON.stringify({
-      type: 'chat-ready',
-      sessionId,
-      memoryEnabled: !!memoryManager,
-      memoryDepth: memoryManager ? memoryManager.getDepthLevel() : null,
-      messageId: `chat-ready-${Date.now()}`
-    }));
-    
-    wsOutput('Chat session initialized. Start chatting or type /exit to end the session.');
-    return true;
+      memoryManager: null,
+      lastActivity: Date.now(),
+      username: 'public', // Start as public
+      role: 'public',     // Start as public
+      pendingPromptResolve: null,
+      pendingPromptReject: null,
+      promptTimeoutId: null,
+      promptIsPassword: false, // Added flag for prompt type
+      password: null, // Cached password for the session
+    };
+    activeChatSessions.set(sessionId, sessionData);
+    wsSessionMap.set(ws, sessionId);
+    console.log(`[WebSocket] Created session ${sessionId} for new connection. Initial user: ${sessionData.username}`);
+
+    output.addWebSocketClient(ws);
+
+    // Send initial messages
+    safeSend(ws, { type: 'connection', connected: true });
+    safeSend(ws, { type: 'output', data: 'Welcome to MCP Terminal!' });
+    safeSend(ws, { type: 'output', data: `Current status: ${sessionData.role}. Use /login <username> to authenticate.` });
+    safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
+    enableClientInput(ws); // Explicitly enable input after initial setup
+
+    console.log(`[WebSocket] Initial setup complete for session ${sessionId}.`);
+
+  } catch (setupError) {
+    console.error(`[WebSocket] CRITICAL ERROR during initial connection setup: ${setupError.message}`, setupError.stack);
+    // Attempt to send an error message before closing, but it might fail
+    safeSend(ws, { type: 'error', error: `Server setup error: ${setupError.message}` });
+    // Close the connection immediately due to setup failure
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      ws.close(1011, "Server setup error"); // 1011: Internal Error
+    }
+    // Ensure cleanup happens even if session wasn't fully added
+    const failedSessionId = wsSessionMap.get(ws);
+    if (failedSessionId) {
+        activeChatSessions.delete(failedSessionId);
+        wsSessionMap.delete(ws);
+        console.log(`[WebSocket] Cleaned up partially created session ${failedSessionId} after setup error.`);
+    }
+    output.removeWebSocketClient(ws); // Ensure client is removed from output manager
+    return; // Stop further processing for this connection
+  }
+  // --- End: Added Try/Catch for Initial Setup ---
+
+
+  ws.on('message', async (raw) => {
+    const currentSessionId = wsSessionMap.get(ws);
+    const currentSession = currentSessionId ? activeChatSessions.get(currentSessionId) : null;
+
+    if (!currentSession) {
+      console.error(`[WebSocket] Error: No session found for incoming message from ws.`);
+      try {
+        // Use wsErrorHelper but ensure input is enabled after this critical error
+        wsErrorHelper(ws, 'Internal Server Error: Session not found. Please refresh.', false); // false = don't keep disabled
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close(1011, "Session lost");
+        }
+      } catch (sendError) {
+        console.error("[WebSocket] Error sending session not found message:", sendError);
+      }
+      return;
+    }
+
+    currentSession.lastActivity = Date.now();
+    // Disable input at the start of processing any message
+    // Only disable if not currently waiting for a server-side prompt response
+    if (!currentSession.pendingPromptResolve) {
+        disableClientInput(ws);
+    } else {
+        console.log("[WebSocket] Input remains enabled for pending server-side prompt.");
+    }
+
+
+    let message;
+    // Default: Assume input should remain disabled unless explicitly enabled later
+    let enableInputAfterProcessing = false;
+
+    try {
+      message = JSON.parse(raw.toString());
+      // Add more detailed logging for received messages, masking password if present
+      const logPayload = { ...message };
+      if (logPayload.password) logPayload.password = '******';
+      if (logPayload.input && currentSession.pendingPromptResolve && currentSession.promptIsPassword) {
+          logPayload.input = '******'; // Mask input if it's for a pending password prompt
+      }
+      console.log(`[WebSocket] Received message (Session ${currentSessionId}, User: ${currentSession.username}):`, JSON.stringify(logPayload).substring(0, 250));
+
+
+      if (!message.type) {
+        throw new Error("Message type is missing");
+      }
+
+      // --- Route message based on session state and message type ---
+      // --- FIX: Modified routing logic ---
+      if (message.type === 'command') {
+          // If in chat mode, let handleChatMessage decide how to process the command
+          if (currentSession.isChatActive) {
+              console.log("[WebSocket] Routing command message to handleChatMessage (chat active).");
+              // Pass command details within the message object expected by handleChatMessage
+              enableInputAfterProcessing = await handleChatMessage(ws, { message: `/${message.command} ${message.args.join(' ')}` }, currentSession);
+          } else {
+              // If not in chat mode, handle as a regular command
+              console.log("[WebSocket] Routing command message to handleCommandMessage (chat inactive).");
+              enableInputAfterProcessing = await handleCommandMessage(ws, message, currentSession);
+          }
+      } else if (message.type === 'chat-message') {
+          // Handle chat messages ONLY when in chat mode
+          if (currentSession.isChatActive) {
+              console.log("[WebSocket] Routing chat message to handleChatMessage.");
+              enableInputAfterProcessing = await handleChatMessage(ws, message, currentSession);
+          } else {
+              // Received chat message when not in chat mode - treat as error
+              console.warn(`[WebSocket] Received 'chat-message' while not in chat mode (Session ${currentSessionId}).`);
+              wsErrorHelper(ws, 'Cannot send chat messages when not in chat mode. Use /chat first.', true);
+              enableInputAfterProcessing = false; // wsErrorHelper handles enabling
+          }
+      } else if (message.type === 'input') {
+          // Handle responses to server-side prompts
+          console.log("[WebSocket] Routing input message to handleInputMessage.");
+          await handleInputMessage(ws, message, currentSession);
+          enableInputAfterProcessing = false; // Input state decided by the command that initiated the prompt
+      } else if (message.type === 'ping') {
+          console.log("[WebSocket] Handling ping.");
+          safeSend(ws, { type: 'pong' });
+          enableInputAfterProcessing = true; // Re-enable after simple ping/pong
+      } else {
+          // Handle unexpected message types
+          console.warn(`[WebSocket] Unexpected message type '${message.type}' received (Session ${currentSessionId}).`);
+          wsErrorHelper(ws, `Unexpected message type: ${message.type}`, true);
+          enableInputAfterProcessing = false; // wsErrorHelper handles enabling
+      }
+      // --- End FIX: Modified routing logic ---
+
+
+      // --- Final Input State Decision ---
+      // Re-enable input ONLY IF the handler indicated it should be enabled
+      // AND no server-side prompt became active *during* processing (or is still active).
+      const sessionAfterProcessing = activeChatSessions.get(currentSessionId); // Re-fetch session state
+      const isServerPromptPending = !!(sessionAfterProcessing && sessionAfterProcessing.pendingPromptResolve);
+
+      if (enableInputAfterProcessing && !isServerPromptPending) {
+        console.log("[WebSocket] Handler allows enable, no server prompt active. Enabling client input.");
+        enableClientInput(ws);
+      } else if (enableInputAfterProcessing && isServerPromptPending) {
+        console.log("[WebSocket] Handler allows enable, but server prompt is now active. Input remains disabled.");
+        // Input stays disabled because we didn't call enableClientInput(ws)
+      } else {
+        console.log(`[WebSocket] Handler requires input disabled (enableInputAfterProcessing=${enableInputAfterProcessing}) OR server prompt active (isServerPromptPending=${isServerPromptPending}). Input remains disabled.`);
+        // Input stays disabled (already disabled at start or by handler)
+      }
+
+    } catch (error) {
+      console.error(`[WebSocket] Error processing message (Session ${currentSessionId}): ${error.message}`, raw.toString());
+      try {
+        // Send error message to client, decide whether to enable input
+        const sessionOnError = activeChatSessions.get(currentSessionId);
+        const isPromptStillPendingOnError = !!(sessionOnError && sessionOnError.pendingPromptResolve);
+        // Enable input after error UNLESS a prompt is still pending
+        wsErrorHelper(ws, `Error processing message: ${error.message}`, !isPromptStillPendingOnError);
+      } catch (sendError) {
+        console.error("[WebSocket] Error sending processing error message:", sendError);
+      }
+      // Ensure enableInputAfterProcessing is false if wsErrorHelper handled it
+      enableInputAfterProcessing = false;
+    }
+  });
+
+  ws.on('close', (code, reason) => {
+    const closedSessionId = wsSessionMap.get(ws);
+    const reasonString = reason ? reason.toString() : 'N/A';
+    console.log(`[WebSocket] Connection closed (Session ${closedSessionId}, Code: ${code}, Reason: ${reasonString})`);
+    output.removeWebSocketClient(ws);
+
+    if (closedSessionId && activeChatSessions.has(closedSessionId)) {
+      const session = activeChatSessions.get(closedSessionId);
+      // Ensure pending prompt is rejected if connection closes unexpectedly
+      if (session.pendingPromptReject) {
+        console.log(`[WebSocket] Rejecting pending server-side prompt for closed session ${closedSessionId}.`);
+        clearTimeout(session.promptTimeoutId);
+        const rejectFn = session.pendingPromptReject; // Capture before clearing
+        session.pendingPromptResolve = null;
+        session.pendingPromptReject = null;
+        session.promptTimeoutId = null;
+        session.promptIsPassword = false; // Clear flag
+        // Reject the promise to unblock any waiting async function
+        rejectFn(new Error("WebSocket connection closed during prompt."));
+      }
+      if (session.memoryManager) {
+        console.log(`[WebSocket] Nullifying memory manager for closed session ${closedSessionId}`);
+        session.memoryManager = null; // Release memory manager resources if any
+      }
+      activeChatSessions.delete(closedSessionId);
+      wsSessionMap.delete(ws);
+      console.log(`[WebSocket] Cleaned up session: ${closedSessionId}`);
+    } else {
+      console.warn(`[WebSocket] Could not find session to clean up for closed connection.`);
+    }
+  });
+
+  ws.on('error', (error) => {
+    const errorSessionId = wsSessionMap.get(ws);
+    // --- Start: Enhanced Error Logging ---
+    console.error(`[WebSocket] Connection error (Session ${errorSessionId || 'N/A'}):`, error.message, error.stack);
+    // --- End: Enhanced Error Logging ---
+
+    // Attempt to inform the client about the error
+    wsErrorHelper(ws, `WebSocket connection error: ${error.message}`, false); // false = don't enable, connection is likely dead
+    // Force close the socket server-side if it's still open after an error
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        console.log(`[WebSocket] Force closing socket for session ${errorSessionId} due to error.`);
+        ws.close(1011, "WebSocket error occurred"); // 1011: Internal Error
+    }
+    // Cleanup session data similar to 'close' event, as 'close' might not fire reliably after 'error'
+    if (errorSessionId && activeChatSessions.has(errorSessionId)) {
+        console.log(`[WebSocket] Cleaning up session ${errorSessionId} after error.`);
+        const session = activeChatSessions.get(errorSessionId);
+
+        if (session.pendingPromptReject) {
+            console.log(`[WebSocket] Rejecting pending prompt for errored session ${errorSessionId}.`);
+            clearTimeout(session.promptTimeoutId);
+            const rejectFn = session.pendingPromptReject;
+            session.pendingPromptResolve = null;
+            session.pendingPromptReject = null;
+            session.promptTimeoutId = null;
+            session.promptIsPassword = false;
+            rejectFn(new Error("WebSocket connection error during prompt."));
+        }
+
+        if (session.memoryManager) {
+            console.log(`[WebSocket] Releasing memory manager for session ${errorSessionId}.`);
+            session.memoryManager = null; // Release memory manager resources
+        }
+
+        activeChatSessions.delete(errorSessionId);
+        wsSessionMap.delete(ws);
+        console.log(`[WebSocket] Session ${errorSessionId} cleaned up successfully.`);
+    }
+     output.removeWebSocketClient(ws); // Ensure client is removed on error too
+  });
+}
+
+// Helper to send structured output - REMOVED keepDisabled logic
+function wsOutputHelper(ws, data) {
+  let outputData = '';
+  if (typeof data === 'string') {
+    outputData = data;
+  } else if (data && typeof data.toString === 'function') {
+    // Avoid sending complex objects directly if they don't stringify well
+    outputData = data.toString();
+  } else {
+    try {
+      outputData = JSON.stringify(data); // Fallback for simple objects
+    } catch (e) {
+      outputData = "[Unserializable Output]";
+      console.error("Failed to stringify output data:", data);
+    }
+  }
+  safeSend(ws, { type: 'output', data: outputData });
+}
+
+// Helper to send structured errors - MODIFIED to accept enable flag
+function wsErrorHelper(ws, error, enableInputAfterError = true) {
+  let errorString = '';
+  if (typeof error === 'string') {
+    errorString = error;
+  } else if (error instanceof Error) {
+    // --- Start: Include stack trace in server log for better debugging ---
+    console.error(`[wsErrorHelper] Sending error to client: ${error.message}`, error.stack);
+    errorString = error.message; // Send only the message part of the Error object to client
+    // --- End: Include stack trace in server log ---
+  } else if (error && typeof error.toString === 'function') {
+    errorString = error.toString();
+  } else {
+    try {
+      errorString = JSON.stringify(error); // Fallback
+    } catch (e) {
+      errorString = "[Unserializable Error]";
+      console.error("[wsErrorHelper] Failed to stringify error data:", error);
+    }
+  }
+  safeSend(ws, { type: 'error', error: errorString });
+
+  // Crucially, decide whether to re-enable input after an error
+  if (enableInputAfterError) {
+    console.log("[wsErrorHelper] Attempting to re-enable input after error.");
+    enableClientInput(ws); // Try to enable input after sending the error
+  } else {
+    console.log("[wsErrorHelper] Input remains disabled after error as requested.");
+  }
+}
+
+/**
+ * Handles 'command' type messages from the WebSocket client.
+ * Executes the command and manages client input state.
+ * @param {WebSocket} ws - The WebSocket client connection.
+ * @param {object} message - The parsed message object { type: 'command', command, args, password? }.
+ * @param {object} session - The session data object.
+ * @returns {Promise<boolean>} - True if input should be enabled after processing, false otherwise.
+ */
+async function handleCommandMessage(ws, message, session) {
+  // --- FIX: Prevent top-level commands during active chat ---
+  if (session.isChatActive) {
+      console.warn(`[WebSocket] Attempted to run top-level command '/${message.command}' while chat is active (Session ${session.sessionId}).`);
+      wsErrorHelper(ws, `Cannot run top-level commands while in chat mode. Use chat messages or in-chat commands (e.g., /exit).`, true);
+      return false; // wsErrorHelper handles enabling input
+  }
+  // --- End FIX ---
+
+  const { command, args = [], password: passwordFromPayload } = message;
+  let enableInputAfter = true; // Default to enabling input after command finishes
+  const commandString = `/${command} ${args.join(' ')}`; // For logging
+  let isInteractiveResearch = false; // Flag for interactive flow
+
+  // --- Argument Parsing & Options Setup ---
+  const options = {
+      positionalArgs: [], // Initialize positionalArgs
+      // Add other default flags if necessary
+      depth: 2, // Default research depth
+      breadth: 3, // Default research breadth
+      classify: false, // Default research classification
+      verbose: false, // Default verbosity
+      memory: false, // Default chat memory
+  };
+  try {
+    for (const arg of args) {
+      if (arg.startsWith('--')) {
+        const [key, value] = arg.substring(2).split('=');
+        if (value !== undefined) {
+          // Handle flags with values (e.g., --depth=3)
+          options[key] = !isNaN(parseInt(value)) ? parseInt(value) : value;
+        } else {
+          // Handle boolean flags (e.g., --memory)
+          options[key] = true;
+        }
+      } else {
+        // Collect positional arguments
+        options.positionalArgs.push(arg);
+      }
+    }
+    // Extract query from positional args for direct command call
+    options.query = options.positionalArgs.join(' '); // Join all positional args as the query
+  } catch (parseError) {
+    console.error(`[WebSocket] Error parsing arguments for ${commandString}:`, parseError);
+    wsErrorHelper(ws, `Error parsing arguments: ${parseError.message}`, true); // Enable after error
+    return false; // wsErrorHelper handled enabling
+  }
+
+  // Inject WebSocket-specific context into options
+  options.webSocketClient = ws;
+  options.isWebSocket = true;
+  options.session = session; // Pass the whole session object
+
+  // Define output/error handlers specific to this command execution
+  const commandOutput = (data) => {
+    // Send structured messages directly or use helper
+    if (typeof data === 'object' && data !== null && data.type) {
+      safeSend(ws, data); // Send structured message as-is
+    } else {
+      wsOutputHelper(ws, data); // Use helper for standard output
+    }
+    // Don't modify enableInputAfter here based on output data
+  };
+  const commandError = (data) => {
+    // Errors should generally re-enable input
+    console.error(`[commandError] Received error:`, data); // Log the actual error data
+    wsErrorHelper(ws, data, true); // Use helper to send error and enable input
+    enableInputAfter = false; // Signal that wsErrorHelper handled the input state
+  };
+
+  // Add handlers to options object
+  options.output = commandOutput;
+  options.error = commandError;
+
+
+  // --- Special Handling for /login in WebSocket ---
+  if (command === 'login') {
+    // Use positionalArgs for username and password
+    const username = options.positionalArgs[0];
+    let providedPassword = options.positionalArgs[1] || passwordFromPayload; // Password from args or payload
+
+    if (!username) {
+      commandOutput(`Current user: ${session.username} (${session.role})`);
+      return true; // Input enabled
+    }
+
+    if (session.username === username && session.role !== 'public') {
+        commandOutput(`Already logged in as ${username}`);
+        return true; // Input enabled
+    }
+
+    try {
+        // Prompt for password if not provided
+        if (!providedPassword) {
+           // Input remains disabled while prompting
+           enableInputAfter = false;
+           providedPassword = await wsPrompt(ws, session, `Enter password for ${username}: `, PROMPT_TIMEOUT_MS, true);
+           // Input remains disabled, wsPrompt resolution doesn't re-enable it.
+           // The rest of the login logic will determine the final state.
+        }
+
+        // Authenticate user using userManager (does not modify global state)
+        const userData = await userManager.authenticateUser(username, providedPassword);
+
+        // *** FIX: Update WebSocket session state ***
+        const prevUsername = session.username;
+        session.username = userData.username;
+        session.role = userData.role;
+        session.password = providedPassword; // Cache the successful password
+        console.log(`[WebSocket] Session ${session.sessionId} updated after login. User: ${prevUsername} -> ${session.username}, Role: ${session.role}`);
+
+        // Send success message and update client state
+        safeSend(ws, {
+            type: 'login_success',
+            username: session.username,
+            role: session.role,
+            message: `Logged in as ${session.username} (${session.role})`
+        });
+        safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
+        enableInputAfter = true; // Enable input after successful login
+    } catch (error) {
+        console.error(`[WebSocket] Login failed for ${username} (Session ${session.sessionId}): ${error.message}`);
+        session.password = null; // Clear cached password on failure
+        commandError(`Login failed: ${error.message}`); // commandError sets enableInputAfter = false
+        enableInputAfter = false; // Explicitly ensure it's false
+    }
+    console.log(`[WebSocket] Returning from handleCommandMessage (/login). Final enableInputAfter: ${enableInputAfter}`);
+    return enableInputAfter; // Return final decision
+  }
+  // --- End Special Handling for /login ---
+
+
+  // --- Generic Command Handling (excluding login) ---
+  // --- FIX: Remove chat-specific command handling from here ---
+  // // --- Check if in chat mode and handle chat-specific commands first ---
+  // if (session.isChatActive) {
+  //     // In chat mode, only specific commands are handled here, others are passed to handleChatMessage
+  //     if (command === 'exit') {
+  //         // ... (This logic is now primarily in handleChatMessage) ...
+  //     } else if (command === 'exitmemory') {
+  //         // ... (This logic is now primarily in handleChatMessage) ...
+  //     }
+  // }
+  // --- End FIX ---
+
+
+  const commandFn = commandFunctions[command];
+  // --- FIX: Allow /research even if not directly in commandFunctions map (already handled) ---
+  // --- FIX: Check commandFn existence *after* potential interactive research setup ---
+  // if (!commandFn && command !== 'research') {
+  //   commandError(`Unknown command: /${command}. Type /help for available commands.`);
+  //   return false; // commandError handled state
+  // }
+
+  console.log(`[WebSocket] Processing command (Session ${session.sessionId}, User: ${session.username}): ${commandString}`);
+
+  // --- Fetch currentUser data BEFORE specific command logic ---
+  // This ensures currentUser is available for all commands, including /research
+  try {
+      if (session.username !== 'public') {
+          options.currentUser = await userManager.getUserData(session.username);
+          if (!options.currentUser) {
+              commandError(`Error: Could not load user data for ${session.username}.`);
+              return false; // commandError handled enabling
+          }
+      } else {
+          options.currentUser = await userManager.getUserData('public');
+      }
+      console.log(`[WebSocket] Fetched currentUser for command execution: ${options.currentUser?.username} (${options.currentUser?.role})`);
+  } catch (userError) {
+      commandError(`Error fetching user data: ${userError.message}`);
+      return false; // commandError handled enabling
+  }
+  // --- End Fetch currentUser ---
+
+
+  // --- Interactive Research Flow ---
+  if (command === 'research' && !options.query) {
+      isInteractiveResearch = true;
+      wsOutputHelper(ws, 'Starting interactive research setup...');
+      enableInputAfter = false; // Disable input while prompting
+      try {
+          // Prompt for query
+          const queryInput = await wsPrompt(ws, session, 'Please enter your research query: ');
+          if (!queryInput) throw new Error('Research query cannot be empty.');
+          options.query = queryInput; // Add query to options
+
+          // Prompt for breadth
+          const breadthInput = await wsPrompt(ws, session, `Enter research breadth (queries per level) [${options.breadth}]: `);
+          if (breadthInput && !isNaN(parseInt(breadthInput))) {
+              options.breadth = parseInt(breadthInput);
+          }
+
+          // Prompt for depth
+          const depthInput = await wsPrompt(ws, session, `Enter research depth (levels) [${options.depth}]: `);
+          if (depthInput && !isNaN(parseInt(depthInput))) {
+              options.depth = parseInt(depthInput);
+          }
+
+          // Prompt for classification
+          const classifyInput = await wsPrompt(ws, session, 'Use token classification? (y/n) [n]: ');
+          options.classify = classifyInput.toLowerCase() === 'y';
+
+          // Confirm parameters before proceeding
+          wsOutputHelper(ws, `Research parameters set: Query="${options.query}", Breadth=${options.breadth}, Depth=${options.depth}, Classify=${options.classify}`);
+          // Input remains disabled until research command finishes
+
+      } catch (promptError) {
+          commandError(`Interactive setup failed: ${promptError.message}`);
+          return false; // Keep input disabled (error handler enables)
+      }
+  }
+  // --- End Interactive Flow ---
+
+
+  // --- FIX: Check commandFn existence *after* interactive flow might set command to 'research' ---
+  if (!commandFn && command !== 'research') {
+    commandError(`Unknown command: /${command}. Type /help for available commands.`);
+    return false; // commandError handled state
+  }
+  // --- End FIX ---
+
+
+  // --- Password Handling (for commands other than login) ---
+  let finalPassword = passwordFromPayload; // Password might come directly in the command payload
+
+  // Check session cache if not in payload
+  if (!finalPassword && session.password) {
+      console.log(`[WebSocket] Using cached password for session ${session.sessionId}`);
+      finalPassword = session.password;
+  }
+
+  // Determine if the command *requires* a password check server-side
+  // Refined list based on command logic needing keys/admin rights
+  const needsPasswordCheckCommands = ['keys', 'password-change', 'chat', 'research', 'diagnose', 'users'];
+  const requiresPasswordCheck = needsPasswordCheckCommands.includes(command);
+  let needsPasswordPrompt = false;
+
+  // When does the SERVER need to prompt?
+  // - If the command requires a password check AND
+  // - We don't have a password yet (not in payload, not in cache) AND
+  // - The specific command action necessitates it (refined check)
+  if (requiresPasswordCheck && !finalPassword) {
+      // Check if user is logged in (public users cannot trigger password prompts for these)
+      if (session.role === 'public') {
+          // Allow /chat and /research to proceed without password if public (they will fail later if keys are needed)
+          // But block other sensitive commands.
+          if (command !== 'chat' && command !== 'research') {
+              commandError(`You must be logged in to use the /${command} command.`);
+              return false; // commandError handled enabling
+          }
+      } else {
+          // Refine conditions based on command and args (using options.positionalArgs)
+          const actionArg = options.positionalArgs[0]?.toLowerCase(); // Common pattern for action
+
+          if (command === 'keys' && (actionArg === 'set' || actionArg === 'test')) {
+              needsPasswordPrompt = true;
+          } else if (command === 'password-change') {
+              needsPasswordPrompt = true; // Always needs current password
+          } else if (command === 'chat') {
+              // Chat needs password if API key isn't already decrypted/available
+              // Check if key exists first, prompt only if needed for retrieval
+              const hasKey = await userManager.hasApiKey('venice', session.username);
+              if (hasKey) needsPasswordPrompt = true; // Prompt if key exists but we don't have password
+          } else if (command === 'research') {
+              // ** Always prompt for research if password isn't available, as keys are required **
+              const hasBraveKey = await userManager.hasApiKey('brave', session.username);
+              const hasVeniceKey = await userManager.hasApiKey('venice', session.username);
+              // Prompt if *either* key exists and we don't have a password
+              if (hasBraveKey || hasVeniceKey) {
+                  needsPasswordPrompt = true;
+                  console.log(`[WebSocket] Research needs password prompt: BraveKey=${hasBraveKey}, VeniceKey=${hasVeniceKey}, PasswordAvailable=${!!finalPassword}`);
+              } else {
+                  // If no keys are set at all, research will fail later, but no need to prompt now.
+                  console.log(`[WebSocket] Research command: No API keys found for user ${session.username}. No password prompt needed.`);
+              }
+          } else if (command === 'diagnose') {
+              // Diagnose might need keys depending on checks performed
+              needsPasswordPrompt = true; // Assume needs password for key checks
+          } else if (command === 'users' && (actionArg === 'create' || actionArg === 'delete')) {
+              // Admin actions might require password confirmation in future, but not just for key decryption
+              // For now, admin role check is primary gate. No password prompt needed here based on current logic.
+          }
+          // Note: 'keys check/stat' and 'users list' don't require password prompt here
+      }
+  }
+
+
+  // If a prompt is needed server-side
+  if (needsPasswordPrompt) {
+    let passwordPromptText = "Enter password: ";
+    if (command === 'keys' || command === 'chat' || command === 'research' || command === 'diagnose') {
+      passwordPromptText = "Enter password to decrypt API keys: ";
+    } else if (command === 'password-change') {
+      passwordPromptText = "Enter current password: ";
+    } // Add other specific prompts if needed
+
+    try {
+      console.log(`[WebSocket] Server needs password for command ${command}. Prompting client (Session ${session.sessionId})`);
+      enableInputAfter = false; // Keep disabled while prompting and executing command
+      // Use wsPrompt to ask the client and wait for the 'input' message
+      const promptedPassword = await wsPrompt(ws, session, passwordPromptText, PROMPT_TIMEOUT_MS, true);
+      // *** Assign the prompted password to finalPassword ***
+      finalPassword = promptedPassword;
+      // Input remains disabled, wsPrompt resolution doesn't re-enable it.
+      console.log(`[WebSocket] Password received via server-side prompt for command ${command} (Session ${session.sessionId})`);
+      // Add logging to confirm password reception
+      console.log(`[WebSocket] finalPassword after prompt: ${finalPassword ? '******' : 'null or empty'}`);
+
+    } catch (promptError) {
+      console.error(`[WebSocket] Password prompt failed or timed out for command ${command} (Session ${session.sessionId}): ${promptError.message}`);
+      // wsPrompt's error/timeout handler (wsErrorHelper) should have sent an error and re-enabled input.
+      return false; // Stop processing the command, input state handled by wsPrompt error path.
+    }
+  }
+
+  // Add the final password (if obtained) to options for the command function
+  if (finalPassword) {
+    console.log(`[WebSocket] Adding password to options for command /${command}`);
+    options.password = finalPassword;
+  } else if (requiresPasswordCheck && session.role !== 'public') {
+      // If password was required (due to keys existing) but we still don't have one (e.g., prompt failed/cancelled implicitly, or wasn't needed but keys exist)
+      // Let the command function handle the missing password error, but log it here.
+      console.warn(`[WebSocket] Proceeding with command /${command} without a password, although it might be required.`);
+  }
+
+  // --- Command Execution ---
+  try {
+    // *** Crucially, check if the command is research and if a query exists NOW ***
+    if (command === 'research') {
+        // Ensure query exists after potential interactive flow
+        if (!options.query) {
+            commandError('Research query is missing. Please provide a query or use interactive mode.');
+            return false; // commandError enables input
+        }
+        console.log(`[WebSocket] Executing research command for user ${session.username}`);
+        console.log(`[WebSocket] Options passed to executeResearch:`, JSON.stringify({ ...options, webSocketClient: '[WebSocket Object]', session: { ...session, webSocketClient: '[WebSocket Object]' } }).substring(0, 500)); // Log options, masking sensitive parts if needed
+
+        // Call executeResearch and await its result
+        const researchResult = await executeResearch(options);
+
+        // --- Start: Log after executeResearch completes ---
+        console.log(`[WebSocket] executeResearch completed. Success: ${researchResult?.success}, KeepDisabled: ${researchResult?.keepDisabled}`);
+        // --- End: Log after executeResearch completes ---
+
+        // Determine final input state based on researchResult
+        // If researchResult.keepDisabled is explicitly false, allow enabling.
+        // If it's true or undefined, keep disabled (or let error handler decide).
+        enableInputAfter = researchResult?.keepDisabled === false;
+
+    } else if (commandFn) { // Handle other commands
+        // options.currentUser is already set from earlier fetch
+
+        // Execute the command function
+        console.log(`[WebSocket] Executing command function: /${command} for user ${session.username}`);
+        const logOptions = { ...options };
+        if (logOptions.password) logOptions.password = '******';
+        if (logOptions.session?.password) logOptions.session.password = '******';
+        // Mask currentUser password if present
+        if (logOptions.currentUser?.password) logOptions.currentUser.password = '******';
+        console.log(`[WebSocket] Options passed to command:`, JSON.stringify(logOptions, (key, value) => key === 'webSocketClient' ? '[WebSocket Object]' : value).substring(0, 500));
+
+        const result = await commandFn(options);
+        console.log(`[WebSocket] Command function /${command} finished. Result:`, result ? JSON.stringify(result).substring(0,100) : 'undefined');
+
+        // --- Post-Execution State Management ---
+        enableInputAfter = true; // Default to enabling after success
+        // ... (rest of post-execution logic for chat-ready, keepDisabled, password caching) ...
+         if (result?.type === 'chat-ready') {
+            console.log("[WebSocket] chat-ready result received.");
+            session.isChatActive = true;
+            session.chatHistory = [];
+            session.memoryManager = result.memoryManager;
+            safeSend(ws, { type: 'chat-ready', prompt: '[chat] ', memoryEnabled: !!result.memoryManager });
+        }
+        if (result && result.keepDisabled === true) {
+            console.log("[WebSocket] Command result explicitly requests keepDisabled=true.");
+            enableInputAfter = false;
+        }
+        if (result && result.keepDisabled === false) {
+            console.log("[WebSocket] Command result explicitly requests keepDisabled=false.");
+            enableInputAfter = true;
+        }
+        // ... (password caching logic) ...
+         const isPasswordError = result?.error?.toLowerCase().includes('password') || result?.error?.toLowerCase().includes('decryption failed');
+        if (requiresPasswordCheck && result?.success === false && isPasswordError) {
+            console.log(`[WebSocket] Clearing cached password for session ${session.sessionId} due to command failure related to password.`);
+            session.password = null;
+        } else if (requiresPasswordCheck && result?.success === true && finalPassword) {
+            console.log(`[WebSocket] Caching successfully used password for session ${session.sessionId}.`);
+            session.password = finalPassword;
+        }
+
+    } else {
+        // Should not happen if initial check passed, but handle defensively
+        commandError(`Command /${command} not found or not executable.`);
+        return false;
+    }
+
+    console.log(`[WebSocket] Returning from handleCommandMessage. Final enableInputAfter: ${enableInputAfter}`);
+    return enableInputAfter; // Return final decision on input state
+
   } catch (error) {
-    console.error('Error initializing web chat session:', error);
-    ws.send(JSON.stringify({
-      type: 'error',
-      error: `Failed to initialize chat: ${error.message}`,
-      messageId: `error-${Date.now()}`
-    }));
+    // Catch uncaught errors from the command function itself
+    console.error(`[WebSocket] Uncaught error executing command /${command} (Session ${session.sessionId}, User: ${session.username}):`, error);
+    // Use commandError to report and manage input state
+    commandError(`Server error executing command: ${error.message}`);
+    console.log(`[WebSocket] Returning from handleCommandMessage after catch. Final enableInputAfter: false`);
+    // Error helper enables input by default, so return false as it was handled
     return false;
   }
 }
 
-export default router;
+/**
+ * Handles 'input' type messages (responses to server-side prompts).
+ * @param {WebSocket} ws - The WebSocket client connection.
+ * @param {object} message - The parsed message object { type: 'input', value }. Changed key from 'input' to 'value'.
+ * @param {object} session - The session data object.
+ * @returns {Promise<void>}
+ */
+async function handleInputMessage(ws, message, session) {
+  // *** FIX: Use 'value' key from client message instead of 'input' ***
+  const { value: inputValue } = message;
+  // Mask password input in logs if this is resolving a password prompt
+  const logInput = session.promptIsPassword ? '******' : (inputValue === null ? '<null>' : String(inputValue).substring(0, 50));
+  console.log(`[WebSocket] Processing input response (Session ${session.sessionId}): ${logInput}`);
+
+  if (!session) {
+    console.error("[WebSocket] CRITICAL: session object is null in handleInputMessage!");
+    wsErrorHelper(ws, 'Internal Server Error: Session lost during input handling.', true); // Enable after critical error
+    return;
+  }
+
+  console.log(`[WebSocket] Checking for pending server-side prompt. session.pendingPromptResolve is ${session.pendingPromptResolve ? 'set' : 'null'}`);
+
+  if (session.pendingPromptResolve) {
+    console.log(`[WebSocket] Found pending server-side prompt. Resolving... (Session ${session.sessionId})`);
+    clearTimeout(session.promptTimeoutId); // Clear the timeout associated with the prompt
+    session.promptTimeoutId = null;
+
+    const resolve = session.pendingPromptResolve; // Get the resolve function
+    // Clear the prompt state *before* resolving
+    session.pendingPromptResolve = null;
+    session.pendingPromptReject = null;
+    session.promptIsPassword = false; // Clear password flag
+
+    // Resolve the promise, which allows the waiting command handler (e.g., in handleCommandMessage) to continue
+    // *** FIX: Resolve with the correct variable 'inputValue' ***
+    resolve(inputValue);
+    // Input remains disabled. The command awaiting the prompt will decide the final state.
+    console.log(`[WebSocket] Server-side prompt resolved for session ${session.sessionId}. Input remains disabled (awaiting command completion).`);
+  } else {
+    // This is the scenario that was causing the error message.
+    console.warn(`[WebSocket] Received unexpected input message when no server-side prompt was pending (Session ${session.sessionId}). Input: ${logInput}`);
+    // Send an error back to the client and ensure input is enabled.
+    // *** FIX: Use 'inputValue' in the error message ***
+    wsErrorHelper(ws, `Received unexpected input: ${inputValue === null ? '<null>' : inputValue}`, true); // Enable after this unexpected message
+  }
+}
+
+async function handleChatMessage(ws, message, session) {
+  // --- FIX: Handle potential command object passed from routing ---
+  let chatMessage;
+  if (typeof message.message === 'string') {
+      chatMessage = message.message;
+  } else {
+      // If it's not a string, it might be the command object { type, command, args }
+      // Reconstruct the command string
+      chatMessage = `/${message.command} ${message.args.join(' ')}`;
+      console.log(`[WebSocket] Reconstructed command string in handleChatMessage: ${chatMessage}`);
+  }
+  // --- End FIX ---
+
+  console.log(`[WebSocket] Processing chat message/command (Session ${session.sessionId}, User: ${session.username}): ${chatMessage}`);
+  let enableInputAfter = true; // Default to enabling input
+
+  if (!session || !session.isChatActive) {
+    wsErrorHelper(ws, 'No active chat session found. Use /chat to start.', true); // Enable after error
+    return false; // wsErrorHelper handled enabling
+  }
+
+  const trimmedMessage = chatMessage ? chatMessage.trim() : '';
+
+  // Define output/error handlers for chat context
+  const chatOutput = (data) => {
+    // Send structured messages directly or use helper
+    if (typeof data === 'object' && data !== null && data.type) {
+      safeSend(ws, data); // Send structured message as-is
+    } else {
+      wsOutputHelper(ws, data); // Use helper for standard output
+    }
+    // Don't modify enableInputAfter here
+  };
+  const chatError = (data) => {
+    wsErrorHelper(ws, data, true); // Use helper to send error and enable input
+    enableInputAfter = false; // Signal that wsErrorHelper handled the input state
+  };
+
+  // --- Handle In-Chat Commands ---
+  if (trimmedMessage.startsWith('/')) {
+    // Simple split for in-chat commands
+    const args = trimmedMessage.substring(1).split(' '); // Remove leading '/' before splitting
+    const command = args[0].toLowerCase();
+    const positionalArgs = args.slice(1); // Arguments after the command
+    console.log(`[WebSocket] Handling in-chat command: /${command} with args:`, positionalArgs); // Log parsed command
+
+    // --- Fetch currentUser data for in-chat commands ---
+    let currentUserData;
+    try {
+        if (session.username !== 'public') {
+            currentUserData = await userManager.getUserData(session.username);
+            if (!currentUserData) {
+                chatError(`Error: Could not load user data for ${session.username}.`);
+                return false; // chatError handled enabling
+            }
+        } else {
+            currentUserData = await userManager.getUserData('public');
+        }
+    } catch (userError) {
+        chatError(`Error fetching user data: ${userError.message}`);
+        return false; // chatError handled enabling
+    }
+    // --- End Fetch currentUser ---
+
+
+    switch (command) {
+      case 'exit':
+        console.log(`[WebSocket] Exiting chat session: ${session.sessionId}`);
+        session.isChatActive = false;
+        if (session.memoryManager) {
+          console.log(`[WebSocket] Chat exited without finalizing memory for session ${session.sessionId}.`);
+          // Consider if memory should be finalized automatically here or require /exitmemory
+          session.memoryManager = null;
+        }
+        session.chatHistory = [];
+        session.password = null; // Clear cached password on exit
+        safeSend(ws, { type: 'chat-exit' }); // Inform client
+        safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' }); // Explicitly change mode back
+        return true; // Enable input after exiting chat
+
+      case 'exitmemory':
+        if (session.memoryManager) {
+          chatOutput('Finalizing memories...');
+          enableInputAfter = false; // Keep disabled during finalization
+          try {
+            const result = await exitMemory({ session, output: chatOutput, error: chatError }, chatOutput, chatError);
+            // Assume success enables unless result explicitly says otherwise
+            enableInputAfter = !(result?.keepDisabled === true);
+          } catch (memError) {
+            chatError(`Error finalizing memory: ${memError.message}`);
+            // chatError sets enableInputAfter = false, so return false
+            return false;
+          }
+        } else {
+          chatError('Memory mode is not enabled.');
+          return false; // chatError handled enabling
+        }
+        // Return the state determined by the try/catch block
+        return enableInputAfter;
+
+      case 'memory':
+         if (positionalArgs[0] === 'stats') { // Check first positional arg
+             const memoryCommandFn = commandFunctions['memory'];
+             if (memoryCommandFn) {
+                 chatOutput('Getting memory stats...');
+                 enableInputAfter = false; // Keep disabled during command
+                 try {
+                     // Pass options including positionalArgs
+                     const result = await memoryCommandFn({
+                         positionalArgs: positionalArgs, // Pass ['stats']
+                         session: session,
+                         isWebSocket: true,
+                         webSocketClient: ws,
+                         output: chatOutput,
+                         error: chatError,
+                         currentUser: currentUserData, // Pass fetched user data
+                         // Add any flags if needed, though '/memory stats' likely doesn't use them
+                     }, chatOutput, chatError);
+                     // Assume success enables unless result explicitly says otherwise
+                     enableInputAfter = !(result?.keepDisabled === true);
+                 } catch(cmdError) {
+                      chatError(`Error getting memory stats: ${cmdError.message}`);
+                      return false; // chatError handled enabling
+                 }
+             } else {
+                 chatError("Internal error: /memory command not found.");
+                 return false; // chatError handled enabling
+             }
+         } else {
+             chatError("Usage: /memory stats");
+             return false; // chatError handled enabling
+         }
+         return enableInputAfter;
+
+      case 'research':
+        // Extract query from positionalArgs
+        const researchQuery = positionalArgs.join(' ');
+
+        if (!researchQuery) {
+          chatError('Usage: /research <your research query>');
+          return false; // chatError handled enabling
+        }
+
+        chatOutput(`Starting research based on chat context: "${researchQuery}"`);
+        safeSend(ws, { type: 'research_start', keepDisabled: true }); // Keep disabled
+        enableInputAfter = false; // Keep disabled during research
+
+        try {
+          let userPassword = session.password;
+          if (!userPassword) {
+            try {
+              // Prompt for password, keeping input disabled
+              userPassword = await wsPrompt(ws, session, "Password needed for research API key: ", PROMPT_TIMEOUT_MS, true);
+              session.password = userPassword; // Cache password
+              // Input remains disabled after prompt resolution
+            } catch (promptError) {
+              // wsPrompt error handler enables input
+              return false; // Input state handled
+            }
+          }
+
+          // Prepare options for startResearchFromChat
+          // This function needs to be checked/adjusted to accept the right parameters
+          const researchOptions = {
+              query: researchQuery, // Pass the query string
+              depth: 2, // Default or configure? Maybe allow --depth in chat? For now, default.
+              breadth: 3, // Default
+              password: userPassword, // Pass the obtained password
+              username: session.username, // Pass username
+              currentUser: currentUserData, // Pass fetched user data
+              // Add other necessary options based on startResearchFromChat definition
+              isWebSocket: true, // Indicate WebSocket context
+              webSocketClient: ws // Pass WebSocket client
+          };
+
+          // Prepare handlers
+          const researchProgress = (data) => {
+            // ... existing progress handling ...
+             if (typeof data === 'object' && data !== null && data.completedQueries !== undefined) {
+              safeSend(ws, { type: 'progress', data: data });
+            } else {
+              wsOutputHelper(ws, data); // Send progress text
+            }
+          };
+          // Use chatError for errors within research process started from chat
+          const researchError = (err) => chatError(err);
+
+          // Retrieve relevant memories if memory manager exists
+          let relevantMemories = [];
+          if (session.memoryManager) {
+              try {
+                  relevantMemories = await session.memoryManager.retrieveRelevantMemories(researchQuery, 5); // Limit number of memories
+              } catch (memError) {
+                  console.error(`[WebSocket] Error retrieving memory for chat research: ${memError.message}`);
+                  chatOutput(`[System] Warning: Could not retrieve relevant memories - ${memError.message}`);
+                  // Continue without memories
+              }
+          }
+
+          // Call startResearchFromChat (ensure its signature matches)
+          // Assuming startResearchFromChat is designed to handle this call structure
+          const researchResult = await startResearchFromChat(
+            session.chatHistory, // Pass current chat history
+            relevantMemories,    // Pass retrieved memories
+            researchOptions,     // Pass options object
+            researchProgress,    // Pass progress handler
+            researchError        // Pass error handler
+          );
+
+          // Research finished successfully
+          // startResearchFromChat should ideally handle sending completion messages via its handlers
+          // If not, send completion here. Assuming it does handle output.
+          // safeSend(ws, { type: 'research_complete', summary: researchResult?.results?.summary });
+          chatOutput("Research complete. You can continue chatting or type /exit.");
+          enableInputAfter = true; // Enable after successful research
+
+        } catch (researchError) {
+          // Catch errors specifically from the startResearchFromChat call or setup
+          console.error(`[WebSocket] Error in /research from chat: ${researchError.message}`, researchError.stack);
+          // Use chatError to report and handle input state
+          chatError(`Error during research: ${researchError.message}`);
+          safeSend(ws, { type: 'research_complete', error: researchError.message, keepDisabled: false }); // Signal completion even on error, enable input
+          return false; // chatError handled enabling (which is true by default in wsErrorHelper)
+        }
+        return enableInputAfter;
+
+      // --- NEW: /exitresearch Command ---
+      case 'exitresearch':
+        chatOutput('Exiting chat and starting research based on history...');
+        enableInputAfter = false; // Keep disabled during transition and research
+
+        // Prepare options for executeExitResearch
+        const exitResearchOptions = {
+            session: session,
+            output: chatOutput,
+            error: chatError,
+            currentUser: currentUserData,
+            password: session.password, // Pass cached password if available
+            isWebSocket: true,
+            webSocketClient: ws,
+            wsPrompt: wsPrompt // *** Pass the wsPrompt function ***
+        };
+
+        try {
+            // Call the dedicated function from chat.cli.mjs
+            // executeExitResearch handles its own logic, including password prompt if needed via wsPrompt
+            const result = await executeExitResearch(exitResearchOptions);
+            // executeExitResearch returns { success, keepDisabled }
+            // It handles sending chat-exit, mode_change, and research completion messages.
+            enableInputAfter = !(result?.keepDisabled === true); // Determine final state based on result
+        } catch (execError) {
+            // Catch errors from executeExitResearch itself (e.g., setup errors before it calls wsPrompt/startResearch)
+            chatError(`Error processing /exitresearch: ${execError.message}`);
+            // Ensure chat state is cleaned up even if executeExitResearch fails early
+            if (session.isChatActive) { // Check if still active (might have been changed by partial execution)
+                session.isChatActive = false;
+                session.memoryManager = null;
+                session.chatHistory = [];
+                session.password = null; // Clear cached password on exit
+                safeSend(ws, { type: 'chat-exit' });
+                safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
+            }
+            return false; // chatError handled enabling
+        }
+        // Return the final state determined by executeExitResearch or the catch block
+        return enableInputAfter;
+      // --- End FIX ---
+
+      // --- FIX: Add /help case ---
+      case 'help':
+        chatOutput('--- In-Chat Help ---');
+        chatOutput('Available in-chat commands:');
+        chatOutput('  /exit          - Leave the chat session.');
+        chatOutput('  /exitmemory    - Finalize memories and leave chat (if memory enabled).');
+        chatOutput('  /exitresearch  - Exit chat and start research using the conversation history.');
+        chatOutput('  /memory stats  - Show stats for the current memory session (if memory enabled).');
+        chatOutput('  /research <q>  - Start research based on chat context and query <q>.');
+        chatOutput('  /help          - Show this help message.');
+        chatOutput('To run other commands (like /status, /keys), first type /exit.');
+        return true; // Enable input after help
+      // --- End FIX ---
+
+      default:
+        // --- FIX: Modify error message for clarity ---
+        chatError(`Unknown command in chat mode: /${command}. Type /help for available in-chat commands or /exit to leave chat.`);
+        return false; // chatError handled enabling
+    }
+  }
+
+  // --- Handle Regular Chat Message ---
+  if (!trimmedMessage) {
+    return true; // Enable input if message is empty
+  }
+
+  // ... add to history, store memory ...
+  // Add user message to session history *before* LLM call
+  session.chatHistory = session.chatHistory || []; // Ensure history array exists
+  session.chatHistory.push({ role: 'user', content: trimmedMessage });
+
+  // Check for password / API keys needed for chat LLM call
+  let veniceKey;
+  try {
+    let userPassword = session.password;
+    if (!userPassword) {
+      try {
+        // Prompt for password, keeping input disabled
+        enableInputAfter = false; // Disable input while prompting
+        userPassword = await wsPrompt(ws, session, "Password needed for chat API key: ", PROMPT_TIMEOUT_MS, true);
+        session.password = userPassword; // Cache password
+        // Input remains disabled after prompt resolution, LLM call will decide final state
+      } catch (promptError) {
+        // wsPrompt error handler (wsErrorHelper) enables input
+        return false; // Input state handled
+      }
+    }
+
+    veniceKey = await userManager.getApiKey('venice', userPassword, session.username);
+    if (!veniceKey) {
+      session.password = null; // Clear bad cached password
+      throw new Error("Failed to get/decrypt Venice API key. Please check password or keys.");
+    }
+  } catch (keyError) {
+    chatError(`API Key Error: ${keyError.message}`);
+    return false; // chatError handled enabling
+  }
+
+  // --- Retrieve Memory & Prepare Messages ---
+  let messagesForLLM = [...session.chatHistory];
+  if (session.memoryManager) {
+      try {
+          const relevantMemories = await session.memoryManager.retrieveRelevantMemories(trimmedMessage);
+          if (relevantMemories && relevantMemories.length > 0) {
+              const memoryContext = relevantMemories.map(m => `[Archived Context] ${m.content}`).join('\n');
+              // Add memory context as a system message at the beginning
+              messagesForLLM.unshift({ role: 'system', content: `Relevant background information:\n${memoryContext}` });
+              console.log(`[WebSocket] Added ${relevantMemories.length} relevant memories to LLM context.`);
+          }
+      } catch (memError) {
+          console.error(`[WebSocket] Error retrieving memory for session ${session.sessionId}: ${memError.message}`);
+          // Don't fail the chat, just proceed without memory context
+          // Use safeSend for non-critical warning, avoid chatError which disables input via wsErrorHelper
+          safeSend(ws, { type: 'output', data: `[System] Warning: Error retrieving memory - ${memError.message}` });
+          // Input state remains determined by the LLM call flow
+      }
+  }
+
+  // Limit history length to avoid excessive token usage (e.g., last 10 messages)
+  const maxHistoryLength = 10; // Adjust as needed
+  if (messagesForLLM.length > maxHistoryLength) {
+      // Keep system message (if any) and the last N user/assistant messages
+      const systemMessage = messagesForLLM.length > 0 && messagesForLLM[0].role === 'system' ? [messagesForLLM[0]] : [];
+      const chatMessages = messagesForLLM.length > 0 && messagesForLLM[0].role === 'system' ? messagesForLLM.slice(1) : messagesForLLM;
+
+      messagesForLLM = [
+          ...systemMessage,
+          ...chatMessages.slice(-maxHistoryLength) // Take last N chat messages
+      ];
+  }
+
+
+  // --- Call LLM ---
+  try {
+    chatOutput('...'); // Show thinking indicator
+    enableInputAfter = false; // Keep disabled during LLM call
+
+    const llmClient = new LLMClient({ apiKey: veniceKey });
+
+    console.log(`[WebSocket] Calling LLM for session ${session.sessionId} with ${messagesForLLM.length} messages.`);
+    const response = await llmClient.completeChat({
+        messages: messagesForLLM,
+        temperature: 0.7, // Example temperature
+        maxTokens: 1500   // Example max tokens
+     });
+
+    // Clean the response content if necessary
+    const assistantMessageContent = response.content ? cleanChatResponse(response.content) : "[No response content]";
+
+    // Add AI response to session history
+    const assistantMessage = { role: 'assistant', content: assistantMessageContent };
+    session.chatHistory.push(assistantMessage);
+
+    // Store AI response in memory if enabled
+    if (session.memoryManager) {
+        try {
+            await session.memoryManager.storeMemory(assistantMessageContent, 'assistant-message');
+            console.log(`[WebSocket] Stored assistant response in memory for session ${session.sessionId}.`);
+        } catch (memError) {
+            console.error(`[WebSocket] Error storing assistant memory for session ${session.sessionId}: ${memError.message}`);
+            // Inform user non-critically
+             safeSend(ws, { type: 'output', data: `[System] Warning: Error storing response in memory - ${memError.message}` });
+        }
+    }
+
+    // Send response to client
+    safeSend(ws, { type: 'chat-response', message: assistantMessageContent });
+    enableInputAfter = true; // Enable input after successful response
+
+  } catch (error) {
+    console.error('[WebSocket] LLM chat completion error:', error);
+    chatError(`Chat error: ${error.message}`); // chatError handles enabling input
+    return false; // chatError handled enabling
+  }
+
+  return enableInputAfter; // Return final state
+}
+
+/**
+ * Initiates a prompt on the client and waits for an 'input' response.
+ * Manages prompt state and timeouts on the server-side session.
+ * @param {WebSocket} ws - The WebSocket client connection.
+ * @param {object} session - The session data object.
+ * @param {string} promptText - The text to display to the user.
+ * @param {number} [timeoutMs=PROMPT_TIMEOUT_MS] - Timeout duration.
+ * @param {boolean} [isPassword=false] - Whether the input should be masked.
+ * @returns {Promise<string>} - A promise that resolves with the user's input or rejects on error/timeout.
+ */
+async function wsPrompt(ws, session, promptText, timeoutMs = PROMPT_TIMEOUT_MS, isPassword = false) {
+  // Check if another prompt is already active for this session
+  if (session.pendingPromptResolve) {
+    console.warn(`[WebSocket] Attempted to start a new server-side prompt while another was active (Session ${session.sessionId})`);
+    // Reject the new prompt attempt immediately
+    throw new Error("Another prompt is already active for this connection.");
+  }
+
+  console.log(`[WebSocket] Initiating server-side prompt (Session ${session.sessionId}), Password: ${isPassword}`);
+
+  // Return a promise that will be resolved/rejected by handleInputMessage or the timeout
+  return new Promise((resolve, reject) => {
+    // Store the resolve/reject functions and state in the session
+    session.pendingPromptResolve = resolve;
+    session.pendingPromptReject = reject;
+    session.promptIsPassword = isPassword; // Store if it's a password prompt for logging in handleInputMessage
+
+    // Set a timeout for the prompt
+    session.promptTimeoutId = setTimeout(() => {
+      // Check if the prompt is still pending when the timeout fires
+      if (session.pendingPromptReject) {
+        console.log(`[WebSocket] Server-side prompt timed out (Session ${session.sessionId}).`);
+        const rejectFn = session.pendingPromptReject; // Get reject function
+
+        // Clear the prompt state BEFORE informing client/rejecting
+        session.pendingPromptResolve = null;
+        session.pendingPromptReject = null;
+        session.promptTimeoutId = null;
+        session.promptIsPassword = false;
+
+        // Inform the client about the timeout and ensure input is re-enabled
+        wsErrorHelper(ws, 'Prompt timed out.', true); // true = enable input
+
+        rejectFn(new Error(`Prompt timed out after ${timeoutMs / 1000} seconds.`));
+      } else {
+         console.log(`[WebSocket] Prompt timeout fired, but no pending reject function found (Session ${session.sessionId}). State might have been cleared already.`);
+      }
+    }, timeoutMs);
+
+    // Send the 'prompt' message to the client
+    const sent = safeSend(ws, {
+      type: 'prompt',
+      data: promptText,
+      isPassword: isPassword,
+    });
+
+    // If sending the prompt message fails immediately, clean up and reject
+    if (!sent) {
+      console.error(`[WebSocket] Failed to send prompt message immediately (Session ${session.sessionId})`);
+      clearTimeout(session.promptTimeoutId);
+      // Ensure state is cleared before rejecting
+      session.pendingPromptResolve = null;
+      session.pendingPromptReject = null;
+      session.promptTimeoutId = null;
+      session.promptIsPassword = false;
+      // Inform the caller about the failure
+      // No need to call wsErrorHelper here as the connection is likely broken/closed by safeSend
+      reject(new Error(`Failed to send prompt message.`));
+    } else {
+        console.log(`[WebSocket] Prompt message sent to client (Session ${session.sessionId})`);
+        // Input remains disabled (or enabled if already in prompt) until response or timeout
+    }
+  });
+}
+
+// ... existing cleanupInactiveSessions ...
+// Ensure cleanupInactiveSessions also clears prompt state correctly
+export function cleanupInactiveSessions() {
+  const now = Date.now();
+  console.log(`[Session Cleanup] Running cleanup check... Current sessions: ${activeChatSessions.size}`);
+  let cleanedCount = 0;
+
+  activeChatSessions.forEach((session, sessionId) => {
+    if (now - session.lastActivity > SESSION_INACTIVITY_TIMEOUT) {
+      console.log(`[Session Cleanup] Removing inactive session: ${sessionId} (User: ${session.username || 'N/A'})`);
+
+      // Reject any pending server-side prompt before closing
+      if (session.pendingPromptReject) {
+        console.log(`[Session Cleanup] Rejecting pending server-side prompt for timed-out session ${sessionId}`);
+        clearTimeout(session.promptTimeoutId);
+        const rejectFn = session.pendingPromptReject; // Store before clearing
+        session.pendingPromptResolve = null;
+        session.pendingPromptReject = null;
+        session.promptTimeoutId = null;
+        session.promptIsPassword = false;
+        rejectFn(new Error("Session timed out during prompt."));
+      }
+
+      // Inform client and close connection if possible
+      if (session.webSocketClient && session.webSocketClient.readyState === WebSocket.OPEN) {
+        safeSend(session.webSocketClient, { type: 'system-message', message: 'Session timed out due to inactivity.' });
+        safeSend(session.webSocketClient, { type: 'session-expired' }); // Specific event for client handling
+        session.webSocketClient.close(1008, 'Session Timeout');
+      }
+
+      // Clean up server-side resources
+      if (session.memoryManager) {
+        session.memoryManager = null; // Release memory manager if applicable
+      }
+      if (session.webSocketClient) {
+        wsSessionMap.delete(session.webSocketClient); // Remove from WeakMap
+      }
+      activeChatSessions.delete(sessionId); // Remove from main session map
+      cleanedCount++;
+    }
+  });
+
+  if (cleanedCount > 0) {
+    console.log(`[Session Cleanup] Cleaned up ${cleanedCount} inactive sessions.`);
+  }
+}
+
+// Start the cleanup interval
+setInterval(cleanupInactiveSessions, SESSION_INACTIVITY_TIMEOUT / 2); // Check periodically
+
+// Function to set up routes (if needed elsewhere, otherwise keep local)
+function setupRoutes(app) {
+    app.use('/api/research', router);
+    // Add other route setups if necessary
+}
+
+export { setupRoutes }; // Export only setupRoutes if needed, handleWebSocketConnection is already exported above
+export default router; // Keep default export if needed, handleWebSocketConnection is already exported above

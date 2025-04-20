@@ -5,10 +5,11 @@ import { userManager } from '../features/auth/user-manager.mjs';
  * CLI command to change user password
  * @returns {Promise<Object>} Result of password change
  */
-export async function executePasswordChange() {
+export async function executePasswordChange(options = {}) {
+  const output = options.output || console.log;
   // Check if user is authenticated (not public)
   if (!userManager.isAuthenticated()) {
-    console.error('Error: You must be logged in to change password');
+    output('Error: You must be logged in to change password');
     return { success: false, error: 'Authentication required' };
   }
 
@@ -27,7 +28,7 @@ export async function executePasswordChange() {
     // Ask for new password
     const newPassword = await question('Enter your new password: ');
     if (!newPassword || newPassword.length < 8) {
-      console.error('Error: Password must be at least 8 characters');
+      output('Error: Password must be at least 8 characters');
       rl.close();
       return { success: false, error: 'Password too short' };
     }
@@ -35,7 +36,7 @@ export async function executePasswordChange() {
     // Ask for confirmation
     const confirmPassword = await question('Confirm your new password: ');
     if (newPassword !== confirmPassword) {
-      console.error('Error: Passwords do not match');
+      output('Error: Passwords do not match');
       rl.close();
       return { success: false, error: 'Passwords do not match' };
     }
@@ -45,11 +46,11 @@ export async function executePasswordChange() {
     // Change password
     await userManager.changePassword(currentPassword, newPassword);
 
-    console.log('Password changed successfully!');
+    output('Password changed successfully!');
     return { success: true };
   } catch (error) {
     rl.close();
-    console.error(`Failed to change password: ${error.message}`);
+    output(`Failed to change password: ${error.message}`);
     return { success: false, error: error.message };
   }
 }

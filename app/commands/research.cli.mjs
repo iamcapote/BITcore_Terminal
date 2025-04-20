@@ -1,340 +1,419 @@
-import { getResearchData } from '../features/research/research.controller.mjs';
-import { cleanQuery } from '../utils/research.clean-query.mjs';
-import { ensureDir } from '../utils/research.ensure-dir.mjs';
 import path from 'path';
-import fs from 'fs/promises';
-import readline from 'readline';
-import { output } from '../utils/research.output-manager.mjs';
 import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
-import { callVeniceWithTokenClassifier } from '../utils/token-classifier.mjs';
 import { userManager } from '../features/auth/user-manager.mjs';
-import { 
-  handleCliError, 
-  ErrorTypes, 
-  validateInputs, 
-  logCommandStart, 
-  logCommandSuccess 
-} from '../utils/cli-error-handler.mjs';
+import { handleCliError, ErrorTypes, logCommandStart, logCommandSuccess } from '../utils/cli-error-handler.mjs';
+import readline from 'readline'; // Keep for CLI mode
+import os from 'os';
+import fs from 'fs/promises';
+// Import the shared safeSend utility
+import { safeSend } from '../utils/websocket.utils.mjs';
+// Import the singleton instance for defaults if needed
+import { output as outputManagerInstance } from '../utils/research.output-manager.mjs';
+// Import token classifier function (assuming it exists and handles its own errors/output)
+import { callVeniceWithTokenClassifier } from '../utils/token-classifier.mjs';
+
 
 /**
- * CLI command for executing the research pipeline
- * 
- * @param {Object} options - Command options
- * @param {string} options.query - The research query
- * @param {number} options.depth - Research depth (1-5)
- * @param {number} options.breadth - Research breadth (2-10)
- * @param {string} options.outputDir - Custom output directory
+ * Ensures only one readline interface is active for prompts.
+ * Creates its own temporary interface.
+ * @param {string} query The prompt message.
+ * @param {boolean} isHidden If true, mask input (for passwords).
+ * @returns {Promise<string>} User's input.
+ */
+function singlePrompt(query, isHidden = false) {
+    return new Promise((resolve, reject) => {
+        // Create a temporary interface
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+            terminal: true
+        });
+
+        let password = ''; // Used only if isHidden is true
+
+        const cleanup = (err = null, value = null) => {
+            if (isHidden) {
+                process.stdin.removeListener('keypress', onKeypress);
+                if (process.stdin.isRaw) {
+                    process.stdin.setRawMode(false);
+                }
+                process.stdin.pause(); // Ensure stdin is paused after use
+            }
+            rl.close(); // Close the temporary interface
+            if (err) {
+                reject(err);
+            } else {
+                resolve(value); // Resolve with the value
+            }
+        };
+
+        const onKeypress = (chunk, key) => {
+            if (key) {
+                if (key.name === 'return' || key.name === 'enter') {
+                    process.stdout.write('\n'); // Ensure newline after hidden input
+                    cleanup(null, password);
+                } else if (key.name === 'backspace') {
+                    if (password.length > 0) {
+                        password = password.slice(0, -1);
+                        process.stdout.write('\b \b');
+                    }
+                } else if (key.ctrl && (key.name === 'c' || key.name === 'd')) {
+                    process.stdout.write('\nCancelled.\n');
+                    cleanup(null, ''); // Resolve with empty string on cancel
+                } else if (!key.ctrl && !key.meta && chunk) {
+                    password += chunk;
+                    process.stdout.write('*');
+                }
+            } else if (chunk) { // Handle paste
+                password += chunk;
+                process.stdout.write('*'.repeat(chunk.length));
+            }
+        };
+
+        if (isHidden) {
+            rl.setPrompt('');
+            rl.write(query);
+            if (process.stdin.isRaw) process.stdin.setRawMode(false); // Ensure not already raw
+            process.stdin.setRawMode(true);
+            process.stdin.resume(); // Resume stdin for this prompt
+            process.stdin.on('keypress', onKeypress);
+        } else {
+            rl.question(query, (answer) => {
+                cleanup(null, answer.trim()); // Resolve with the answer
+            });
+        }
+
+        rl.on('error', (err) => {
+            console.error("Readline error during prompt:", err);
+            cleanup(err); // Reject on error
+        });
+
+        // Handle SIGINT (Ctrl+C) during rl.question (for non-hidden prompts)
+        rl.on('SIGINT', () => {
+            if (!isHidden) {
+                process.stdout.write('\nCancelled.\n');
+                cleanup(null, ''); // Resolve with empty string on cancel
+            }
+            // For hidden prompts, SIGINT is handled in onKeypress
+        });
+    });
+}
+
+
+/**
+ * CLI command for executing the research pipeline. Accepts a single options object.
+ * @param {Object} options - Command options including positionalArgs, flags, session, output/error handlers.
+ * @param {string[]} options.positionalArgs - Positional arguments (query parts)
+ * @param {string} [options.query] - Query string, potentially from interactive prompts.
+ * @param {number} options.depth - Research depth
+ * @param {number} options.breadth - Research breadth
+ * @param {boolean} options.classify - Use token classification
  * @param {boolean} options.verbose - Enable verbose logging
- * @returns {Promise<Object>} Research results
+ * @param {string} [options.password] - Password provided via args/payload/cache/prompt
+ * @param {boolean} [options.isWebSocket=false] - Indicates if called via WebSocket
+ * @param {object} [options.session] - WebSocket session object
+ * @param {Function} options.output - Output function (log or WebSocket send)
+ * @param {Function} options.error - Error function (error or WebSocket send)
+ * @param {object} [options.currentUser] - User data object if authenticated.
+ * @param {WebSocket} [options.webSocketClient] - WebSocket client instance.
+ * @returns {Promise<Object>} Research results or error object
  */
 export async function executeResearch(options = {}) {
-  try {
-    // Log command execution start
-    logCommandStart('research', options, options.verbose);
-    
-    if (!userManager.isAuthenticated()) {
-      return handleCliError(
-        'You must be logged in to use the research feature',
-        ErrorTypes.AUTHENTICATION,
-        { 
-          command: 'research',
-          recoveryHint: 'Use /login to authenticate first'
-        }
-      );
-    }
+    // Log received options at the very beginning, masking password
+    const initialLogOptions = { ...options };
+    if (initialLogOptions.password) initialLogOptions.password = '******';
+    if (initialLogOptions.session?.password) initialLogOptions.session.password = '******';
+    // Mask currentUser password if present
+    if (initialLogOptions.currentUser?.password) initialLogOptions.currentUser.password = '******';
+    console.log(`[executeResearch] Received options:`, JSON.stringify(initialLogOptions, (key, value) => key === 'webSocketClient' ? '[WebSocket Object]' : value).substring(0, 500));
 
-    if (!await userManager.hasApiKey('venice') || !await userManager.hasApiKey('brave')) {
-      return handleCliError(
-        'Missing API keys required for research',
-        ErrorTypes.API_KEY,
-        { 
-          command: 'research',
-          recoveryHint: 'Use /keys set to configure your API keys'
-        }
-      );
-    }
-
-    // Extract and validate options
-    const { 
-      query, 
-      depth = 2, 
-      breadth = 3, 
-      outputDir = './research', 
-      verbose = false,
-      password
+    const {
+        positionalArgs = [], // Use positionalArgs from options
+        query: queryFromOptions, // Get query directly from options
+        depth = 2,
+        breadth = 3,
+        classify = false, // Default from options flags
+        verbose = false,
+        password, // Password from handleCommandMessage
+        isWebSocket = false,
+        session,
+        output: cmdOutput, // Use passed handlers
+        error: cmdError,   // Use passed handlers
+        currentUser, // Use passed user data
+        webSocketClient // Use passed client instance
     } = options;
-    
-    // If no query provided, start interactive mode
-    if (!query) {
-      return await startInteractiveResearch(depth, breadth, outputDir, verbose);
+
+    // Determine effective output/error handlers (already done via options)
+    const effectiveOutput = cmdOutput;
+    const effectiveError = cmdError;
+    const effectiveDebug = isWebSocket
+        ? (msg) => { if (session?.debug || verbose) cmdOutput(`[DEBUG] ${msg}`); } // Check verbose flag too
+        : (msg) => { if (verbose) console.log(`[DEBUG] ${msg}`); }; // Simple console debug
+
+    // --- NEW: Define progress handler ---
+    const effectiveProgress = isWebSocket && webSocketClient
+        ? (progressData) => {
+            // Send progress updates via WebSocket
+            safeSend(webSocketClient, { type: 'progress', data: progressData });
+          }
+        : (progressData) => {
+            // Log progress to console in CLI mode (optional, can be noisy)
+            if (verbose) {
+                console.log(`[Progress] Status: ${progressData.status}, Queries: ${progressData.completedQueries}/${progressData.totalQueries || '?'}, Depth: ${progressData.currentDepth}/${progressData.totalDepth}`);
+            }
+          };
+    // --- End NEW ---
+
+
+    // --- Determine the effective research query ---
+    let researchQuery = positionalArgs.join(' ').trim();
+    if (!researchQuery && queryFromOptions) {
+        // Use query from options if positionalArgs were empty (e.g., interactive flow)
+        researchQuery = queryFromOptions;
+        effectiveDebug(`[executeResearch] Using query from options: "${researchQuery}"`);
+    } else if (researchQuery && queryFromOptions && researchQuery !== queryFromOptions) {
+        // Log if both are present but different (unlikely scenario)
+        effectiveDebug(`[executeResearch] Warning: Query from positional args ("${researchQuery}") differs from options.query ("${queryFromOptions}"). Using positional args.`);
+    } else if (!researchQuery && !queryFromOptions) {
+        effectiveDebug(`[executeResearch] No query provided via positional args or options.query.`);
+        // The interactive prompt logic below will handle this for CLI mode.
+        // For WebSocket, an error will be thrown if query is still missing.
     }
-    
-    // Remove password handling from research command
-    // Old:
-    // let userPassword = password;
-    // if (!userPassword) {
-    //   userPassword = await promptForPassword();
-    //   if (!userPassword) {
-    //     return handleCliError(
-    //       'Password is required to decrypt API keys',
-    //       ErrorTypes.API_KEY,
-    //       { command: 'research' }
-    //     );
-    //   }
-    // }
-    
-    // New: directly retrieve API keys (non‑auth command)
-    const braveKey = await userManager.getApiKey('brave');
-    const veniceKey = await userManager.getApiKey('venice');
-    if (!braveKey || !veniceKey) {
-      return handleCliError(
-        'Failed to retrieve one or more API keys',
-        ErrorTypes.API_KEY,
-        { command: 'research' }
-      );
-    }
-    // Set the API keys in the environment for this operation
-    process.env.BRAVE_API_KEY = braveKey;
-    process.env.VENICE_API_KEY = veniceKey;
-    
-    // Clean the query
-    const cleanedQuery = cleanQuery(query);
-    
-    // Validate depth and breadth
-    const validatedDepth = Math.min(Math.max(1, parseInt(depth)), 5);
-    const validatedBreadth = Math.min(Math.max(2, parseInt(breadth)), 10);
-    
-    if (verbose) {
-      output.log(`Starting research for: "${cleanedQuery}"`);
-      output.log(`Parameters: depth=${validatedDepth}, breadth=${validatedBreadth}`);
-      output.log(`Results will be saved to: ${outputDir}`);
-    }
-    
-    // Ensure the output directory exists
-    await ensureDir(outputDir);
-    
-    // Execute research using the getResearchData function
-    const results = await getResearchData(
-      cleanedQuery,
-      validatedDepth,
-      validatedBreadth
-    );
-    
-    // Generate output filename based on the query
-    const safeFilename = cleanedQuery.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-    const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
-    const filename = `${safeFilename}_${timestamp}.md`;
-    const outputPath = path.join(outputDir, filename);
-    
-    // Convert results to markdown format
-    const markdown = generateMarkdown(cleanedQuery, results);
-    
-    // Save results to file
-    await fs.writeFile(outputPath, markdown);
-    
-    // Log successful completion
-    logCommandSuccess('research', { outputPath }, verbose);
-    
-    return { 
-      success: true, 
-      results: results,
-      outputPath
-    };
-  } catch (error) {
-    return handleCliError(
-      error,
-      error.name === 'SearchError' ? ErrorTypes.NETWORK : ErrorTypes.UNKNOWN,
-      { 
-        command: 'research',
-        verbose: options.verbose
-      }
-    );
-  }
-}
+    // --- End Determine Query ---
 
-/**
- * Start interactive research mode when no query is provided
- * 
- * @param {number} initialDepth - Initial depth value
- * @param {number} initialBreadth - Initial breadth value
- * @param {string} outputDir - Output directory
- * @param {boolean} verbose - Enable verbose logging
- * @returns {Promise<Object>} Research results
- */
-export async function startInteractiveResearch(initialDepth = 2, initialBreadth = 3, outputDir = './research', verbose = false) {
-  // Removed the password parameter and any promptForPassword calls to ensure the research command does not handle passwords
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-
-  try {
-    // Log command start
-    logCommandStart('research (interactive)', { depth: initialDepth, breadth: initialBreadth }, verbose);
-    
-    // Get research query
-    const researchQuery = await askQuestion(rl, 'What would you like to research? ');
-    if (!researchQuery.trim()) {
-      rl.close();
-      return handleCliError(
-        'Query cannot be empty',
-        ErrorTypes.INPUT_VALIDATION,
-        { command: 'research', recoveryHint: 'Please provide a non-empty research query' }
-      );
-    }
-
-    // Get research parameters
-    const breadthStr = await askQuestion(rl, `Enter research breadth (2-10)? [${initialBreadth}] `);
-    const depthStr = await askQuestion(rl, `Enter research depth (1-5)? [${initialDepth}] `);
-    
-    // Use token classifier
-    const useClassifier = await askQuestion(rl, 'Would you like to use the token classifier to add metadata? (yes/no) [no] ');
-
-    // Set up query and parameters
-    const breadth = parseInt(breadthStr || initialBreadth.toString(), 10);
-    const depth = parseInt(depthStr || initialDepth.toString(), 10);
-    
-    let enhancedQuery = { original: researchQuery };
-    
-    rl.close();
-
-    // Retrieve decrypted API keys
     try {
-      const braveKey = await userManager.getApiKey('brave');
-      const veniceKey = await userManager.getApiKey('venice');
-      
-      if (!braveKey || !veniceKey) {
-        return handleCliError(
-          'Failed to decrypt one or more API keys',
-          ErrorTypes.API_KEY,
-          { command: 'research', recoveryHint: 'Check that your password is correct' }
-        );
-      }
-      
-      // Set the API keys in the environment for this operation
-      process.env.BRAVE_API_KEY = braveKey;
-      process.env.VENICE_API_KEY = veniceKey;
-      
-      // Use token classifier if requested (now that we have Venice API key)
-      if (['yes', 'y'].includes(useClassifier.trim().toLowerCase())) {
-        output.log('Classifying query with token classifier...');
-        try {
-          const tokenMetadata = await callVeniceWithTokenClassifier(researchQuery);
-          enhancedQuery.metadata = tokenMetadata;
-          output.log('Token classification completed.');
-          output.log(`Token classification result: ${tokenMetadata}`);
-          output.log('Using token classification to enhance research quality...');
-        } catch (error) {
-          output.error(`Error during token classification: ${error.message}`);
-          output.log('Continuing with basic query...');
+        effectiveDebug(`[CMD START] research: Query='${researchQuery}', Depth=${depth}, Breadth=${breadth}, Classify=${classify}, Verbose=${verbose}`);
+        effectiveDebug(`[executeResearch] Password received in options: ${password ? '******' : 'Not provided'}`);
+
+        // --- Authentication Check ---
+        // ** Use the currentUser object passed in options **
+        const isAuthenticated = !!currentUser && currentUser.role !== 'public';
+        const currentUsername = currentUser ? currentUser.username : 'public';
+        const currentUserRole = currentUser ? currentUser.role : 'public';
+        effectiveDebug(`[executeResearch] Authentication check: currentUser=${currentUsername}, role=${currentUserRole}, isAuthenticated=${isAuthenticated}`);
+
+        if (!isAuthenticated) {
+            effectiveError('You must be logged in to use the /research command.');
+            return { success: false, error: 'Authentication required', handled: true, keepDisabled: false };
         }
-      }
-      
+
+        // --- API Key Check ---
+        const hasBraveKey = await userManager.hasApiKey('brave', currentUsername);
+        const hasVeniceKey = await userManager.hasApiKey('venice', currentUsername);
+        if (!hasBraveKey || !hasVeniceKey) {
+            let missingKeys = [];
+            if (!hasBraveKey) missingKeys.push('Brave');
+            if (!hasVeniceKey) missingKeys.push('Venice');
+            effectiveError(`Missing API key(s) required for research: ${missingKeys.join(', ')}. Use /keys set to configure.`);
+            return { success: false, error: `Missing API key(s): ${missingKeys.join(', ')}`, handled: true, keepDisabled: false };
+        }
+
+
+        // --- Password Handling & Key Decryption ---
+        let userPassword = password; // Password from handleCommandMessage
+        effectiveDebug(`[executeResearch] userPassword initialized with: ${userPassword ? '******' : 'Not provided'}`);
+
+        // --- CLI Specific Password Prompt (Fallback) ---
+        if (!userPassword && !isWebSocket) {
+            userPassword = await singlePrompt('Please enter your password to decrypt API keys: ', true);
+            if (!userPassword) {
+                effectiveError('Password is required to decrypt API keys.');
+                return { success: false, error: 'Password required', handled: true }; // CLI mode return
+            }
+            // Optionally cache for CLI session if userManager supports it
+            // userManager.cliSessionPassword = userPassword;
+            effectiveDebug("Password obtained via prompt for CLI research.");
+        }
+        // Error if WebSocket mode and password wasn't provided/cached/prompted by handleCommandMessage
+        // ** This check should happen *before* attempting to get keys if a password is required **
+        // Let's move the key retrieval into a block that checks for the password first.
+
+        // --- Get API Keys ---
+        let braveKey, veniceKey;
+
+        // Check if we have the password needed for decryption
+        if (!userPassword) {
+            // If password is required (checked in handleCommandMessage) but not available here, it's an error.
+            // This covers the case where the prompt failed or was bypassed incorrectly.
+            effectiveError('Internal Error: Password required for API keys but not available.');
+            // Add more context
+            console.error(`[executeResearch] Error condition: userPassword is falsy (${userPassword}), isWebSocket=${isWebSocket}, currentUser=${currentUsername}`);
+            return { success: false, error: 'Password required but missing', handled: true, keepDisabled: false };
+        }
+
+        // Now attempt decryption using the available userPassword
+        try {
+            effectiveDebug(`[executeResearch] Attempting to get API keys for ${currentUsername} using provided password...`);
+            braveKey = await userManager.getApiKey('brave', userPassword, currentUsername);
+            veniceKey = await userManager.getApiKey('venice', userPassword, currentUsername);
+            effectiveDebug(`[executeResearch] API key retrieval attempt complete. Brave: ${braveKey ? 'OK' : 'Failed'}, Venice: ${veniceKey ? 'OK' : 'Failed'}`);
+        } catch (decryptionError) {
+             // Clear cached password in session if decryption fails
+            if (session) {
+                effectiveDebug(`[executeResearch] Clearing session password due to decryption error.`);
+                session.password = null;
+            }
+            // if (!isWebSocket) userManager.cliSessionPassword = null; // Clear CLI cache too
+            effectiveError(`Failed to decrypt API key(s): ${decryptionError.message}. Please check your password.`);
+            return { success: false, error: `API key decryption failed: ${decryptionError.message}`, handled: true, keepDisabled: false };
+        }
+
+        // Check if keys were successfully retrieved *after* decryption attempt
+        if (!braveKey || !veniceKey) {
+            // This means decryption succeeded (no error thrown) but a key was missing, or decryption failed silently (less likely).
+            // Or, more likely, the password was wrong, getApiKey threw, and we caught it above.
+            // This block might be redundant if getApiKey always throws on bad password. Let's refine the error message.
+            if (session) session.password = null; // Clear potentially bad password
+            let failedKeys = [];
+            if (!braveKey) failedKeys.push('Brave');
+            if (!veniceKey) failedKeys.push('Venice');
+            const errorMsg = `Failed to retrieve required API key(s): ${failedKeys.join(', ')}. Ensure keys are set and password is correct.`;
+            effectiveError(errorMsg);
+            return { success: false, error: errorMsg, handled: true, keepDisabled: false };
+        }
+        // If we reach here, keys are decrypted successfully.
+        effectiveDebug(`[executeResearch] API keys successfully decrypted and retrieved.`);
+
+
+        // --- Final Query Check & Interactive Prompt (CLI only) ---
+        // Check if query is still missing after all attempts (positional, options)
+        if (!researchQuery) {
+            if (isWebSocket) {
+                // This should not happen if handleCommandMessage correctly prompted or received a query.
+                effectiveError('Internal Error: Research query is missing in WebSocket mode before execution.');
+                return { success: false, error: 'Query required but missing', handled: true, keepDisabled: false };
+            } else { // CLI prompt as last resort
+                researchQuery = await singlePrompt('What would you like to research? ');
+                if (!researchQuery) {
+                    effectiveError('Research query cannot be empty.');
+                    return { success: false, error: 'Empty query', handled: true };
+                }
+                effectiveDebug(`[executeResearch] Query obtained via CLI prompt: "${researchQuery}"`);
+            }
+        }
+        // If we reach here, we definitely have a researchQuery
+
+        // --- Token Classification ---
+        let enhancedQuery = { original: researchQuery }; // Structure expected by engine/summary
+        let useClassifier = classify; // Use flag value from options
+
+        // Prompt for classification in interactive CLI mode if flag wasn't explicitly passed
+        if (!isWebSocket && !options.hasOwnProperty('classify')) { // Check if flag was explicitly set
+             const answer = await singlePrompt('Use token classification? (y/n) [n]: ');
+             useClassifier = answer.toLowerCase() === 'y';
+        }
+
+        if (useClassifier) {
+            effectiveOutput('Attempting token classification...', true); // Keep WS input disabled
+            try {
+                // Pass the decrypted Venice key directly
+                const tokenResponse = await callVeniceWithTokenClassifier(researchQuery, veniceKey); // Pass key
+                if (tokenResponse) {
+                    enhancedQuery.tokenClassification = tokenResponse; // Add to query object
+                    effectiveOutput('Token classification successful.', true); // Keep WS input disabled
+                    // --- NEW: Log the metadata/token classification response ---
+                    effectiveOutput(`[TokenClassifier] Venice AI response (metadata):\n${typeof tokenResponse === 'object' ? JSON.stringify(tokenResponse, null, 2) : String(tokenResponse)}`);
+                } else {
+                    effectiveOutput('Token classification returned no data. Proceeding without.', true); // Keep WS input disabled
+                }
+            } catch (tokenError) {
+                effectiveError(`Token classification failed: ${tokenError.message}. Proceeding without classification.`);
+                // Don't abort, just proceed without classification
+            }
+        }
+
+        // --- NEW: Log the query object (input + metadata) before research ---
+        effectiveOutput(`[ResearchPipeline] Query object to be used for research:`);
+        effectiveOutput(JSON.stringify(enhancedQuery, null, 2));
+
+        // --- Initialize Research Engine ---
+        const userInfo = { username: currentUsername, role: currentUserRole };
+        const engineConfig = {
+            braveApiKey: braveKey,
+            veniceApiKey: veniceKey, // Pass key to engine
+            verbose: verbose,
+            user: userInfo,
+            outputHandler: effectiveOutput,
+            errorHandler: effectiveError,
+            debugHandler: effectiveDebug,
+            progressHandler: effectiveProgress, // <= NEW: Pass the progress handler
+            isWebSocket: isWebSocket,
+            webSocketClient: webSocketClient
+        };
+        const controller = new ResearchEngine(engineConfig);
+
+
+        // --- Run Research ---
+        effectiveOutput('Starting research pipeline...', true); // Keep WS input disabled
+
+        // Send start signal for Web-CLI
+        if (isWebSocket && webSocketClient) {
+            safeSend(webSocketClient, { type: 'research_start', keepDisabled: true });
+        }
+
+        // Pass query object, depth, breadth directly to the research method
+        const results = await controller.research({
+            query: enhancedQuery, // Pass the object with original query and optional classification
+            depth: parseInt(depth, 10) || 2, // Ensure integer, provide default
+            breadth: parseInt(breadth, 10) || 3 // Ensure integer, provide default
+        });
+
+        // --- NEW: Print out all key research steps/results ---
+        if (results) {
+            if (results.generatedQueries) {
+                effectiveOutput('\n--- Generated Queries ---');
+                results.generatedQueries.forEach((q, i) => {
+                    effectiveOutput(`${i + 1}. ${q.original}${q.metadata ? ` [metadata: ${JSON.stringify(q.metadata)}]` : ''}`);
+                });
+            }
+            if (results.learnings) {
+                effectiveOutput('\n--- Key Learnings ---');
+                results.learnings.forEach((l, i) => effectiveOutput(`${i + 1}. ${l}`));
+            }
+            if (results.followUpQuestions) {
+                effectiveOutput('\n--- Follow-up Questions ---');
+                results.followUpQuestions.forEach((fq, i) => effectiveOutput(`${i + 1}. ${fq}`));
+            }
+            if (results.summary) {
+                effectiveOutput('\n--- Research Summary ---');
+                effectiveOutput(results.summary);
+            }
+            if (results.filename) {
+                effectiveOutput(`\nResults saved to: ${results.filename}`);
+            }
+        }
+
+        // --- Handle Results ---
+        // Log final success message in CLI mode
+         if (!isWebSocket) { // Check if running in CLI
+            effectiveOutput(`[CMD SUCCESS] research: Completed successfully. Results saved to: ${results?.filename || 'N/A'}`);
+        }
+
+        // Send completion signal for Web-CLI
+        if (isWebSocket && webSocketClient) {
+            // Include filename in completion message
+            safeSend(webSocketClient, {
+                type: 'research_complete',
+                summary: results?.summary || "Research finished, but no summary was generated.",
+                filename: results?.filename,
+                keepDisabled: false // Re-enable input
+            });
+        }
+
+        // Final summary output is handled by the engine's outputHandler
+
+        return { success: true, results: results, keepDisabled: false }; // Ensure input enabled
+
     } catch (error) {
-      return handleCliError(
-        error,
-        ErrorTypes.API_KEY,
-        { command: 'research', verbose }
-      );
+        effectiveError(`Error during research command: ${error.message}`);
+        console.error(error.stack); // Log full stack trace for debugging
+        // Send completion signal on error for Web-CLI
+        if (isWebSocket && webSocketClient) {
+            safeSend(webSocketClient, { type: 'research_complete', error: error.message, keepDisabled: false });
+        }
+        // Ensure keepDisabled is false on error to re-enable input
+        return { success: false, error: error.message, handled: true, keepDisabled: false };
     }
-    
-    // Ensure output directory exists
-    await ensureDir(outputDir);
-    
-    // Create and configure research engine
-    output.log(`\nStarting research...\nQuery: "${researchQuery}"\nDepth: ${depth} Breadth: ${breadth}\n`);
-    
-    const engine = new ResearchEngine({
-      query: enhancedQuery,
-      breadth,
-      depth,
-      user: userManager.currentUser,  // Pass user for role-based limits
-      onProgress: (progress) => {
-        process.stdout.write(`\rProgress: ${progress.completedQueries}/${progress.totalQueries}`);
-      }
-    });
-    
-    // Execute research
-    const result = await engine.research();
-    output.log('\nResearch complete!');
-    
-    // Display results
-    if (result.learnings.length === 0) {
-      output.log('No learnings were found.');
-    } else {
-      output.log('\nKey Learnings:');
-      result.learnings.forEach((learning, i) => {
-        output.log(`${i + 1}. ${learning}`);
-      });
-    }
-    
-    if (result.sources.length > 0) {
-      output.log('\nSources:');
-      result.sources.forEach(source => output.log(`- ${source}`));
-    }
-    
-    // Generate output filename based on the query
-    const safeFilename = researchQuery.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    const timestamp = new Date().toISOString().replace(/:/g, '-');
-    const filename = `research-${safeFilename}-${timestamp}.md`;
-    const outputPath = path.join(outputDir, filename);
-    
-    // Convert results to markdown format
-    const markdown = generateMarkdown(researchQuery, result);
-    
-    // Save results to file
-    await fs.writeFile(outputPath, markdown);
-    
-    output.log(`\nResults saved to: ${outputPath}`);
-    
-    // Log successful completion
-    logCommandSuccess('research (interactive)', { outputPath }, verbose);
-    
-    return {
-      success: true,
-      results: result,
-      outputPath
-    };
-  } catch (error) {
-    rl.close();
-    return handleCliError(
-      error,
-      error.name === 'SearchError' ? ErrorTypes.NETWORK : ErrorTypes.UNKNOWN,
-      { command: 'research', verbose }
-    );
-  }
 }
 
-/**
- * Helper function to ask a question in the console
- * 
- * @param {readline.Interface} rl - Readline interface
- * @param {string} question - Question to ask
- * @returns {Promise<string>} User's answer
- */
-function askQuestion(rl, question) {
-  return new Promise(resolve => {
-    rl.question(question, resolve);
-  });
-}
-
-/**
- * Generate markdown content from research results
- * 
- * @param {string} query - The original research query
- * @param {Object} results - Research results object
- * @returns {string} Formatted markdown content
- */
-function generateMarkdown(query, results) {
-  return [
-    '# Research Results',
-    '----------------',
-    `## Query: ${query}`,
-    '',
-    results.filename ? `Original file: ${results.filename}` : '',
-    '',
-    '## Key Learnings',
-    ...results.learnings.map((l, i) => `${i + 1}. ${l}`),
-    '',
-    '## Sources',
-    ...results.sources.map(s => `- ${s}`),
-  ].join('\n');
-}
+// Removed promptForPassword as singlePrompt handles hidden input

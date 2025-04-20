@@ -2,7 +2,8 @@
  * CLI Runner - Utility for running CLI commands programmatically
  */
 
-import { commands, parseCommandArgs } from '../commands/index.mjs';
+import { commands, parseCommandArgs, displayHelp } from '../commands/index.mjs';
+import readline from 'readline';
 
 /**
  * Run a CLI command programmatically
@@ -53,39 +54,31 @@ export async function run(commandStr, options = {}) {
  * Interactive CLI runner that handles user input and commands
  * 
  * @param {Object} options - CLI runner options
- * @param {readline.Interface} options.rl - Readline interface
  * @param {Function} options.onOutput - Function to handle output
  * @param {Function} options.onExit - Function called when the CLI exits
  */
 export function interactiveCLI(options = {}) {
-  const { rl, onOutput = console.log, onExit } = options;
-  
-  if (!rl) {
-    throw new Error('Readline interface is required for interactive CLI');
-  }
-  
-  rl.setPrompt('> ');
-  rl.prompt();
-  
-  rl.on('line', async (line) => {
-    const input = line.trim();
-    
-    // Check if it's a command
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: true
+  });
+
+  const onOutput = options.onOutput || console.log;
+  const onExit = options.onExit || (() => {});
+
+  rl.on('line', async (input) => {
     if (input.startsWith('/')) {
-      const commandParts = input.substring(1).split(' ');
-      const command = commandParts[0];
-      const args = commandParts.slice(1);
-      
+      const command = input.slice(1).split(' ')[0];
       if (commands[command]) {
         try {
-          const { command: parsedCmd, options } = parseCommandArgs([command, ...args]);
-          await commands[parsedCmd](options);
+          const { command: parsedCmd, options: cmdOptions } = parseCommandArgs([command, ...input.slice(1).split(' ').slice(1)]);
+          await commands[parsedCmd](cmdOptions, onOutput, onOutput);
         } catch (error) {
           onOutput(`Error executing command: ${error.message}`);
         }
       } else if (command === 'help') {
-        const { displayHelp } = await import('../commands/index.mjs');
-        displayHelp();
+        await displayHelp(onOutput);
       } else if (command === 'exit' || command === 'quit') {
         if (onExit) {
           onExit();
@@ -101,14 +94,16 @@ export function interactiveCLI(options = {}) {
       // Only show help message if input is not empty
       onOutput("Please start commands with / (e.g., /research, /login, /status)");
     }
-    
     rl.prompt();
   });
-  
+
   rl.on('close', () => {
     if (onExit) {
       onExit();
     }
     process.exit(0);
   });
+
+  rl.setPrompt('> ');
+  rl.prompt();
 }

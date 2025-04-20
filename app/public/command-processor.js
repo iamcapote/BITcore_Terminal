@@ -1,253 +1,154 @@
 /**
- * Command Processor
- * 
- * Handles the execution and processing of commands for the web terminal.
+ * Client-Side Command Processor
+ *
+ * Parses commands entered in the web terminal, handles client-side actions
+ * like password prompts, and sends commands to the backend via WebSocket.
  */
 class CommandProcessor {
-  constructor() {
-    this.commands = {
-      'help': this.executeHelp.bind(this),
-      'login': this.executeLogin.bind(this),
-      'logout': this.executeLogout.bind(this),
-      'status': this.executeStatus.bind(this),
-      'users': this.executeUsers.bind(this),
-      'keys': this.executeKeys.bind(this),
-      'research': this.executeResearch.bind(this),
-      'chat': this.executeChat.bind(this),
-      'exitmemory': this.executeExitMemory.bind(this),
-      'password-change': this.executePasswordChange.bind(this)
-    };
-    
-    // Track if we're waiting for password input
-    this._pendingPasswordResolve = null;
-    
-    // Track commands in progress
-    this.commandsInProgress = new Set();
-  }
-  
-  /**
-   * Execute a command
-   * 
-   * @param {string} command - Command string to execute
-   * @returns {Promise<Object>} Command result
-   */
-  async executeCommand(command) {
-    // Parse command string
-    const parts = command.trim().split(' ');
-    const cmd = parts[0].startsWith('/') ? parts[0].substring(1) : parts[0];
-    const args = parts.slice(1);
-    
-    console.log(`Processing command: ${cmd}`);
-    
-    // Check if the command is already in progress
-    const commandId = `${cmd}-${Date.now()}`;
-    if (this.commandsInProgress.has(cmd)) {
-      console.log(`Command ${cmd} is already in progress, skipping duplicate`);
-      return { success: false, error: `Command ${cmd} is already in progress` };
+    constructor(terminal, webcomm) {
+        this.terminal = terminal;
+        this.webcomm = webcomm;
+        // No longer need pendingPasswordResolve here, terminal manages the promise
     }
-    
-    // Mark command as in progress
-    this.commandsInProgress.add(cmd);
-    
-    try {
-      if (this.commands[cmd]) {
-        const result = await this.commands[cmd](args);
-        return result;
-      } else {
-        // Send unknown commands to the server
-        await webcomm.sendCommand(command);
-        return { success: true };
-      }
-    } catch (error) {
-      console.error(`Error executing command '${cmd}':`, error);
-      return { success: false, error: error.message };
-    } finally {
-      // Mark command as complete
-      this.commandsInProgress.delete(cmd);
-    }
-  }
 
-  /**
-   * Centralized method to execute commands with input locking.
-   * Ensures input is disabled during execution and re-enabled after completion.
-   * 
-   * @param {Function} commandFn - The command function to execute.
-   * @returns {Promise<Object>} Command result
-   */
-  async executeWithInputLock(commandFn) {
-    try {
-      if (window.terminal) {
-        window.terminal.disableInput(); // Lock input
-      }
-      return await commandFn();
-    } catch (error) {
-      console.error('Error during command execution:', error);
-      if (window.terminal) {
-        window.terminal.appendOutput(`Error: ${error.message}`);
-      }
-      return { success: false, error: error.message };
-    } finally {
-      if (window.terminal) {
-        window.terminal.enableInput(); // Re-enable input
-      }
-    }
-  }
+    /**
+     * Parses and executes a command string.
+     * @param {string} commandString - The full command string (e.g., "/login user --flag").
+     * @returns {Promise<void>}
+     */
+    async executeCommand(commandString) {
+        // Input is already disabled by terminal.js handleInput before calling this
 
-  // Command implementations
-  async executeHelp() {
-    await webcomm.sendCommand('/help');
-    return { success: true };
-  }
-  
-  async executeLogin(args) {
-    const username = args[0];
-    if (!username) {
-      return { success: false, error: 'Username is required' };
-    }
-    
-    // Prompt for password
-    const password = await this.promptForPassword('Please enter your password:');
-    
-    // Send login command with password
-    await webcomm.sendInput(`/login ${username}`, { password });
-    
-    // Get user status after login
-    await webcomm.sendCommand('/status');
-    
-    return { success: true };
-  }
-  
-  async executeLogout() {
-    await webcomm.sendCommand('/logout');
-    return { success: true };
-  }
-  
-  async executeStatus() {
-    await webcomm.sendCommand('/status');
-    return { success: true };
-  }
-  
-  async executeUsers(args) {
-    const action = args[0] || 'list';
-    
-    if (action === 'create' || action === 'add') {
-      const username = args[1];
-      if (!username) {
-        return { success: false, error: 'Username is required' };
-      }
-      
-      let role = 'client';
-      for (let i = 2; i < args.length; i++) {
-        if (args[i].startsWith('--role=')) {
-          role = args[i].split('=')[1];
+        if (!commandString || !commandString.startsWith('/')) {
+            this.terminal.appendOutput("Error: Invalid command format.");
+            this.terminal.enableInput(); // Re-enable on format error
+            return;
         }
-      }
-      
-      const password = await this.promptForPassword('Enter password for new user:');
-      
-      await webcomm.sendInput(`/users create ${username} --role=${role}`, { password });
-    } else {
-      // Any other action (list, etc)
-      await webcomm.sendCommand(`/users ${args.join(' ')}`);
-    }
-    
-    return { success: true };
-  }
-  
-  async executeKeys(args) {
-    const action = args[0] || 'check';
-    
-    if (action === 'set') {
-      // Extract key arguments
-      const keyArgs = {};
-      for (let i = 1; i < args.length; i++) {
-        if (args[i].includes('=')) {
-          const [key, value] = args[i].split('=');
-          keyArgs[key] = value;
+
+        const rawArgs = this.parseCommandString(commandString);
+        const command = rawArgs[0]?.substring(1); // Remove leading '/'
+        const args = rawArgs.slice(1); // Arguments only
+
+        if (!command) {
+            // Don't output error for empty command, just re-enable input silently
+            this.terminal.enableInput(); // Re-enable on empty command
+            return;
         }
-      }
-      
-      // Prompt for password
-      const password = await this.promptForPassword('Enter your password to encrypt API keys:');
-      
-      // Send the keys command with password
-      await webcomm.sendInput(`/keys set ${args.slice(1).join(' ')}`, { password });
-    } else {
-      // For any other keys command
-      await webcomm.sendCommand(`/keys ${args.join(' ')}`);
+
+        // --- Client-Side Command Handling Removed ---
+        // The server will now handle prompting for passwords via wsPrompt
+
+        try {
+            // --- Prepare Payload ---
+            let password = null; // Store password if provided directly
+            let passwordArgProvided = false;
+
+            // Check if password is provided via --password= flag first
+            const passwordFlagArgIndex = args.findIndex(arg => arg.startsWith('--password='));
+            if (passwordFlagArgIndex !== -1) {
+                password = args[passwordFlagArgIndex].split('=')[1];
+                console.log("Password provided via flag.");
+                passwordArgProvided = true;
+                // Remove the password flag from args sent to server if desired, or let server handle it
+                // args.splice(passwordFlagArgIndex, 1);
+            }
+            // Check if password is provided as the second argument for /login
+            else if (command === 'login' && args.length === 2) {
+                 // Assume the second arg is the password for /login user password
+                 password = args[1];
+                 console.log("Password potentially provided as second argument for /login.");
+                 passwordArgProvided = true;
+                 // Server-side /login command handler needs to be aware of this pattern.
+                 // We still send both args.
+            }
+
+            // --- Send Command to Backend ---
+            const payload = {
+                command: command,
+                args: args, // Send original args
+                // Include password ONLY if it was provided directly in the command string
+                ...(passwordArgProvided && password !== null && { password: password })
+            };
+
+            console.log("Sending command payload to backend:", { command: payload.command, args: payload.args, password: passwordArgProvided ? '******' : null });
+
+            // Use webcomm to send the command with correct arguments
+            await this.webcomm.sendCommand(payload.command, payload.args, payload.password); // Corrected call
+
+            // Backend will now process the command. If a password is required and wasn't provided,
+            // the backend (routes.mjs) will send a 'prompt' message back to the client.
+            // Input remains disabled until a server response enables it.
+
+        } catch (error) {
+            // Catch errors during command parsing or sending
+            console.error(`Error executing command "${command}" client-side:`, error);
+            this.terminal.appendOutput(`Client-side error: ${error.message}`);
+            this.terminal.enableInput(); // Ensure input is re-enabled after client-side error
+        }
     }
-    
-    return { success: true };
-  }
-  
-  async executeResearch(args) {
-    // Send the research command
-    await webcomm.sendCommand(`/research ${args.join(' ')}`);
-    return { success: true, mode: 'research' };
-  }
-  
-  async executeChat(args) {
-    // Parse memory option
-    let memoryOption = '';
-    for (let arg of args) {
-      if (arg.startsWith('--memory=')) {
-        memoryOption = arg;
-      }
+
+    /**
+     * Parses a command string into an array of arguments including the command itself.
+     * Handles spaces and quoted strings.
+     * @param {string} commandString - The command string.
+     * @returns {string[]} - Array of arguments including the command.
+     */
+    parseCommandString(commandString) {
+        const args = [];
+        let currentArg = '';
+        let inQuotes = false;
+        let quoteChar = '';
+        let escapeNext = false;
+
+        for (let i = 0; i < commandString.length; i++) {
+            const char = commandString[i];
+
+            if (escapeNext) {
+                currentArg += char;
+                escapeNext = false;
+                continue;
+            }
+
+            if (char === '\\') {
+                escapeNext = true;
+                continue;
+            }
+
+            if (char === ' ' && !inQuotes) {
+                // Push the argument if it's not empty OR if it's not the very first potential argument (command)
+                if (currentArg || args.length > 0) {
+                    args.push(currentArg);
+                    currentArg = '';
+                }
+            } else if ((char === '"' || char === "'") && !inQuotes) {
+                 if (currentArg === '') { // Only start quotes if currentArg is empty
+                    inQuotes = true;
+                    quoteChar = char;
+                } else {
+                    currentArg += char; // Treat quote as part of the argument if not at the start
+                }
+            } else if (char === quoteChar && inQuotes) {
+                inQuotes = false;
+                quoteChar = '';
+                // Don't push here, wait for space or end of string
+            } else {
+                currentArg += char;
+            }
+        }
+
+        // Push the last argument if it's not empty or if it's not the command itself being empty
+         if (currentArg || args.length > 0) {
+            args.push(currentArg);
+        }
+
+
+        // Filter out empty strings that might result from multiple spaces,
+        // unless they were quoted empty strings (which parseCommandString doesn't explicitly handle yet, but might be desired)
+        // For now, let's keep it simple and just return the split args.
+        // The main change is ensuring the command itself is the first element.
+        // Let's refine the splitting logic slightly above to avoid empty initial args.
+        return args.filter((arg, index) => arg !== '' || index === 0); // Keep command even if empty, filter other empty args
     }
-    
-    // Send the chat command
-    await webcomm.sendCommand(`/chat ${memoryOption}`);
-    
-    return { success: true, mode: 'chat' };
-  }
-  
-  async executeExitMemory() {
-    await webcomm.sendCommand('/exitmemory');
-    return { success: true };
-  }
-  
-  async executePasswordChange() {
-    const currentPassword = await this.promptForPassword('Enter your current password:');
-    const newPassword = await this.promptForPassword('Enter your new password:');
-    
-    // Send the password change command with both passwords
-    await webcomm.sendInput('/password-change', { currentPassword, newPassword });
-    
-    return { success: true };
-  }
-  
-  /**
-   * Prompt for password input
-   * 
-   * @param {string} prompt - Text to display for the prompt
-   * @returns {Promise<string>} User's password input
-   */
-  async promptForPassword(prompt) {
-    // Display prompt message
-    if (window.terminal) {
-      window.terminal.setPasswordMode(true);
-      window.terminal.appendOutput(prompt);
-    }
-    
-    // Return a promise that will be resolved when password is entered
-    return new Promise((resolve) => {
-      this._pendingPasswordResolve = resolve;
-    });
-  }
-  
-  /**
-   * Receive password input from terminal
-   * 
-   * @param {string} password - Password entered by user
-   */
-  receivePasswordInput(password) {
-    if (this._pendingPasswordResolve) {
-      const resolve = this._pendingPasswordResolve;
-      this._pendingPasswordResolve = null;
-      resolve(password);
-    }
-  }
 }
 
-// Create global instance
-window.commandProcessor = new CommandProcessor();
+window.CommandProcessor = CommandProcessor;

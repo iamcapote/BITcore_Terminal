@@ -18,6 +18,11 @@ import { executeKeys } from '../commands/keys.cli.mjs';
  * 4. Testing and fixing command execution functions
  */
 
+const outputBuffer = [];
+function mockOutput(msg) {
+  outputBuffer.push(msg);
+}
+
 class ValidationFixer {
   constructor() {
     // Define test user directory in the workspace for tests
@@ -192,7 +197,6 @@ class ValidationFixer {
       output: mockOutput
     });
     
-    // Check if user was created
     if (outputBuffer.some(msg => msg.includes('Created user'))) {
       this.log('Users create command working correctly');
     } else {
@@ -206,7 +210,7 @@ class ValidationFixer {
       output: mockOutput
     });
     
-    if (!outputBuffer.some(msg => msg.includes('User Status'))) {
+    if (!outputBuffer.some(msg => msg.includes('Username:'))) {
       this.log('ERROR: status command not working correctly');
     }
   }

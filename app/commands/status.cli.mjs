@@ -3,7 +3,8 @@ import { userManager } from '../features/auth/user-manager.mjs';
 /**
  * CLI command to display current user status
  */
-export async function executeStatus() {
+export async function executeStatus(options = {}) {
+  const output = options.output || console.log;
   const username = userManager.getUsername();
   const role = userManager.getRole();
   const limits = userManager.getLimits();
@@ -12,22 +13,22 @@ export async function executeStatus() {
   const veniceKeyExists = await userManager.hasApiKey('venice');
   const braveKeyExists = await userManager.hasApiKey('brave');
 
-  console.log('[DEBUG] Retrieving user status...');
-  console.log(`[DEBUG] Username: ${username}`);
-  console.log(`[DEBUG] Role: ${role}`);
-  console.log(`[DEBUG] Limits:`, limits);
-  console.log(`[DEBUG] Venice API Key Exists: ${veniceKeyExists}`);
-  console.log(`[DEBUG] Brave API Key Exists: ${braveKeyExists}`);
+  output('[DEBUG] Retrieving user status...');
+  output(`[DEBUG] Username: ${username}`);
+  output(`[DEBUG] Role: ${role}`);
+  output(`[DEBUG] Limits: ${JSON.stringify(limits)}`);
+  output(`[DEBUG] Venice API Key Exists: ${veniceKeyExists}`);
+  output(`[DEBUG] Brave API Key Exists: ${braveKeyExists}`);
 
-  console.log('=== User Status ===');
-  console.log(`Username: ${username}`);
-  console.log(`Role: ${role}`);
-  console.log('API Key Configurations:');
-  console.log(`  - Venice: ${veniceKeyExists ? '✓' : '✗'}`);
-  console.log(`  - Brave:  ${braveKeyExists ? '✓' : '✗'}`);
-  console.log('Limits:');
+  output('=== User Status ===');
+  output(`Username: ${username}`);
+  output(`Role: ${role}`);
+  output('API Key Configurations:');
+  output(`  - Venice: ${veniceKeyExists ? '✓' : '✗'}`);
+  output(`  - Brave:  ${braveKeyExists ? '✓' : '✗'}`);
+  output('Limits:');
   for (const [key, value] of Object.entries(limits)) {
-    console.log(`  - ${key}: ${value}`);
+    output(`  - ${key}: ${value}`);
   }
 
   return { success: true };

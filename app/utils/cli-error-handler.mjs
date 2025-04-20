@@ -30,39 +30,13 @@ export const ErrorTypes = {
  */
 export function handleCliError(error, errorType = ErrorTypes.UNKNOWN, options = {}) {
   const { verbose = false, command = '', recoveryHint = '' } = options;
-  
+
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorDetails = error instanceof Error && error.stack ? error.stack : '';
-  
-  // Create a structured error object
-  const errorData = {
-    success: false,
-    error: {
-      type: errorType,
-      message: errorMessage,
-      details: verbose ? errorDetails : undefined,
-      command,
-      timestamp: new Date().toISOString()
-    }
-  };
-  
-  // Log the error with appropriate formatting
+
   output.error(`Error [${errorType}]: ${errorMessage}`);
-  
-  // Show recovery hint if provided
-  if (recoveryHint) {
-    output.log(`Hint: ${recoveryHint}`);
-  }
-  
-  // Log additional details in verbose mode
-  if (verbose && errorDetails) {
-    output.error(`Details: ${errorDetails}`);
-  }
-  
-  // Suggest recovery steps based on error type
-  suggestRecoverySteps(errorType, command);
-  
-  return errorData;
+  if (recoveryHint) output.log(`Hint: ${recoveryHint}`);
+  if (verbose && errorDetails) output.error(`Details: ${errorDetails}`);
 }
 
 /**

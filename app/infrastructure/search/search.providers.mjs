@@ -12,26 +12,29 @@ export class SearchError extends Error {
 }
 
 export class BraveSearchProvider {
-  constructor() {
+  constructor(apiKey = null) {
     this.type = 'web';
     this.baseUrl = 'https://api.search.brave.com/res/v1';
-    
-    // Make sure we're getting the API key directly from process.env
-    this.apiKey = process.env.BRAVE_API_KEY;
-    
+
+    this.apiKey = apiKey || process.env.BRAVE_API_KEY;
+
     if (!this.apiKey) {
+      console.error('[BraveSearchProvider] CRITICAL: No API Key provided or found in environment variables (BRAVE_API_KEY).');
       throw new SearchError('ConfigError', 'Missing BRAVE_API_KEY', 'Brave');
     }
-    
-    console.log(`[BraveSearchProvider] API Key length: ${this.apiKey.length}`);
-    console.log(`[BraveSearchProvider] API Key first 4 chars: ${this.apiKey.substring(0, 4)}...`);
-    
+
+    console.log(`[BraveSearchProvider] Initialized using ${apiKey ? 'User-Provided' : 'Global Environment'} API Key.`);
+
     this.rateLimiter = new RateLimiter(5000); // 5 seconds base delay
     this.retryDelay = 2000; // Start with 2 seconds for retries
     this.maxRetries = 3;
   }
 
   async makeRequest(query) {
+    if (!this.apiKey) {
+      console.error('[BraveSearchProvider] makeRequest called without a valid API key.');
+      throw new SearchError('ConfigError', 'Missing BRAVE_API_KEY during request', 'Brave');
+    }
     try {
       await this.rateLimiter.waitForNextSlot();
       console.log(`[BraveSearchProvider] Searching for: "${query}"`);
@@ -69,6 +72,9 @@ export class BraveSearchProvider {
       } else if (error.response?.status === 422) {
         console.error('[BraveSearchProvider] Received HTTP 422 from Brave. Check query parameters:', error.response?.data || error.message);
         throw new SearchError('API_ERROR', 'Received HTTP 422 from Brave.', 'Brave');
+      } else if (error.response?.status === 401) {
+        console.error('[BraveSearchProvider] Received HTTP 401 Unauthorized. Check API Key.');
+        throw new SearchError('AUTH_ERROR', 'Invalid Brave API Key', 'Brave');
       }
       console.error('[BraveSearchProvider] Unhandled Brave error:', error.message);
       throw new SearchError('API_ERROR', error.message || 'Brave request failed', 'Brave');
@@ -77,14 +83,12 @@ export class BraveSearchProvider {
 
   async search(originalQuery) {
     console.log(`[BraveSearchProvider] Original query: "${originalQuery}"`);
-    // We're using a less aggressive cleaning here - keeping more of the original query intact
     const sanitizedQuery = originalQuery.trim();
     if (!sanitizedQuery || sanitizedQuery.length < 3) {
       console.warn('[BraveSearchProvider] Query too short, skipping search.');
       return [];
     }
-    
-    // Truncate query to 1000 characters to avoid 422 Unprocessable Entity errors
+
     const truncatedQuery = sanitizedQuery.length > 1000 ? sanitizedQuery.substring(0, 1000) : sanitizedQuery;
     if (truncatedQuery.length < sanitizedQuery.length) {
       console.log(`[BraveSearchProvider] Query truncated from ${sanitizedQuery.length} to ${truncatedQuery.length} characters`);
@@ -95,8 +99,12 @@ export class BraveSearchProvider {
       try {
         return await this.makeRequest(truncatedQuery);
       } catch (error) {
+        if (error instanceof SearchError && error.code === 'AUTH_ERROR') {
+          console.error(`[BraveSearchProvider] Authentication error (${error.message}). Aborting search.`);
+          throw error;
+        }
         if (error instanceof SearchError && error.code === 'RATE_LIMIT') {
-          const delay = this.retryDelay * Math.pow(2, retryCount); // Exponential backoff
+          const delay = this.retryDelay * Math.pow(2, retryCount);
           console.warn(`[BraveSearchProvider] Rate-limited, waiting ${delay / 1000}s before retry (attempt ${retryCount + 1}).`);
           await new Promise((resolve) => setTimeout(resolve, delay));
           retryCount++;
@@ -107,13 +115,18 @@ export class BraveSearchProvider {
     }
 
     console.error('[BraveSearchProvider] Exceeded maximum retries - returning empty result set.');
-    return [];
+    throw new SearchError('RATE_LIMIT', 'Exceeded maximum retries due to rate limiting', 'Brave');
   }
 }
 
-export function suggestSearchProvider({ type }) {
+export function suggestSearchProvider({ type, apiKey = null }) {
   if (type === 'web') {
-    return new BraveSearchProvider();
+    try {
+      return new BraveSearchProvider(apiKey);
+    } catch (error) {
+      console.error(`[suggestSearchProvider] Error creating BraveSearchProvider: ${error.message}`);
+      throw error;
+    }
   }
   throw new SearchError('UnsupportedProvider', `No provider for type: ${type}`, '');
 }

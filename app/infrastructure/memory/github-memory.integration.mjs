@@ -81,7 +81,7 @@ export class GitHubMemoryIntegration {
    * @param {string|Object} memory - Memory content or object
    * @param {string} type - Memory type ('long_term' or 'meta')
    * @param {Object} [metadata] - Optional metadata
-   * @returns {Promise<Object>} Result object
+   * @returns {Promise<Object>} Result object including success status, memoryId, and potentially commit SHA or localPath.
    */
   async storeMemory(memory, type = 'long_term', metadata = {}) {
     try {
@@ -110,12 +110,16 @@ export class GitHubMemoryIntegration {
           registry.content = registry.content + '\n\n' + formattedMemory;
           
           // Update registry file
-          await this.updateRegistryFile(registryPath, registry);
-          
-          return { success: true, memoryId: memoryData.id };
+          const updateResult = await this.updateRegistryFile(registryPath, registry);
+          console.log(`[GitHubMemory] Stored memory ${memoryData.id} in ${registryPath}. Commit SHA: ${updateResult.sha}`);
+          return { success: true, memoryId: memoryData.id, sha: updateResult.sha };
         } catch (error) {
           console.error(`GitHub memory storage failed: ${error.message}`);
           // Fall back to local storage if GitHub fails
+          if (!DEFAULT_SETTINGS.useLocalFallback) {
+             throw new Error(`GitHub storage failed and local fallback is disabled: ${error.message}`);
+          }
+          console.warn(`[GitHubMemory] Falling back to local storage for memory ${memoryData.id}`);
         }
       }
       
@@ -223,7 +227,7 @@ Content: ${memory.content}`;
    * 
    * @param {string} path - Registry file path
    * @param {Object} registry - Registry data
-   * @returns {Promise<Object>} Result object
+   * @returns {Promise<Object>} Result object including success status and commit SHA.
    * @private
    */
   async updateRegistryFile(path, registry) {
@@ -264,7 +268,7 @@ Content: ${memory.content}`;
       
       return {
         success: true,
-        sha: data.content.sha
+        sha: data.content.sha // Return the commit SHA
       };
     } catch (error) {
       throw error;

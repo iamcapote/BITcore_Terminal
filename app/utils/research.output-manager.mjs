@@ -1,230 +1,161 @@
+import { WebSocket } from 'ws';
+
+/**
+ * Manages output for both console and WebSocket clients.
+ */
 export class OutputManager {
-  constructor() {
-    this.webSocketClients = new Set();
-    this.logHandler = console.log;
-    this.lastProgressMessage = null;
-    this.pendingMessages = new Map();
-    this.messageTimeout = 500; // 500ms timeout for deduplication
-  }
+    constructor() {
+        this.webSocketClients = new Set();
+        this.logHandler = console.log; // Default to console.log
+        this.isBroadcasting = false; // Prevent infinite loops
 
-  // Broadcast logs over all connected websockets with improved error handling and deduplication
-  broadcastLog(message, type = 'log') {
-    // Generate a unique message ID for deduplication
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    for (const client of this.webSocketClients) {
-      try {
-        // Skip clients that aren't open
-        if (client.readyState !== 1) { // WebSocket.OPEN
-          continue;
-        }
-        
-        client.send(JSON.stringify({
-          type: type || 'output',
-          data: message,
-          messageId
-        }));
-      } catch (error) {
-        console.error('Error sending WebSocket message:', error);
-        // Don't remove the client here - let the 'close' event handler do it
-      }
+        // Bind methods to ensure 'this' context is correct when passed as callbacks
+        this.log = this.log.bind(this);
+        this.error = this.error.bind(this);
+        this.warn = this.warn.bind(this);
+        this.debug = this.debug.bind(this);
+        this.commandStart = this.commandStart.bind(this);
+        this.commandSuccess = this.commandSuccess.bind(this);
+        this.commandError = this.commandError.bind(this);
+        this.broadcast = this.broadcast.bind(this);
+        this.setLogHandler = this.setLogHandler.bind(this);
+        this.addWebSocketClient = this.addWebSocketClient.bind(this);
+        this.removeWebSocketClient = this.removeWebSocketClient.bind(this);
+        this._logInternal = this._logInternal.bind(this);
     }
-  }
 
-  // Allow server to register new websocket clients
-  addWebSocketClient(ws) {
-    if (!ws) return;
-    
-    try {
-      this.webSocketClients.add(ws);
-      
-      // Send the last progress message to new clients
-      if (this.lastProgressMessage) {
-        ws.send(JSON.stringify({ 
-          type: 'progress', 
-          data: { message: this.lastProgressMessage },
-          messageId: `progress-init-${Date.now()}`
-        }));
-      }
-      
-      // Set up close event to automatically remove the client
-      ws.on('close', () => {
-        this.removeWebSocketClient(ws);
-      });
-      
-      // Set up error event handler
-      ws.on('error', (error) => {
-        console.error('WebSocket client error:', error);
-        this.removeWebSocketClient(ws);
-      });
-      
-      // Acknowledge successful connection
-      ws.send(JSON.stringify({
-        type: 'system-message',
-        message: 'Successfully connected to research server',
-        messageId: `welcome-${Date.now()}`
-      }));
-      
-    } catch (error) {
-      console.error('Error adding WebSocket client:', error);
+    /**
+     * Sets the handler function for logging messages (e.g., console.log or a custom function).
+     * @param {Function} handler - The function to handle log messages (receives level, message).
+     */
+    setLogHandler(handler) {
+        if (typeof handler === 'function') {
+            this.logHandler = handler;
+        } else {
+            console.error("Log handler must be a function.");
+        }
     }
-  }
-  
-  // Remove a WebSocket client
-  removeWebSocketClient(ws) {
-    if (!ws) return;
-    
-    try {
-      this.webSocketClients.delete(ws);
-    } catch (error) {
-      console.error('Error removing WebSocket client:', error);
-    }
-  }
 
-  // Log message and broadcast to WebSocket clients
-  log(...args) {
-    const message = args.map(String).join(' ');
-    
-    // Call the log handler (e.g., console.log)
-    if (this.logHandler) {
-      this.logHandler(message);
+    addWebSocketClient(client) {
+        this.webSocketClients.add(client);
+        console.log(`[OutputManager] WebSocket client added. Total clients: ${this.webSocketClients.size}`);
     }
-    
-    // Broadcast to WebSocket clients
-    this.broadcastLog(message, 'output');
-  }
-  
-  // Error logging with special formatting
-  error(...args) {
-    const message = args.map(String).join(' ');
-    
-    // Call the log handler with error formatting
-    if (this.logHandler) {
-      this.logHandler(`ERROR: ${message}`);
+
+    removeWebSocketClient(client) {
+        this.webSocketClients.delete(client);
+         console.log(`[OutputManager] WebSocket client removed. Total clients: ${this.webSocketClients.size}`);
     }
-    
-    // Broadcast as error type
-    this.broadcastLog(message, 'error');
-  }
-  
-  // Update progress state and broadcast to all clients
-  updateProgress(progressData) {
-    if (typeof progressData === 'string') {
-      this.lastProgressMessage = progressData;
-      this.broadcastLog(progressData, 'progress');
-    } else {
-      this.lastProgressMessage = progressData.message || JSON.stringify(progressData);
-      
-      // For all connected clients, send a progress update
-      for (const client of this.webSocketClients) {
-        try {
-          if (client.readyState === 1) { // WebSocket.OPEN
-            client.send(JSON.stringify({
-              type: 'progress',
-              data: progressData,
-              messageId: `progress-${Date.now()}`
-            }));
-          }
-        } catch (error) {
-          console.error('Error sending progress update:', error);
+
+    /**
+     * Sends a message to all connected WebSocket clients.
+     * @param {Object|string} message - The message object or string to send.
+     */
+    broadcast(message) {
+        if (this.isBroadcasting) return; // Prevent recursion if broadcast itself logs
+        this.isBroadcasting = true;
+
+        // console.log(`[OutputManager] Broadcasting to ${this.webSocketClients.size} clients:`, JSON.stringify(message).substring(0,100)); // Debug broadcast
+
+        const messageToSend = typeof message === 'string' ? { type: 'output', data: message } : message;
+
+        // Add server timestamp/ID if not present
+        if (!messageToSend.serverMessageId) {
+             messageToSend.serverMessageId = `s-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         }
-      }
-    }
-  }
-  
-  // Send a prompt request to all clients and wait for the first response
-  async prompt(promptText) {
-    return new Promise((resolve) => {
-      if (this.webSocketClients.size === 0) {
-        resolve(''); // No clients connected
-        return;
-      }
-      
-      const promptId = `prompt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
-      // Set a timeout to prevent hanging indefinitely
-      const timeoutId = setTimeout(() => {
-        for (const client of this.webSocketClients) {
-          client.removeAllListeners(`input-${promptId}`);
-        }
-        console.log('Prompt timed out');
-        resolve('');
-      }, 60000); // 1 minute timeout
-      
-      // Track responses to avoid duplicate processing
-      let hasResponded = false;
-      
-      // Broadcast the prompt to all clients
-      for (const client of this.webSocketClients) {
-        try {
-          if (client.readyState !== 1) continue; // Skip clients that aren't open
-          
-          // Set up a one-time message handler for this specific client
-          const messageHandler = (message) => {
-            try {
-              const data = JSON.parse(message);
-              
-              // Check if this is a response to our prompt
-              if (data.messageId === promptId || data.responseId === promptId) {
-                if (!hasResponded) {
-                  hasResponded = true;
-                  clearTimeout(timeoutId);
-                  
-                  // Remove all handlers
-                  for (const c of this.webSocketClients) {
-                    c.removeListener('message', c._promptHandler);
-                    delete c._promptHandler;
-                  }
-                  
-                  // Resolve with the input
-                  resolve(data.input || '');
+
+        const messageString = JSON.stringify(messageToSend);
+
+        this.webSocketClients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+                try {
+                    client.send(messageString);
+                } catch (error) {
+                    console.error("[OutputManager] Error sending message to WebSocket client:", error);
+                    // Optionally remove the client if sending fails repeatedly
+                    // this.removeWebSocketClient(client);
                 }
-              }
-            } catch (error) {
-              console.error('Error handling prompt response:', error);
+            } else {
+                 console.warn("[OutputManager] Attempted to send message to non-open WebSocket client. State:", client.readyState);
+                 // Clean up closed clients proactively
+                 // this.removeWebSocketClient(client); // Be careful with modifying set during iteration
             }
-          };
-          
-          // Store the handler on the client object for later removal
-          client._promptHandler = messageHandler;
-          client.on('message', messageHandler);
-          
-          // Send the prompt request
-          client.send(JSON.stringify({
-            type: 'prompt',
-            data: promptText,
-            messageId: promptId
-          }));
-          
-        } catch (error) {
-          console.error('Error sending prompt to client:', error);
-        }
-      }
-    });
-  }
-  
-  // Send a direct message to a specific client
-  sendToClient(ws, type, data, messageId = null) {
-    if (!ws || ws.readyState !== 1) return false;
-    
-    try {
-      ws.send(JSON.stringify({
-        type,
-        data,
-        messageId: messageId || `direct-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      }));
-      return true;
-    } catch (error) {
-      console.error('Error sending direct message to client:', error);
-      return false;
+        });
+        this.isBroadcasting = false;
     }
-  }
-  
-  // Clear all WebSocket clients (for cleanup)
-  clearClients() {
-    this.webSocketClients.clear();
-  }
+
+    /**
+     * Logs a message using the configured log handler.
+     * Also broadcasts to WebSocket clients if any are connected.
+     * @param {string} level - The log level (e.g., 'info', 'warn', 'error', 'debug').
+     * @param {string} message - The message to log.
+     */
+    _logInternal(level, message) {
+         // Use the configured handler (might be console.log or broadcast via setLogHandler in web mode)
+        if (this.logHandler) {
+             try {
+                // Ensure logHandler is called with appropriate context if needed,
+                // but the main issue is calling _logInternal itself.
+                this.logHandler(level, message);
+             } catch (handlerError) {
+                 console.error("Error in custom log handler:", handlerError);
+                 // Fallback to console.error if handler fails
+                 console.error(`[${level.toUpperCase()}] ${message}`);
+             }
+        } else {
+            // Fallback if no handler is set (shouldn't happen with default)
+            console.log(`[${level.toUpperCase()}] ${message}`);
+        }
+
+        // Broadcast to WebSocket clients regardless of the console logHandler
+        // Check if there are clients before broadcasting
+        if (this.webSocketClients.size > 0) {
+            const messageType = level === 'error' ? 'error' : 'output'; // Basic mapping
+            const payload = { type: messageType };
+            if (level === 'error') {
+                payload.error = message;
+            } else {
+                payload.data = message; // Assuming 'output' type uses 'data'
+            }
+            // Add level info for non-error messages if desired
+            // if (level !== 'error') payload.level = level;
+
+            this.broadcast(payload);
+        }
+    }
+
+    // Public log methods - Ensure they call _logInternal with correct 'this'
+    log(message) {
+        this._logInternal('info', message);
+    }
+
+    error(message) {
+        this._logInternal('error', message);
+    }
+
+    warn(message) {
+        this._logInternal('warn', message);
+    }
+
+    debug(message) {
+        // Only log debug messages if DEBUG_MODE is enabled
+        if (process.env.DEBUG_MODE === 'true') {
+            this._logInternal('debug', message);
+        }
+    }
+
+    // Specific output types for clarity
+    commandStart(command) {
+        this.log(`[CMD START] ${command}`);
+    }
+
+    commandSuccess(command, message = 'Completed successfully.') {
+        this.log(`[CMD SUCCESS] ${command}: ${message}`);
+    }
+
+    commandError(command, errorMessage) {
+        this.error(`[CMD ERROR] ${command}: ${errorMessage}`);
+    }
 }
 
-// Create a singleton instance
+// Export a singleton instance
 export const output = new OutputManager();

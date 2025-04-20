@@ -2,12 +2,20 @@ import { executeResearch } from './research.cli.mjs';
 import { executeLogin } from './login.cli.mjs';
 import { executeLogout } from './logout.cli.mjs';
 import { executeStatus } from './status.cli.mjs';
-import { executeUsers } from './users.cli.mjs';
-import { executeKeys } from './keys.cli.mjs';
+import { executeUsers, createAdmin } from './users.cli.mjs';
+import { executeKeys, getKeysHelpText } from './keys.cli.mjs';
 import { executePasswordChange } from './password.cli.mjs';
-import { createAdmin } from './users.cli.mjs';
-import { executeDiagnose } from './diagnose.cli.mjs';
-import { executeChat, exitMemory } from './chat.cli.mjs';
+import { executeDiagnose, getDiagnoseHelpText } from './diagnose.cli.mjs';
+// --- FIX: Import executeExitResearch ---
+import { executeChat, exitMemory, executeExitResearch } from './chat.cli.mjs';
+import { executeMemory } from './memory.cli.mjs';
+
+// Wrapper for displayHelp to match command signature
+async function displayHelpWrapper(options) {
+    // displayHelp now accepts an output function
+    await displayHelp(options.output);
+    return { success: true, keepDisabled: false }; // Indicate success and enable input
+}
 
 export const commands = {
   research: executeResearch,
@@ -17,10 +25,14 @@ export const commands = {
   users: executeUsers,
   keys: executeKeys,
   'password-change': executePasswordChange,
-  'create-admin': createAdmin,
+  'create-admin': createAdmin, // Keep for initial setup if needed via CLI
   diagnose: executeDiagnose,
   chat: executeChat,
-  exitmemory: exitMemory
+  exitmemory: exitMemory, // Specific command for exiting memory mode
+  // --- FIX: Add executeExitResearch to the map ---
+  exitresearch: executeExitResearch, // Command to exit chat and start research
+  memory: executeMemory, // Command for memory operations like stats
+  help: displayHelpWrapper, // Add help command
 };
 
 /**
@@ -71,32 +83,35 @@ export function parseCommandArgs(args) {
     options.action = options.arg0;
     delete options.arg0;
   }
+
+  if (command === 'memory' && options.arg0) {
+    options.action = options.arg0;
+    delete options.arg0;
+  }
   
   return { command, options };
 }
 
 /**
  * Display help documentation for available commands
+ * @param {Function} output - Function to send output (console.log or wsOutputHelper)
  */
-export async function displayHelp() {
-  console.log('Available Commands:');
-  console.log('/login <username> - Log in as a user');
-  console.log('/logout - Log out of the current session');
-  console.log('/status - Display current user status');
-  console.log('/users create <username> --role=<role> - Create a new user');
-  
-  // Import and use the getKeysHelpText function
-  const { getKeysHelpText } = await import('./keys.cli.mjs');
-  console.log(getKeysHelpText());
-  
-  console.log('/keys check - Check API key configurations');
-  console.log('/keys test - Test API key validity');
-  console.log("/password-change - Change the current user's password");
-  console.log('/research <query> [--depth=<n>] [--breadth=<n>] - Perform research');
-  
-  // Import and use the getDiagnoseHelpText function
-  const { getDiagnoseHelpText } = await import('./diagnose.cli.mjs');
-  console.log(getDiagnoseHelpText());
+export async function displayHelp(output) { // Accept output function
+  output('Available Commands:');
+  output('/login <username> [password] - Log in as a user');
+  output('/logout - Log out of the current session');
+  output('/status - Display current user status');
+  output('/users <action> [args] - Manage users (admin only). Actions: create, list, delete');
+  output('/chat [--memory=true] [--depth=short|medium|long] - Start an interactive chat session');
+  output('  -> In Chat: /exit, /exitmemory, /exitresearch, /memory stats, /research <q>, /help'); // Hint about in-chat commands
+
+  output(getKeysHelpText()); // Call the function and send its return value
+
+  output('/password-change - Change the current user\'s password');
+  output('/research <query> [--depth=<n>] [--breadth=<n>] [--classify] - Perform research (Can also be run via interactive prompts)');
+
+  output(getDiagnoseHelpText()); // Call the function and send its return value
+  output('/help - Show this help message.'); // Add help command description
 }
 
 /**

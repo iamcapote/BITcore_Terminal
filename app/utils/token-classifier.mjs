@@ -1,24 +1,33 @@
 import fetch from 'node-fetch';
 import { output } from './research.output-manager.mjs';
-import { VENICE_CHARACTERS } from '../infrastructure/ai/venice.characters.mjs';
+// Removed VENICE_CHARACTERS import as it wasn't used
 
 /**
  * Sends a query to the Venice API for token classification.
  * @param {string} query - The user query.
- * @returns {Promise<string>} The token classification response in plain text.
+ * @param {string} veniceApiKey - The decrypted Venice API key.
+ * @returns {Promise<string|null>} The token classification response in plain text, or null if classification fails non-critically.
+ * @throws {Error} If API key is missing or API call fails critically.
  */
-export async function callVeniceWithTokenClassifier(query) {
-  const apiKey = process.env.VENICE_API_KEY;
+export async function callVeniceWithTokenClassifier(query, veniceApiKey) {
+  // Use the passed-in API key
+  const apiKey = veniceApiKey;
   const baseUrl = 'https://api.venice.ai/api/v1/chat/completions';
 
   if (!apiKey) {
-    output.log('[TokenClassifier] Missing VENICE_API_KEY in environment variables.');
-    throw new Error('Missing VENICE_API_KEY in environment variables.');
+    // This is a critical configuration error, throw it.
+    const errorMsg = 'Missing Venice API Key for token classification.';
+    output.log(`[TokenClassifier] Error: ${errorMsg}`);
+    throw new Error(errorMsg);
   }
 
+  // Use a specific character/prompt for classification if desired, otherwise default
+  // Using 'metacore' as previously defined, assuming it's suitable.
   const payload = {
+    // Use a known valid model, consistent with LLMClient default
     model: 'llama-3.3-70b',
     messages: [{ role: 'user', content: query }],
+    // Ensure venice_parameters and character_slug are correct
     venice_parameters: { character_slug: 'metacore' },
   };
 
@@ -34,22 +43,37 @@ export async function callVeniceWithTokenClassifier(query) {
     });
 
     if (!response.ok) {
-      const errorDetails = await response.text();
-      const errorMessage = errorDetails || response.statusText || 'Unknown error';
-      output.log(`[TokenClassifier] Venice API error: ${errorMessage}`);
-      throw new Error(`Venice API error: ${errorMessage}`);
+      let errorDetails = '';
+      try {
+          errorDetails = await response.text();
+      } catch (_) {
+          // Ignore error reading body
+      }
+      // Log the specific model used in the error message
+      const errorMessage = `Venice API Error for model ${payload.model} (${response.status}): ${errorDetails || response.statusText || 'Unknown error'}`;
+      output.log(`[TokenClassifier] ${errorMessage}`);
+      // Treat API errors as non-critical for classification, return null
+      // throw new Error(errorMessage); // Don't throw, allow research to continue
+      return null;
     }
 
     const data = await response.json();
-    if (!data || !data.choices || !data.choices[0]?.message?.content) {
-      output.log('[TokenClassifier] Invalid response format from Venice API.');
-      throw new Error('Invalid response format from Venice API.');
+    const content = data?.choices?.[0]?.message?.content;
+
+    if (!content) {
+      output.log('[TokenClassifier] Invalid or empty response content from Venice API.');
+      // Return null if content is missing, allow research to continue
+      return null;
     }
 
     output.log('[TokenClassifier] Token classification completed successfully.');
-    return data.choices[0].message.content; // Return the plain text response
+    return content; // Return the plain text response
   } catch (error) {
-    output.log(`[TokenClassifier] Error calling Venice API: ${error.message}`);
-    throw new Error('Failed to classify query using Venice API.');
+    // Catch network errors or other unexpected issues during fetch
+    // Log the specific model used in the error message
+    output.log(`[TokenClassifier] Error calling Venice API (model: ${payload.model}): ${error.message}`);
+    // Return null on fetch errors, allow research to continue
+    // throw new Error(`Failed to classify query using Venice API: ${error.message}`);
+    return null;
   }
 }

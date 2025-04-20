@@ -1,29 +1,46 @@
-import { LLMClient } from '../../infrastructure/ai/venice.llm-client.mjs';
+import { LLMClient, LLMError } from '../../infrastructure/ai/venice.llm-client.mjs'; // Import LLMError
 import { systemPrompt, queryExpansionTemplate } from '../../utils/research.prompt.mjs';
 import { VENICE_CHARACTERS } from '../../infrastructure/ai/venice.characters.mjs';
 
 function processQueryResponse(rawText) {
   const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
-  const queries = lines.filter(line => line.match(/^(What|How|Why|When|Where|Which)/i));
+  // Handle optional leading characters like '*', '-', or '1.' before the question word
+  const queries = lines
+    .map(line => line.replace(/^[\*\-\d\.]+\s*/, '')) // Remove list markers
+    .filter(line => line.match(/^(What|How|Why|When|Where|Which)/i));
   if (queries.length > 0) {
     return { success: true, queries };
   }
-  return { success: false, error: 'No questions found.' };
+  // Log the raw text if parsing fails to help debug
+  console.error('[processQueryResponse] Failed to parse queries. Raw text:', rawText);
+  return { success: false, error: 'No valid questions found starting with What/How/Why/etc.' };
 }
 
 function processLearningResponse(rawText) {
+  console.log('[processLearningResponse] Raw text received:\n---START---\n', rawText, '\n---END---'); // DEBUG LOG
   const learningsMatch = rawText.match(/Key Learnings:\s*([\s\S]*?)\n\n/);
   const questionsMatch = rawText.match(/Follow-up Questions:\s*([\s\S]*)/);
 
+  console.log('[processLearningResponse] Learnings Match:', learningsMatch ? learningsMatch[1].trim() : 'null'); // DEBUG LOG
+  console.log('[processLearningResponse] Questions Match:', questionsMatch ? questionsMatch[1].trim() : 'null'); // DEBUG LOG
+
   const learnings = learningsMatch ? 
-    learningsMatch[1].split('\n').map(l => l.trim()).filter(Boolean) : [];
+    learningsMatch[1].split('\n').map(l => l.trim().replace(/^-|^\d+\.?\s*/, '').trim()).filter(Boolean) : []; // Clean up list markers
   const followUpQuestions = questionsMatch ? 
-    questionsMatch[1].split('\n').map(l => l.trim()).filter(Boolean) : [];
+    questionsMatch[1].split('\n').map(l => l.trim().replace(/^-|^\d+\.?\s*/, '').trim()).filter(Boolean) : []; // Clean up list markers
+
+  console.log('[processLearningResponse] Parsed Learnings:', learnings); // DEBUG LOG
+  console.log('[processLearningResponse] Parsed Follow-up Questions:', followUpQuestions); // DEBUG LOG
 
   if (learnings.length || followUpQuestions.length) {
     return { success: true, learnings, followUpQuestions };
   }
-  return { success: false, error: 'No valid learnings or questions found.' };
+  // Provide more specific error if matches were found but resulted in empty arrays after processing
+  if (learningsMatch || questionsMatch) {
+      console.warn('[processLearningResponse] Matches found but resulted in empty arrays after cleaning.');
+      return { success: false, error: 'Found learning/question sections but content was empty or invalid after cleaning.' };
+  }
+  return { success: false, error: 'No valid "Key Learnings:" or "Follow-up Questions:" sections found.' };
 }
 
 function processReportResponse(rawText) {
@@ -46,9 +63,31 @@ function processResponse(type, content) {
   }
 }
 
-export async function generateOutput({ type, system, prompt, temperature = 0.7, maxTokens = 1000 }) {
-  const client = new LLMClient({});
+
+/**
+ * Generates LLM output using the Venice API.
+ * @param {Object} params - Parameters for generation.
+ * @param {string} params.apiKey - The Venice API key.
+ * @param {string} params.type - The type of output expected ('query', 'learning', 'report').
+ * @param {string} params.system - The system prompt.
+ * @param {string} params.prompt - The user prompt.
+ * @param {number} [params.temperature=0.7] - Sampling temperature.
+ * @param {number} [params.maxTokens=1000] - Maximum tokens to generate.
+ * @returns {Promise<Object>} - Result object with success status and data or error.
+ */
+export async function generateOutput({ apiKey, type, system, prompt, temperature = 0.7, maxTokens = 1000 }) {
+  // Ensure API key is provided
+  if (!apiKey) {
+      console.error("[generateOutput] Error: API key is missing.");
+      return { success: false, error: 'API key is required for generateOutput.' };
+  }
+  // Instantiate client with the provided key
+  const client = new LLMClient({ apiKey });
   try {
+    console.log(`[generateOutput] Calling LLM for type: ${type}. Max Tokens: ${maxTokens}, Temp: ${temperature}`); // DEBUG LOG
+    // console.log(`[generateOutput] System Prompt:\n${system}`); // Optional: Log system prompt if needed
+    // console.log(`[generateOutput] User Prompt:\n${prompt}`); // Optional: Log full prompt if needed (can be long)
+
     const response = await client.complete({
       system,
       prompt,
@@ -56,142 +95,300 @@ export async function generateOutput({ type, system, prompt, temperature = 0.7, 
       maxTokens
     });
 
+    console.log(`[generateOutput] LLM Raw Response (type: ${type}):\n---START---\n`, response.content, `\n---END---`); // DEBUG LOG
+
     let parsed = processResponse(type, response.content);
     if (parsed.success) {
+      console.log(`[generateOutput] Initial parsing successful for type ${type}.`); // DEBUG LOG
       return { success: true, data: parsed };
     }
 
+    // Fallback attempt (optional, consider if needed)
+    console.warn(`[generateOutput] Initial parsing failed for type ${type}. Error: ${parsed.error}. Retrying with simpler prompt.`);
     const fallbackResponse = await client.complete({
       system,
-      prompt: `${prompt}\n\nPlease ensure your response is structured clearly:\n- Key points on new lines\n- Provide meaningful statements`,
-      temperature: 0.5
+      prompt: `${prompt}\n\nPlease ensure your response is structured clearly according to the expected format for type "${type}".`,
+      temperature: 0.5, // Lower temperature for fallback
+      maxTokens
     });
+    console.log(`[generateOutput] LLM Fallback Raw Response (type: ${type}):\n---START---\n`, fallbackResponse.content, `\n---END---`); // DEBUG LOG
     parsed = processResponse(type, fallbackResponse.content);
     if (parsed.success) {
+      console.warn(`[generateOutput] Fallback parsing successful for type ${type}.`);
       return { success: true, data: parsed };
     }
 
-    return { success: false, error: parsed.error };
+    console.error(`[generateOutput] Fallback parsing also failed for type ${type}. Error: ${parsed.error}`);
+    return { success: false, error: parsed.error || 'Failed to parse LLM response after fallback.' };
 
   } catch (error) {
-    return { success: false, error: error.message };
+    console.error(`[generateOutput] LLM API call failed: ${error.message}`, error);
+    // Check if it's an LLMError and provide more details if possible
+    const errorMessage = error instanceof LLMError ? `${error.name}: ${error.message}` : error.message;
+    return { success: false, error: `LLM API Error: ${errorMessage}` };
   }
 }
 
-// Simplified generateQueries function that focuses on basic queries without complex operators
-export async function generateQueries({ query, numQueries = 3, learnings = [], metadata = null }) {
+/**
+ * Generates search queries based on the initial query and context.
+ * @param {Object} params - Parameters for query generation.
+ * @param {string} params.apiKey - The Venice API key.
+ * @param {string} params.query - The original user query.
+ * @param {number} [params.numQueries=3] - Number of queries to generate.
+ * @param {Array<string>} [params.learnings=[]] - Key learnings from previous steps.
+ * @param {string|null} [params.metadata=null] - Metadata from token classification or other context.
+ * @returns {Promise<Array<Object>>} - Array of generated query objects { original: string, metadata?: any }.
+ */
+export async function generateQueries({ apiKey, query, numQueries = 3, learnings = [], metadata = null }) {
+  // ** Add explicit checks for required parameters **
+  if (!apiKey) {
+      console.error("[generateQueries] Error: API key is missing.");
+      throw new Error('API key is required for generateQueries.');
+  }
+  // Allow potentially long query strings (like chat history) but log a warning if very long
   if (!query || typeof query !== 'string' || !query.trim()) {
-    throw new Error('Invalid query: must be a non-empty string.');
+      console.error(`[generateQueries] Error: Invalid query provided: ${query}`);
+      throw new Error('Invalid query: must be a non-empty string.');
+  }
+  if (query.length > 10000) { // Add a length warning for very long context strings
+      console.warn(`[generateQueries] Input query/context string is very long (${query.length} chars). This might affect LLM performance.`);
+  }
+  if (isNaN(numQueries) || numQueries <= 0) {
+      console.warn(`[generateQueries] Invalid numQueries (${numQueries}), defaulting to 3.`);
+      numQueries = 3;
   }
 
-  // Create a simplified prompt that focuses on basic, effective queries without search operators
+  // Log input and metadata
+  const logQuery = query.length > 300 ? query.substring(0, 300) + '...' : query; // Truncate long query for logging
+  console.log(`[generateQueries] Generating ${numQueries} queries for context: "${logQuery}"${metadata ? ' with metadata: Yes' : ''}`);
+  if (metadata) {
+      console.log('[generateQueries] Metadata (Venice AI response):');
+      console.log(typeof metadata === 'object' ? JSON.stringify(metadata, null, 2) : String(metadata));
+  }
+
+  // Create a prompt that adapts based on input length (heuristic for chat history)
   let enrichedPrompt = queryExpansionTemplate(query, learnings);
-  
-  // Simple instructions for basic, effective queries
-  enrichedPrompt += `\n\nGenerate ${numQueries} simple, clear search queries about this topic.
-  Focus on straightforward questions that will yield relevant results.
-  DO NOT use any special search operators or syntax.
-  Each query should be a simple phrase or question.`;
+
+  // --- Refined Instructions for Broader Coverage ---
+  const isLikelyChatHistory = query.length > 1000 || query.includes('\nuser:') || query.includes('\nassistant:'); // Heuristic check
+
+  if (isLikelyChatHistory) {
+    enrichedPrompt += `\n\nAnalyze the entire conversation history provided above. Identify the key distinct topics or questions discussed.
+Generate ${numQueries} simple, clear search queries that cover the *most important themes* or *different key aspects* of the conversation. Aim for breadth if multiple topics are significant.`;
+  } else {
+    enrichedPrompt += `\n\nGenerate ${numQueries} simple, clear search queries based on the main topic of the text above. Focus on straightforward questions that will yield relevant results.`;
+  }
+
+  enrichedPrompt += `\nDO NOT use any special search operators or syntax.
+Each query MUST be on a new line and MUST start with What, How, Why, When, Where, or Which.
+Example format:
+What is [topic]?
+How does [aspect] work?
+Why is [concept] important?`;
+  // --- End Refined Instructions ---
 
   if (metadata) {
     // Include metadata but keep instructions very simple
-    enrichedPrompt = `${enrichedPrompt}\n\nAdditional context from query analysis:\n${metadata}\n\n
-    Based on this context and the query "${query}", generate simple search queries that a person would naturally type.
-    Keep queries plain, clear, and focused on the core concepts.`;
+    // Ensure metadata is stringified if it's an object
+    const metadataString = typeof metadata === 'object' ? JSON.stringify(metadata) : String(metadata);
+    enrichedPrompt = `${enrichedPrompt}\n\nAdditional context from query analysis:\n${metadataString}\n\n
+Based on this context and the original text, generate simple search queries that a person would naturally type.
+Keep queries plain, clear, and focused on the core concepts identified. Ensure they are formatted correctly: each on a new line, starting with What, How, Why, When, Where, or Which.`;
   }
 
   const result = await generateOutput({
+    apiKey, // Pass key
     type: 'query',
     system: systemPrompt(),
     prompt: enrichedPrompt,
     temperature: 0.7,
-    maxTokens: 1000
+    maxTokens: 500 // Reduced max tokens for query generation
   });
 
-  if (result.success) {
-    const lines = result.data.queries || [];
-    return lines.slice(0, numQueries).map(q => ({
-      query: q.trim(),
-      researchGoal: `Research: ${q.trim()}`
-    }));
-  }
+  // --- Start: Enhanced Logging ---
+  console.log(`[generateQueries] LLM result for query generation:`, JSON.stringify(result));
+  // --- End: Enhanced Logging ---
 
-  // Very basic fallback queries with no operators
-  return [
-    {
-      query: `${query}`,
-      researchGoal: `Research basic information about: ${query}`
-    },
-    {
-      query: `${query} definition`,
-      researchGoal: `Research definitions related to: ${query}`
-    },
-    {
-      query: `${query} examples`,
-      researchGoal: `Research examples of: ${query}`
+  if (result.success && result.data.queries && result.data.queries.length > 0) {
+    const lines = result.data.queries;
+    // Ensure queries are trimmed and filter out any potential empty lines again
+    // Return objects with the 'original' property
+    const queries = lines.map(q => q.trim()).filter(Boolean).slice(0, numQueries).map(q => ({
+      original: q, // Use 'original' key
+      metadata: { goal: `Research: ${q}` } // Store goal in metadata
+    }));
+
+    // After generating queries
+    if (Array.isArray(queries)) {
+        console.log('[generateQueries] Successfully generated queries:');
+        queries.forEach((q, i) => {
+            console.log(`  ${i + 1}. ${q.original}${q.metadata ? ` [metadata: ${JSON.stringify(q.metadata)}]` : ''}`);
+        });
     }
-  ];
+
+    return queries;
+  } else {
+      // --- Start: Log the specific error from the result object ---
+      console.error(`[generateQueries] Failed to generate queries via LLM. Error: ${result?.error || 'Unknown error during generateOutput'}. Falling back to basic queries.`);
+      // --- End: Log the specific error ---
+
+      // --- Refined Fallback Logic ---
+      // Try to extract a potential topic from the beginning of the query/context string
+      // This is a heuristic and might need improvement.
+      let fallbackTopic = "the topic";
+      const firstUserMessageMatch = query.match(/user:\s*(.*?)(\n|$)/i);
+      if (firstUserMessageMatch && firstUserMessageMatch[1].trim()) {
+          fallbackTopic = firstUserMessageMatch[1].trim();
+          // Limit topic length for fallback queries
+          if (fallbackTopic.length > 50) {
+              fallbackTopic = fallbackTopic.substring(0, 50) + "...";
+          }
+      } else if (query.length < 100) {
+          // If the original query is short, use it as the topic
+          fallbackTopic = query;
+      }
+      console.warn(`[generateQueries] Using fallback topic: "${fallbackTopic}"`);
+
+      // Generate very simple fallback queries based on the extracted topic
+      return [
+        { original: `What is ${fallbackTopic}?`, metadata: { goal: `Research definition of: ${fallbackTopic}` } },
+        { original: `How does ${fallbackTopic} work?`, metadata: { goal: `Research how ${fallbackTopic} works` } },
+        { original: `Examples of ${fallbackTopic}`, metadata: { goal: `Research examples of: ${fallbackTopic}` } }
+      ].slice(0, numQueries); // Ensure fallback respects numQueries
+  }
 }
 
-// Also update processResults to use metadata
-export async function processResults({ query, content, numLearnings = 3, numFollowUpQuestions = 3, metadata = null }) {
-  if (!Array.isArray(content) || content.length === 0) {
-    throw new Error('Invalid content: must be a non-empty array of strings.');
+/**
+ * Processes search results content to extract learnings and follow-up questions.
+ * @param {Object} params - Parameters for processing results.
+ * @param {string} params.apiKey - The Venice API key.
+ * @param {string} params.query - The original user query or sub-query.
+ * @param {Array<string>} params.content - Array of text content strings from search results.
+ * @param {number} [params.numLearnings=3] - Minimum number of learnings to extract.
+ * @param {number} [params.numFollowUpQuestions=3] - Minimum number of follow-up questions.
+ * @param {string|null} [params.metadata=null] - Metadata from token classification or other context.
+ * @returns {Promise<Object>} - Object containing arrays of learnings and followUpQuestions.
+ */
+export async function processResults({ apiKey, query, content, numLearnings = 3, numFollowUpQuestions = 3, metadata = null }) {
+  // ** Add explicit checks for required parameters **
+  if (!apiKey) {
+      console.error("[processResults] Error: API key is missing.");
+      throw new Error('API key is required for processResults.');
   }
+  if (!Array.isArray(content) || content.length === 0) {
+      console.error(`[processResults] Error: Invalid content provided for query "${query}". Must be a non-empty array.`);
+      // Return empty results instead of throwing? Or throw? Let's throw for now.
+      throw new Error('Invalid content: must be a non-empty array of strings.');
+  }
+  if (isNaN(numLearnings) || numLearnings < 0) numLearnings = 3;
+  if (isNaN(numFollowUpQuestions) || numFollowUpQuestions < 0) numFollowUpQuestions = 3;
 
   // Build a prompt that better incorporates metadata if available
-  let analysisPrompt = `Analyze the following content about "${query}":\n\n`;
-  
+  let analysisPrompt = `Analyze the following content related to "${query}":\n\n`;
+
   // More effective use of metadata to guide analysis
   if (metadata) {
-    analysisPrompt += `Context from query analysis:\n${metadata}\n\nUse this context to better interpret the query "${query}" and extract the most relevant information from the content below, even if the original query seems unclear.\n\n`;
-    analysisPrompt += `Character context: archon-01v\n\n`;
+    const metadataString = typeof metadata === 'object' ? JSON.stringify(metadata) : String(metadata);
+    analysisPrompt += `Context from query analysis:\n${metadataString}\n\nUse this context to better interpret the query "${query}" and extract the most relevant information from the content below.\n\n`;
+    // analysisPrompt += `Character context: archon-01v\n\n`; // Character context might be less relevant here
   }
-  
-  analysisPrompt += `Content:\n${content.map(txt => `---\n${txt}\n---`).join('\n')}\n\n`;
-  analysisPrompt += `Extract:\n1. Key Learnings (at least ${numLearnings}):\n   - Focus on specific facts, data points\n2. Follow-up Questions (at least ${numFollowUpQuestions}):\n   - Must start with What, How, Why, When, Where, or Which\n\nFormat as:\nKey Learnings:\n1. ...\n2. ...\nFollow-up Questions:\n1. ...\n2. ...`;
+
+  // Combine content, ensuring it doesn't exceed limits (simple trim for now)
+  const combinedContent = content.map(txt => `---\n${txt}\n---`).join('\n');
+  const maxContentLength = 50000; // Adjust as needed based on model limits
+  const trimmedContent = trimPrompt(combinedContent, maxContentLength);
+  if (combinedContent.length > maxContentLength) {
+      console.warn(`[processResults] Content truncated to ${maxContentLength} characters for analysis.`);
+  }
+  // --- Start: Log combined content length ---
+  console.log(`[processResults] Combined content length for analysis: ${trimmedContent.length} characters.`);
+  // --- End: Log combined content length ---
+
+  analysisPrompt += `Content:\n${trimmedContent}\n\n`;
+  analysisPrompt += `Based *only* on the content provided above, extract:\n1. Key Learnings (at least ${numLearnings}):\n   - Focus on specific facts, data points, or summaries found in the text.\n   - Each learning should be a concise statement.\n2. Follow-up Questions (at least ${numFollowUpQuestions}):\n   - Generate questions that arise *directly* from the provided content and would require further research.\n   - Must start with What, How, Why, When, Where, or Which.\n\nFormat the output strictly as:\nKey Learnings:\n1. [Learning 1]\n2. [Learning 2]\n...\n\nFollow-up Questions:\n1. [Question 1]\n2. [Question 2]\n...`;
+
+  // --- Start: Log the final prompt being sent ---
+  console.log(`[processResults] Final prompt for learning extraction (query: "${query}"):\n---START---\n`, analysisPrompt, `\n---END---`);
+  // --- End: Log the final prompt ---
 
   const result = await generateOutput({
+    apiKey, // Pass key
     type: 'learning',
-    system: systemPrompt(),
+    system: systemPrompt(), // Use standard system prompt
     prompt: analysisPrompt,
-    temperature: 0.5
+    temperature: 0.5,
+    maxTokens: 1000 // Allow sufficient tokens for learnings/questions
   });
 
-  if (result.success) {
-    return {
-      learnings: (result.data.learnings || []).slice(0, numLearnings),
-      followUpQuestions: (result.data.followUpQuestions || []).slice(0, numFollowUpQuestions)
-    };
+  // --- Start: Enhanced Logging ---
+  console.log(`[processResults] LLM result for learning extraction (query: "${query}"):`, JSON.stringify(result));
+  // --- End: Enhanced Logging ---
+
+  if (result.success && result.data) { // Check result.data exists
+    // Ensure arrays exist even if empty
+    const extractedLearnings = (result.data.learnings || []);
+    const extractedFollowUpQuestions = (result.data.followUpQuestions || []);
+    console.log(`[processResults] Successfully extracted ${extractedLearnings.length} learnings and ${extractedFollowUpQuestions.length} follow-up questions for query: "${query}"`); // DEBUG LOG
+    // Slice *after* logging the total extracted count
+    const finalLearnings = extractedLearnings.slice(0, numLearnings);
+    const finalFollowUpQuestions = extractedFollowUpQuestions.slice(0, numFollowUpQuestions);
+    return { learnings: finalLearnings, followUpQuestions: finalFollowUpQuestions };
   }
 
-  throw new Error(`Failed to process: ${result.error}`);
+  // Throw error if processing failed
+  console.error(`[processResults] Failed to process results via LLM for query "${query}". Error: ${result.error || 'Unknown error'}`); // DEBUG LOG
+  throw new Error(`Failed to process results via LLM: ${result.error || 'Unknown error'}`);
 }
 
-// Update generateSummary to leverage metadata too
-export async function generateSummary({ query, learnings = [], metadata = null }) {
-  let prompt = `Write a comprehensive narrative summary about "${query}" based on:\n`;
-  
-  if (metadata) {
-    prompt += `Context from query analysis:\n${metadata}\n\n`;
+/**
+ * Generates a narrative summary based on the query and accumulated learnings.
+ * @param {Object} params - Parameters for summary generation.
+ * @param {string} params.apiKey - The Venice API key.
+ * @param {string} params.query - The original user query.
+ * @param {Array<string>} [params.learnings=[]] - Accumulated key learnings.
+ * @param {string|null} [params.metadata=null] - Metadata from token classification or other context.
+ * @returns {Promise<string>} - The generated summary markdown text.
+ */
+export async function generateSummary({ apiKey, query, learnings = [], metadata = null }) {
+  if (!apiKey) throw new Error('API key is required for generateSummary.');
+  if (!learnings || learnings.length === 0) {
+    console.warn("[generateSummary] No learnings provided to generate summary.");
+    return `No summary could be generated for "${query}" as no key learnings were extracted during the research process.`;
   }
-  
-  prompt += `${learnings.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\n`;
-  prompt += `Include:\n1. Clear structure\n2. Logical organization\n3. Technical accuracy\n`;
+
+  let prompt = `Write a comprehensive narrative summary about "${query}" based *only* on the following key learnings:\n\n`;
+
+  if (metadata) {
+    prompt += `Original Query Context:\n${metadata}\n\nUse this context to help structure the summary around the core topic.\n\n`;
+  }
+
+  prompt += `Key Learnings:\n${learnings.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\n`;
+  prompt += `Synthesize these learnings into a well-structured, coherent report. Ensure technical accuracy based *only* on the provided points. Format the output as Markdown.`;
 
   const result = await generateOutput({
+    apiKey, // Pass key
     type: 'report',
-    system: systemPrompt(),
+    system: systemPrompt(), // Use standard system prompt
     prompt,
-    temperature: 0.7
+    temperature: 0.7,
+    maxTokens: 2000 // Allow more tokens for the final report
   });
 
-  if (result.success) {
+  if (result.success && result.data.reportMarkdown) {
     return result.data.reportMarkdown;
   }
-  return 'No summary generated.';
+
+  console.error(`[generateSummary] Failed to generate summary via LLM. Error: ${result.error}. Returning basic list.`);
+  // Fallback: return the learnings list if summary fails
+  return `Failed to generate a narrative summary. Key Learnings:\n${learnings.map(l => `- ${l}`).join('\n')}`;
 }
 
+/**
+ * Trims text to a maximum length.
+ * @param {string} [text=''] - The text to trim.
+ * @param {number} [maxLength=100000] - The maximum allowed length.
+ * @returns {string} - The trimmed text.
+ */
 export function trimPrompt(text = '', maxLength = 100000) {
   return text.length <= maxLength ? text : text.slice(0, maxLength);
 }

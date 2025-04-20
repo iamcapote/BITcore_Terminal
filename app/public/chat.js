@@ -29,7 +29,6 @@ class Chat {
   async processChatCommand(command) {
     if (!this.webcomm) {
       this.terminal.appendOutput('Error: WebSocket communicator not initialized');
-      this.terminal.enableInput();
       return false;
     }
     
@@ -46,8 +45,8 @@ class Chat {
         }
       });
       
-      // Send the command to server
-      await this.webcomm.sendInput(command);
+      // Send the command to server as a chat command
+      await this.webcomm.sendChatMessage(command);
       
       // Mark chat as active - will be confirmed by chat-ready event
       this.active = true;
@@ -56,7 +55,10 @@ class Chat {
     } catch (error) {
       console.error('Error processing chat command:', error);
       this.terminal.appendOutput(`Error: ${error.message}`);
-      this.terminal.enableInput();
+      this.active = false;
+      this.sessionId = null;
+      this.terminal.mode = 'command';
+      this.terminal.setPrompt('> ');
       return false;
     }
   }
@@ -104,9 +106,6 @@ class Chat {
       // Display in terminal
       this.terminal.appendOutput(`[AI] ${data.content}`);
     }
-    
-    // Re-enable input
-    this.terminal.enableInput();
   }
   
   /**
@@ -118,9 +117,6 @@ class Chat {
     if (data.error) {
       this.terminal.appendOutput(`Error: ${data.error}`);
     }
-    
-    // Re-enable input
-    this.terminal.enableInput();
   }
   
   /**
@@ -139,11 +135,13 @@ class Chat {
       this.terminal.appendOutput('Chat session started. Type /exit to end chat mode.');
     }
     
+    // Show memory status if enabled
+    if (data.memoryEnabled) {
+      this.terminal.appendOutput(`[Memory] Memory mode enabled (depth: ${data.memoryDepth || 'medium'}). Use /exitmemory to finalize and exit memory mode.`);
+    }
+    
     // Update prompt to show chat mode
     this.terminal.setPrompt('[chat] > ');
-    
-    // Enable input
-    this.terminal.enableInput();
   }
   
   /**
@@ -158,9 +156,6 @@ class Chat {
     
     // Notify user
     this.terminal.appendOutput('Chat session ended.');
-    
-    // Enable input
-    this.terminal.enableInput();
   }
   
   /**
@@ -180,13 +175,7 @@ class Chat {
         sessionId: this.sessionId
       });
       
-      // Reset state
-      this.active = false;
-      this.sessionId = null;
-      
-      // Reset prompt
-      this.terminal.setPrompt('> ');
-      
+      // Do not reset state or prompt here; wait for chat-exit event
       return true;
     } catch (error) {
       console.error('Error exiting chat:', error);
@@ -200,7 +189,7 @@ class Chat {
    * @returns {boolean} Is chat active
    */
   isActive() {
-    return this.active;
+    return !!this.active;
   }
 
   /**
@@ -211,15 +200,7 @@ class Chat {
    * @returns {Promise<void>} Resolves when the command completes.
    */
   async executeWithInputLock(commandFn) {
-    try {
-      this.terminal.disableInput(); // Lock input
-      await commandFn();
-    } catch (error) {
-      console.error('Error during command execution:', error);
-      this.terminal.appendOutput(`Error: ${error.message}`);
-    } finally {
-      this.terminal.enableInput(); // Re-enable input
-    }
+    await commandFn();
   }
 }
 

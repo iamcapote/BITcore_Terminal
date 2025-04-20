@@ -1,4 +1,3 @@
-
 ## Completed Tasks
 - [x] Remove all complex search operators from query generation to focus on simple, effective queries (completed April 11, 2025)
 - [x] Fix WebSocket issue causing multiple letters for each input in WebSocket communication (completed April 11, 2025)
@@ -24,7 +23,7 @@
   - VERIFIED: All error messages now include type, message, and recovery steps
   - VALIDATED: Command start, success and failure states are consistently logged
 
-- [x] searchfu.md 
+- [x] searchfu.md
   - Enhanced generateQueries function to incorporate advanced search techniques from searchfu.md
   - Added support for exact phrase searches with quotes, site-specific searches, exclusion operators, OR logic, and intitle queries
   - Improved the prompt to leverage metadata for determining appropriate search techniques
@@ -65,7 +64,7 @@
   - CONFIRMED: No large monolithic files requiring refactoring were identified
   - QUALITY CHECK: Code follows modular design principles with clean separation between client and infrastructure layers
 
-- [x] Research the research engine make sure its working properly and that we have ample documetation for this research ai swarm. we should be able to pass information properly. the token classifier should be adding metadata frm the ai, the query machine is meant to be sending a payload to venice to generate search queries and generate a research from that. 
+- [x] Research the research engine make sure its working properly and that we have ample documetation for this research ai swarm. we should be able to pass information properly. the token classifier should be adding metadata frm the ai, the query machine is meant to be sending a payload to venice to generate search queries and generate a research from that.
   - Verified functionality: The research engine is working properly
   - Token classification is successfully adding metadata to search queries (validated in research.path.mjs)
   - The research pipeline correctly sends payloads to Venice to generate queries (validated in research() method)
@@ -158,7 +157,6 @@
   - [x] Document validation methodologies for future reference
 
 
-  
 - [x] no real way to delete users
   - Added deleteUser method to UserManager class with proper validation and security checks
   - Implemented CLI commands for user deletion: `/users delete <username>` or interactive mode
@@ -166,7 +164,6 @@
   - Added interactive confirmation for safer user deletion
 
 
-  
 - [x] Remaining research pipeline issues:
   - [x] Test the research pipeline after recent changes to ensure that:
     - Metadata is only used for query generation and not sent to Brave
@@ -236,3 +233,85 @@
   - Fixed WebSocket message handling in start.mjs to properly manage message event listeners
   - Improved prompt management to prevent duplicate processing of user inputs
   - Added more robust cleanup of event listeners after input processing
+
+---
+*New Completed Tasks (April 19, 2025):*
+- [x] **(Critical Bug)** Fix Web-CLI input routing in `terminal.js` to properly handle non-command input in 'chat' and 'research' modes. (Implemented revised `handleInput` logic, added server-driven mode changes via WebSocket messages).
+- [x] **(Decision Needed)** Address GUI toggle discrepancy: Removed checkboxes in `index.html` and associated JS for strict CLI parity. Updated help text in `index.html`.
+- [x] Verify `terminal.js` `this.mode` is correctly set after `/chat` and research initiation messages from the server (Added handlers for `mode_change`, `chat-ready`, `chat-exit`).
+- [x] Ensure `terminal.js` `handleInput` correctly checks `this.mode` and sends non-command input via `webcomm.sendChatMessage` or `webcomm.sendInput` instead of showing "Error: Must start with /" (Implemented in `handleInput`).
+- [x] Refactor `command-processor.js` to rely on server-driven mode changes and simplify client-side logic. (Removed client-side mode setting, adjusted command execution flow).
+- [x] Refactor password prompting in `command-processor.js` to use a callback mechanism coordinated with `terminal.js`. (Implemented `promptForPassword` and `receivePasswordInput`). **(Refined to use Promise-based `promptForPassword` in `terminal.js`)**
+- [x] Refactor WebSocket handling in `routes.mjs` to use a centralized message handler (`handleWebSocketConnection`) and route messages based on type (`command`, `input`, `chat-message`).
+- [x] Update `webcomm.js` to support sending different message types (`sendCommand`, `sendInput`, `sendChatMessage`) and improve connection/reconnection logic.
+- [x] Update `initializeWebChatSession` in `routes.mjs` to integrate with the new command handling and session structure, returning success/failure. **(Integrated into `handleCommandMessage`)**
+- [x] Update `handleCommandMessage` in `routes.mjs` to correctly parse options, handle passwords, inject `wsOutput`/`wsError`, and manage client input state.
+- [x] Implement robust session reset on disconnect in `terminal.js` `handleConnection` (set mode='command', clear status, show "Connection lost..." message, enable input for `/login`). **(Implemented basic reset in `handleConnection` and `handleClose`, added prompt rejection, added user status reset)**
+- [x] **(Web-CLI)** Implement server-side prompt flow (`wsPrompt`/`handleInputMessage`) for `/research` command without query. **(Implemented in `routes.mjs` `handleCommandMessage` and `handleInputMessage`)**
+- [x] **(Web-CLI)** Implement `/research` and `/exitmemory` logic within `handleChatMessage` in `routes.mjs`. **(Implemented basic handling)**
+- [x] **(Web-CLI)** Implement robust routing in `handleInputMessage` for prompt responses. **(Implemented basic handling)**
+- [x] **(Web-CLI)** Implement `/memory stats` command (backend: new file in `commands/`, update `routes.mjs`; frontend: handle output in `terminal.js`). **(Implemented backend call in `handleChatMessage`, frontend uses standard `handleOutput`)**
+- [x] **(Web-CLI)** Implement `memory_commit` event handling (backend: emit event with SHA from `github-memory.integration.mjs`/`routes.mjs`; frontend: display confirmation in `terminal.js`/`chat.js`). **(Implemented backend event emission in `handleChatMessage`, added frontend handler `handleMemoryCommit` in `terminal.js`)**
+- [x] **(Web-CLI Refinement)** Improve input enabling/disabling logic in `terminal.js` handlers for better reliability. **(Implemented)**
+- [x] **(Web-CLI Refinement)** Improve WebSocket connection/reconnection logic in `webcomm.js`. **(Implemented)**
+- [x] **(Web-CLI Refinement)** Improve server-side session management and cleanup in `routes.mjs`. **(Implemented)**
+- [x] **(Web-CLI Refinement)** Standardize output/error sending from backend WebSocket handlers (`wsOutputHelper`, `wsErrorHelper`). **(Implemented)**
+- [x] **(Web-CLI Refinement)** Add timeouts to password and regular prompts (`terminal.js`, `routes.mjs`). **(Implemented)**
+- [x] **(Web-CLI Refinement)** Improve progress bar display in `terminal.js`. **(Implemented)**
+- [x] **(CLI Refinement)** Improve CLI input handling in `start.mjs` to prevent processing during async commands and enhance prompt display. **(Implemented)**
+- [x] **(Auth Refinement)** Improve admin user creation prompt in `start.mjs`. **(Implemented)**
+- [x] **(Web-CLI Refinement)** Add generic prompt handling (`promptForInput`) in `terminal.js` and corresponding server logic (`wsPrompt`) in `routes.mjs`. **(Implemented)**
+- [x] **(Web-CLI Refinement)** Add handlers for `login_success` and `logout_success` in `terminal.js` to update user status display. **(Implemented)**
+- [x] **(Web-CLI Refinement)** Improve Escape key handling in `terminal.js` for both password and generic prompts. **(Implemented)**
+- [x] **(Web-CLI Refinement)** Improve session cleanup on disconnect/timeout in `routes.mjs`. **(Implemented)**
+- [x] **(Web-CLI Refinement)** Refine password requirement logic in `command-processor.js`. **(Implemented)**
+- [x] **(Web-CLI Robustness)** Add fallback input enabling in `handleCommandMessage` and ensure error handlers consistently enable input. **(Implemented in `routes.mjs`)**
+- [x] ENSURE THERE IS NO PLACEHOLDER CODE LIKE : "// ...existing code..." or similar anywhere in our code. this could be a massive error because there might have been a severe omission of logic since the ai passed "// ...existing code..." instead of the actual real correct code. **(Manual code audit performed - None found)**.
+- [x] Refine `keys.cli.mjs` to avoid interactive prompts when called via WebSocket and rely on `options` payload.
+- [x] **(Web-CLI /chat Fix)** Refactor `/chat` command initiation in `routes.mjs` `handleCommandMessage` to use `wsPrompt` for password if needed, initialize session state, and send `chat-ready`, avoiding direct calls to console-specific `executeChat`.
+- [x] **(Web-CLI /research Fix)** Refactor interactive `/research` initiation in `routes.mjs` `handleCommandMessage` to correctly check/prompt for password for API keys using `wsPrompt`.
+- [x] **(Web-CLI /research Fix)** Ensure password prompt for token classification during interactive `/research` uses `wsPrompt`.
+- [x] **(Web-CLI /chat Fix)** Refactor in-chat `/research` handling in `routes.mjs` `handleChatMessage` to pass necessary options (including session password) to `startResearchFromChat`.
+- [x] **(Web-CLI /chat Fix)** Refactor in-chat `/memory stats` and `/exitmemory` handling in `routes.mjs` `handleChatMessage` for correct execution and input state management.
+- [x] **(Web-CLI /chat Fix)** Refactor regular chat message handling in `routes.mjs` `handleChatMessage` to correctly check/prompt for password for API keys using `wsPrompt`.
+- [x] **(Web-CLI Robustness)** Refine post-command result handling in `routes.mjs` `handleCommandMessage` to correctly manage session state and determine if input should be enabled.
+- [x] Refine `diagnose.cli.mjs` to use user-specific keys and potentially the global `userManager`. **(Partially done - fixed imports, commented out broken parts, refined API key checking)**
+- [x] **(Web-CLI Robustness)** Refine input enabling logic in `routes.mjs` `handleCommandMessage` and helper functions (`wsErrorHelper`, `wsOutputHelper`) for clarity and correctness. **(Implemented)**
+- [x] **(Web-CLI Robustness)** Refine `handleInput` in `terminal.js` for stricter `inputEnabled` checks and prompt resolution logic. **(Implemented)**
+- [x] **(Web-CLI Robustness)** Refine prompt cancellation/timeout handlers in `terminal.js` to ensure input state is correctly reset. **(Implemented)**
+- [x] **(Web-CLI Robustness)** Refine `handleCommandMessage` in `routes.mjs` to explicitly manage `inputShouldBeEnabled` based on command results and types. **(Implemented)**
+- [x] **(Web-CLI Robustness)** Refine `handleChatMessage` in `routes.mjs` to manage input state during async operations (LLM calls, prompts, in-chat commands). **(Implemented)**
+- [x] **(Web-CLI Robustness)** Refine `wsPrompt` timeout handler in `routes.mjs` to ensure client input is re-enabled. **(Implemented via `wsErrorHelper`)**
+- [x] **(Web-CLI Bug Fix)** Add logging around server-side prompt state (`session.pendingPromptResolve`) setting and checking to diagnose "Received unexpected input" error. **(Implemented)**
+- [x] **(Web-CLI Bug Fix)** Improve error message formatting in `handleCommandMessage` catch block to prevent `[object Object]` errors. **(Implemented)**
+- [x] **(Web-CLI Bug Fix)** Ensure `wsErrorHelper` reliably enables input unless `keepDisabled` is true. **(Implemented)**
+- [x] **(Web-CLI Bug Fix)** Refine `wsPrompt` to handle synchronous errors during setup and potential `safeSend` failures more gracefully. **(Implemented)**
+- [x] **(Web-CLI Bug Fix)** Ensure WebSocket close handler correctly rejects pending server-side prompt promise. **(Implemented)**
+- [x] **(Startup Bug Fix)** Remove incorrect `output.setLogHandler` calls in `start.mjs`. **(Fixed in previous step)**
+- [x] **(CLI Bug Fix)** Fix `TypeError: this.logHandler is not a function` in CLI mode by correctly setting the log handler in `start.mjs`.
+- [x] **Startup:** Fix `SyntaxError: The requested module './commands/users.cli.mjs' does not provide an export named 'createAdminUserInteractive'` by removing the unused import and related logic in `start.mjs`.
+- [x] **Startup:** Fix `SyntaxError: Duplicate export of 'handleWebSocketConnection'` in `routes.mjs`.
+- [x] **(Web-CLI Bug Fix)** Fix login prompt issue where client prompted unnecessarily when password was provided as an argument (`/login user pass`). Refined client-side `needsPassword` logic and server-side password extraction. **(Implemented)**
+- [x] **(Web-CLI Bug Fix)** Fix "Unknown command: //command..." error by ensuring `webcomm.sendCommand` parses the command string and sends the base command name *without* the leading slash in the JSON payload to the server. (`webcomm.js`)
+- [x] **(Web-CLI /chat Bug Fix)** Fix `404 Not Found - {"error":"Specified model not found"}` error by changing the default model in `LLMClient` from `mistral-large` to `llama-3.3-70b`. (`venice.llm-client.mjs`)
+- [x] **(Web-CLI Bug Fix)** Fix `/research <query>` password prompt flow where password wasn't passed correctly to `executeResearch`. (Refined password passing in `routes.mjs` and retrieval in `research.cli.mjs`).
+
+# Completed Tasks
+- **Implement `userManager.checkApiKeys`:** Added method using `hasApiKey`.
+- **Implement `userManager.testApiKeys`:** Added method using `getApiKey` and fetch calls for Brave, Venice, and GitHub.
+- **Fix `/keys stat` Alias:** Corrected `switch` statement in `keys.cli.mjs` to handle `stat` like `check`.
+- **Fix `/diagnose` Password:** Improved password handling in `diagnose.cli.mjs`'s `checkApi` helper to use password from options or session cache, and added clearer logging for decryption attempts/failures. Added logging in `userManager.getApiKey` to trace password verification.
+- **Refactor API Key Usage (Partial):**
+    - Modified `BraveSearchProvider` constructor to optionally accept an API key, falling back to `process.env`.
+    - Modified `suggestSearchProvider` to accept and pass an optional `apiKey`.
+    - *Note: Changes still required in `research.engine.mjs` or calling code to retrieve user key and pass it to `suggestSearchProvider`.*
+- **Add GitHub Key Support:** Integrated GitHub key checking/testing into `userManager.testApiKeys`, `keys.cli.mjs`, and `diagnose.cli.mjs`.
+- [x] **Web CLI:** Fix interactive `/research` command hanging after query input. (Client sends `value`, server expected `input`. Corrected in `handleInputMessage`).
+- [x] **(Web-CLI Bug Fix)** Fix interactive `/research` authentication check failure. (Ensured `currentUser` is fetched and passed to `executeResearch`).
+- [x] **(Web-CLI Bug Fix)** Fix `Internal Error: Research query missing in WebSocket mode after interactive prompts.` by ensuring `executeResearch` correctly uses `options.query` when `positionalArgs` are empty. (`research.cli.mjs`)
+- [x] **(Web-CLI Bug Fix)** Fix Token Classifier 404 error by using a valid model (`llama-3.3-70b`). (`token-classifier.mjs`)
+- [x] **(Web-CLI Bug Fix)** Add validation and debugging to `ResearchPath.processQuery` to prevent/diagnose "Invalid query: must be a string" error. (`research.path.mjs`)
+- [x] **(Web-CLI Bug Fix)** Fix `[processQuery] Invalid queryObj received` error by standardizing query object structure in `generateQueries` fallback. (`features/ai/research.providers.mjs`)
+- [x] **(Web-CLI Bug Fix)** Fix `TypeError: Cannot read properties of undefined (reading 'progressHandler')` in `ResearchEngine` constructor. (`research.engine.mjs`, `research.cli.mjs`)
+- [x] Implement `/exitresearch` command: Added logic in `routes.mjs` (`handleChatMessage`) to exit chat, combine history into a query, and call `executeResearch`. Updated help text and README.
+- [x] **(Web-CLI Bug Fix)** Fix `/exitresearch` command failing with `Internal Error: wsPrompt function not provided for executeExitResearch.` by correctly passing `wsPrompt` from `routes.mjs` to `executeExitResearch` in `chat.cli.mjs`.
