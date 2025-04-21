@@ -558,7 +558,9 @@ async function handleCommandMessage(ws, message, session) {
       } else {
           options.currentUser = await userManager.getUserData('public');
       }
-      console.log(`[WebSocket] Fetched currentUser for command execution: ${options.currentUser?.username} (${options.currentUser?.role})`);
+      // *** FIX: Assign fetched user data to requestingUser as expected by executeUsers ***
+      options.requestingUser = options.currentUser;
+      console.log(`[WebSocket] Fetched user data for command execution (assigned to currentUser and requestingUser): ${options.requestingUser?.username} (${options.requestingUser?.role})`);
   } catch (userError) {
       commandError(`Error fetching user data: ${userError.message}`);
       return false; // commandError handled enabling
@@ -741,15 +743,16 @@ async function handleCommandMessage(ws, message, session) {
         enableInputAfter = researchResult?.keepDisabled === false;
 
     } else if (commandFn) { // Handle other commands
-        // options.currentUser is already set from earlier fetch
+        // options.currentUser and options.requestingUser are already set from earlier fetch
 
         // Execute the command function
         console.log(`[WebSocket] Executing command function: /${command} for user ${session.username}`);
         const logOptions = { ...options };
         if (logOptions.password) logOptions.password = '******';
         if (logOptions.session?.password) logOptions.session.password = '******';
-        // Mask currentUser password if present
-        if (logOptions.currentUser?.password) logOptions.currentUser.password = '******';
+        // Mask user password if present
+        if (logOptions.currentUser?.passwordHash) logOptions.currentUser.passwordHash = '******';
+        if (logOptions.requestingUser?.passwordHash) logOptions.requestingUser.passwordHash = '******';
         console.log(`[WebSocket] Options passed to command:`, JSON.stringify(logOptions, (key, value) => key === 'webSocketClient' ? '[WebSocket Object]' : value).substring(0, 500));
 
         const result = await commandFn(options);

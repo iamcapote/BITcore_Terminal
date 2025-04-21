@@ -268,7 +268,7 @@ export class UserManager {
         passwordHash,
         salt,
         created: new Date().toISOString(),
-        limits: { maxQueriesPerDay: 100, maxDepth: 5, maxBreadth: 10 },
+        limits: {}, // Set empty limits object for admin
         encryptedApiKeys: {}
       };
 
@@ -559,9 +559,7 @@ export class UserManager {
       salt,
       created: new Date().toISOString(),
       encryptedApiKeys: {},
-      limits: role === 'admin'
-        ? { maxQueriesPerDay: 100, maxDepth: 5, maxBreadth: 10 } // Example admin limits
-        : { maxQueriesPerDay: 20, maxDepth: 3, maxBreadth: 5 } // Example client limits
+      limits: {} // Set empty limits object for new users
     };
 
     await fs.writeFile(userPath, JSON.stringify(newUser, null, 2));
@@ -945,6 +943,7 @@ export class UserManager {
 
   /**
    * Gets limits for a specific user, or defaults for public/unknown.
+   * Authenticated users have no limits applied by default here.
    * @param {string} [username] - Optional username. Defaults to current CLI user.
    * @returns {object} Limits object.
    */
@@ -956,16 +955,22 @@ export class UserManager {
     if (this.currentUser && this.currentUser.username === targetUsername) {
         userForLimits = this.currentUser;
     }
-    // Otherwise, we'd need to load the specific user's data (potentially expensive)
-    // For now, let's simplify: if it's not the CLI user, return public limits.
-    // A better approach might involve caching user data or passing it explicitly.
+    // Otherwise, we'd need to load the specific user's data.
+    // For WebSocket, the session should hold the user data.
+    // Let's assume if we don't have the user loaded, it's public for now.
+    // A better approach would involve passing the user object from the session.
 
-    const defaultLimits = { maxQueriesPerHour: 3, maxDepth: 2, maxBreadth: 3 }; // Public limits
+    const publicLimits = { maxQueriesPerHour: 3, maxDepth: 2, maxBreadth: 3 }; // Public limits
 
     if (!userForLimits || userForLimits.username === 'public') {
-      return defaultLimits;
+      console.log(`[Auth] Applying public limits for user: ${targetUsername}`);
+      return publicLimits;
     }
-    return userForLimits.limits || defaultLimits; // Return user limits or default if missing
+
+    // For authenticated users, return their specific limits (which might be empty)
+    // or an empty object if none are defined.
+    console.log(`[Auth] Applying user-specific limits (or none) for user: ${targetUsername}`);
+    return userForLimits.limits || {}; // Return user limits or empty object
   }
 
   /**

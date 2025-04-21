@@ -2,20 +2,30 @@
 - [ ] **Web-CLI:** Review the `handleCommandMessage` post-execution state management logic in `routes.mjs` to ensure `enableInputAfter` is determined correctly in all scenarios (command results, errors, specific command types like research/chat).
 - [ ] **Web-CLI:** Test WebSocket connection loss scenarios (server restart, client disconnect) and verify that both client (`terminal.js`) and server (`routes.mjs`) correctly handle cleanup, prompt cancellation, and input state.
 - [ ] **Web-CLI:** Verify password caching logic in `routes.mjs` (`handleCommandMessage`, `handleChatMessage`) works as expected and clears appropriately (e.g., on logout, chat exit, failed key decryption).
+- [ ] **Web-CLI:** Implement interactive prompts for commands like `research` when no query is provided (similar to CLI). (Partially done, needs refinement for all prompts)
+- [ ] **Web-CLI:** Ensure `/users delete <username>` requires admin password confirmation via `wsPrompt`.
 - [ ] **General:** Review `app/commands/index.mjs` `parseCommandArgs` function for robustness, especially handling quoted arguments and potential edge cases. Compare with `app/utils/cli-args-parser.mjs` and consider consolidating if they serve the same purpose.
 - [ ] **General:** Implement the actual LLM call logic within `handleChatMessage` in `routes.mjs`.
 - [ ] **General:** Implement memory storage/retrieval logic in `handleChatMessage` and related commands (`/exitmemory`, `/memory stats`).
 - [ ] **General:** Implement the `startResearchFromChat` function logic in `chat.cli.mjs` (or wherever it's intended to live).
+- [ ] **General:** Refine logging across modules for better clarity and consistency.
+- [ ] **General:** Add more comprehensive unit and integration tests.
 - [ ] **Docs:** Update `#file:README.md` with current status, setup instructions, and command list.
 - [ ] **Docs:** Populate `#file:gaps.md` with identified missing features or areas needing significant work based on recent fixes.
+- [ ] **Docs:** Update README and other documentation to reflect recent changes (WebSocket, commands, auth).
 - [ ] **Memory:** Implement memory finalization logic (`/exitmemory`) to summarize and store conversation blocks.
 - [ ] **Memory:** Integrate memory retrieval into the main chat loop (`handleChatMessage`) to provide context to the LLM.
 - [ ] **Memory:** Add `/memory stats` command functionality within chat.
+- [ ] **Memory:** Implement `/memory clear` command (in-chat and top-level).
+- [ ] **Memory:** Implement `/memory list` or `/memory search` command.
 - [ ] **Research:** Refine `startResearchFromChat` to correctly use `ResearchEngine` with API keys and handle progress/results via WebSocket handlers.
 - [ ] **Research:** Allow specifying depth/breadth via flags in `/research` command (e.g., `/research <query> --depth=1 --breadth=5`). (Partially done in arg parsing, needs full integration).
+- [ ] **Research:** Improve error handling and reporting during the research process (e.g., specific API errors).
+- [ ] **Research:** Allow configuration of research parameters (depth, breadth) via flags in `/research` command within chat mode.
 - [ ] **Error Handling:** Improve robustness of WebSocket error handling, especially for unexpected closures or errors during message processing.
 - [ ] **Security:** Review security implications of HTTP POST endpoint for research. Add authentication/authorization.
 - [ ] **Security:** Consider adding password confirmation for sensitive admin actions like user deletion (`/users delete`).
+- [ ] **Auth:** Consider adding a mechanism to refresh the CLI session file periodically or on command execution to extend the expiry.
 - [ ] **UX:** Provide better feedback during long operations (like research or memory finalization) using progress messages. (Partially done for research).
 - [ ] **UX:** Handle rate limiting errors more gracefully (e.g., inform user about wait time). (Partially done in Brave provider).
 - [ ] **Refactor:** Clean up argument parsing in `handleCommandMessage`.

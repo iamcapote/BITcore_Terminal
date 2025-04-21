@@ -23,10 +23,22 @@
 5.  **Authentication & Authorization:**
     *   **Session Management:** WebSocket sessions store user state, but CLI relies on `userManager.currentUser` and a session file. Ensure consistency and security, especially preventing privilege escalation.
     *   **Permissions:** Command authorization relies on role checks (`session.role`, `options.currentUser.role`). Review if this is sufficient for all commands.
+    *   **Admin Permissions:** The `/users` command in the Web-CLI was incorrectly checking permissions. (FIXED by passing `requestingUser` correctly)
+    *   **User Limits:** Limits were being applied to all users by default. Authenticated users should not have default limits imposed by the system itself, only the public user should. (FIXED by adjusting `userManager` and `status` command)
 
-6.  **Code Structure & Maintainability:**
+6.  **WebSocket Input State:**
+    *   **Input Disabling:** Input disabling/enabling logic needs careful review to ensure it's consistently applied, especially around prompts and errors. (Ongoing Refinement)
+    *   **Password Prompts:** Server-side password prompts (`wsPrompt`) need robust handling for various commands (`keys set/test`, `password-change`, `chat`, `research`, potentially `users delete`). (Partially Implemented, needs review for all cases)
+
+7.  **Command Consistency:** Ensure command behavior and argument parsing are consistent between CLI and Web-CLI where applicable.
+
+8.  **Error Handling:** Improve user-facing error messages for clarity.
+
+9.  **Session Management:** WebSocket session handling (creation, cleanup, state updates) needs thorough testing.
+
+10.  **Code Structure & Maintainability:**
     *   **Command Handling:** `handleCommandMessage` is becoming large. Consider breaking down command logic further.
     *   **Error Handling:** Centralize or standardize error reporting, especially for WebSocket communication (`wsErrorHelper`).
     *   **Configuration:** How API keys and other settings are managed (env vars vs. user profiles) needs clarity.
 
-7.  **Testing:** Lack of automated tests makes refactoring risky and bugs harder to catch.
+11.  **Testing:** Lack of automated tests makes refactoring risky and bugs harder to catch.

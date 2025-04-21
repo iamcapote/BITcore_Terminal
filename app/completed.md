@@ -3,3 +3,21 @@
 - **WebSocket Prompting:** Implemented `wsPrompt` function to handle server-initiated prompts (like password requests) over WebSocket, managing state (`pendingPromptResolve`, `pendingPromptReject`, `promptTimeoutId`) within the user session.
 - **Password Handling:** Integrated password prompting (`wsPrompt`) into `handleCommandMessage` and `handleChatMessage` for commands/actions requiring API key decryption (`/research`, `/chat`, `/keys`, etc.). Added session password caching (`session.password`) upon successful authentication or key usage.
 - **API Key Propagation (WebSocket /research):** Modified the `research` command function (`app/commands/research.mjs`) to retrieve Brave and Venice API keys using `userManager.getApiKey` with the session username and password. These keys are now correctly passed in the configuration object when instantiating `ResearchEngine`. Modified `ResearchEngine` constructor and `ResearchPath` constructor to accept and use these keys, resolving the "Missing BRAVE_API_KEY" error in the web-cli research flow. Added progress handler propagation.
+- **WebSocket:** Implemented basic WebSocket connection handling (`handleWebSocketConnection`).
+- **WebSocket:** Added session management (`activeChatSessions`, `wsSessionMap`).
+- **WebSocket:** Implemented basic command routing (`handleCommandMessage`).
+- **WebSocket:** Implemented basic chat message handling (`handleChatMessage`).
+- **WebSocket:** Added helpers for sending output (`wsOutputHelper`) and errors (`wsErrorHelper`).
+- **WebSocket:** Implemented client input state control (`enableClientInput`, `disableClientInput`).
+- **WebSocket:** Implemented server-side prompting mechanism (`wsPrompt`) and handling of client input responses (`handleInputMessage`).
+- **WebSocket:** Implemented `/login` command handling specific to WebSocket sessions.
+- **WebSocket:** Implemented `/chat` command to enter chat mode.
+- **WebSocket:** Implemented in-chat commands: `/exit`, `/exitmemory`, `/memory stats`, `/research`, `/exitresearch`, `/help`.
+- **WebSocket:** Integrated LLM calls for chat responses.
+- **WebSocket:** Integrated memory retrieval and storage during chat.
+- **WebSocket:** Added session inactivity cleanup (`cleanupInactiveSessions`).
+- **Auth:** Separated user authentication (`authenticateUser`) from CLI login (`login`).
+- **Auth:** Passed `requestingUser` object to command functions for permission checks.
+- **Auth:** Fixed admin permission check logic in `/users` command for Web-CLI. (Moved from gaps.md)
+- **Auth:** Removed default rate/usage limits for authenticated users in `userManager`. (Moved from gaps.md)
+- **Status:** Updated `/status` command to correctly display limits (or lack thereof) for the current user. (Moved from gaps.md)
