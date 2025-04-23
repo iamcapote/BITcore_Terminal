@@ -1,6 +1,6 @@
 import { suggestSearchProvider } from '../infrastructure/search/search.providers.mjs';
 // Fix import for research.providers.mjs:
-import * as researchProviders from '../../features/ai/research.providers.mjs';
+import { generateQueries, processResults, generateSummary } from '../features/ai/research.providers.mjs'; // Corrected relative path
 import { LLMClient } from '../infrastructure/ai/venice.llm-client.mjs';
 import fs from 'fs/promises';
 import path from 'path';
@@ -92,14 +92,14 @@ export class ResearchPath {
             // 3. Process Results (Extract Learnings)
             this.progressHandler({ message: 'Extracting learnings...' });
             // Pass LLM client with API key
-            const { learnings, sources } = await researchProviders.processResults(newResults, this.llmClient);
+            const { learnings, sources } = await processResults(newResults, this.llmClient);
             this.debug(`[ResearchPath] Extracted ${learnings.length} learnings.`);
             this.progressHandler({ message: `Extracted ${learnings.length} learnings.` });
 
             // 4. Generate Follow-up Queries
             this.progressHandler({ message: 'Generating follow-up queries...' });
             // Pass LLM client with API key
-            const followUpQueries = await researchProviders.generateQueries(this.query, learnings, this.llmClient); // Use original query object/string
+            const followUpQueries = await generateQueries(this.query, learnings, this.llmClient); // Use original query object/string
             this.debug(`[ResearchPath] Generated ${followUpQueries.length} follow-up queries.`);
             this.progressHandler({ message: `Generated ${followUpQueries.length} follow-up queries.` });
 

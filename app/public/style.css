@@ -1,0 +1,908 @@
+/* Reset and base styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* dark‑mode & wiki variables */
+:root      { --bg:#fff; --fg:#222; --lnk:#0645ad; --border: #a2a9b1; --tab-bg: transparent; --tab-active-bg: var(--bg); --tab-border: transparent; --subtle-border: #e9e9e9;}
+:root.dark { --bg:#111; --fg:#ddd; --lnk:#88c0ff; --border: #555; --tab-bg: transparent; --tab-active-bg: var(--bg); --tab-border: transparent; --subtle-border: #333;}
+
+body {
+    font-family: sans-serif; /* Wikipedia standard font */
+    line-height: 1.6;
+    color: var(--fg);
+    background: var(--bg); /* Use body background for page background */
+    padding: 0; /* Remove body padding */
+}
+
+/* Link styles */
+a{color:var(--lnk); text-decoration: none;}
+a:hover { text-decoration: underline; }
+a:visited { color: #5a3696; } /* Wikipedia visited link color */
+:root.dark a:visited { color: #b8a1e3; }
+
+/* Wikipedia container */
+.wiki-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 1.5rem 2rem;
+    border-top: none;
+}
+
+/* Wikipedia header */
+.wiki-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+    margin-bottom: 1.5rem;
+    position: relative;
+}
+
+/* Logo */
+.wiki-logo {
+    font-weight: normal;
+    font-size: 1.6rem;
+    letter-spacing: 1px;
+    color: var(--fg);
+    text-decoration: none;
+    margin-bottom: 0;
+    padding: 0.5rem 0;
+}
+.wiki-logo a {
+    color: inherit;
+    text-decoration: none;
+}
+
+/* Theme toggle button */
+#theme-toggle {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0.5rem;
+    position: absolute;
+    top: 0.5rem;
+    right: 0;
+}
+
+/* Removed .wiki-search rules */
+
+/* Wikipedia Tab Navigation - Subtle Style */
+.wiki-nav {
+    margin-top: 1rem;
+}
+
+.wiki-nav ul {
+    display: flex;
+    list-style-type: none;
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    bottom: -1px; /* Overlap border */
+}
+
+.wiki-nav li {
+    margin-right: 0; /* Remove gap */
+    margin-bottom: -1px; /* Overlap bottom border */
+    border: 1px solid var(--tab-border); /* Use transparent border */
+    border-bottom: none;
+    background-color: var(--tab-bg); /* Use transparent background */
+}
+
+.wiki-nav li.active {
+    background-color: var(--tab-active-bg);
+    border-color: var(--border); /* Use main border color */
+    border-bottom: 1px solid var(--tab-active-bg); /* Hide bottom border by matching background */
+}
+
+.wiki-nav a {
+    display: block;
+    padding: 0.5rem 1rem;
+    color: var(--lnk);
+    text-decoration: none;
+    white-space: nowrap;
+    border-top: 1px solid var(--tab-border); /* Add top border for separation */
+}
+
+/* Add subtle border between non-active tabs */
+.wiki-nav li + li {
+    border-left: 1px solid var(--subtle-border);
+}
+/* Adjust active tab borders to cover adjacent subtle borders */
+.wiki-nav li.active {
+    border-left-color: var(--border);
+    border-right-color: var(--border);
+}
+.wiki-nav li.active + li {
+    border-left-color: var(--border);
+}
+
+
+.wiki-nav li:not(.active) a:hover {
+    background-color: var(--subtle-border); /* Subtle hover */
+    text-decoration: none;
+}
+
+
+/* Wiki content */
+.wiki-content {
+    padding: 1rem 0;
+}
+
+.wiki-content h1 {
+    font-size: 1.8em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.3rem;
+    margin-bottom: 0.8rem;
+    font-weight: normal;
+    font-family: 'Linux Libertine', 'Georgia', 'Times', serif;
+}
+
+.wiki-article-info {
+    font-size: 0.8em;
+    color: #555;
+    margin-bottom: 1.5rem;
+    font-style: italic;
+}
+:root.dark .wiki-article-info {
+    color: #aaa;
+}
+
+.wiki-toc {
+    display: inline-block;
+    border: 1px solid #a2a9b1;
+    background-color: #f8f9fa;
+    padding: 0.5rem 1rem;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+}
+
+.wiki-toc h2 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+    text-align: center;
+}
+
+.wiki-toc ul {
+    list-style-position: inside;
+}
+
+.wiki-content h2 {
+    font-size: 1.5em;
+    border-bottom: 1px solid var(--subtle-border); /* Use subtle border for h2 */
+    margin: 1.5rem 0 0.8rem;
+    padding-bottom: 0.2rem;
+    font-weight: normal;
+    font-family: 'Linux Libertine', 'Georgia', 'Times', serif;
+}
+
+.wiki-content p {
+    margin-bottom: 0.8rem;
+}
+
+.wiki-intro {
+    font-size: 1em;
+    margin-bottom: 2rem;
+}
+.wiki-intro b {
+    font-weight: bold;
+}
+
+.wiki-references {
+    margin-left: 2rem;
+    font-size: 0.9rem;
+    color: #444;
+}
+
+.wiki-references li {
+    margin-bottom: 0.5rem;
+}
+
+/* Enhanced Terminal Interface */
+.terminal-container {
+    width: 100%;
+    max-width: 900px;
+    margin: 2rem auto;
+    background-color: #333;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
+    display: flex; /* Use flexbox for layout */
+    flex-direction: column; /* Stack children vertically */
+}
+
+.terminal-screen {
+    background-color: #1e1e1e;
+    border: 5px solid #444;
+    border-radius: 5px;
+    padding: 15px;
+    /* margin-bottom: 15px; */ /* Removed margin */
+    /* height: 500px; */ /* Removed fixed height */
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1; /* Allow screen to grow */
+    min-height: 400px; /* Set a minimum height */
+    overflow: hidden; /* Prevent inner content overflow */
+}
+
+.screen-header {
+    text-align: center;
+    margin-bottom: 15px;
+    position: relative; /* Added for absolute positioning of child */
+    flex-shrink: 0; /* Prevent header from shrinking */
+}
+
+.ascii-art {
+    font-family: monospace;
+    font-size: 8px;
+    white-space: pre;
+    color: #ccc;
+    line-height: 1;
+}
+
+.terminal-output {
+    flex-grow: 1;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    background-color: #252525;
+    border: 2px solid #444;
+    padding: 12px;
+    margin-bottom: 10px; /* Space before progress bar/input */
+    color: #ddd;
+    min-height: 100px; /* Ensure it has some height */
+}
+
+.terminal-line {
+    margin-bottom: 8px;
+    white-space: pre-wrap; /* Ensure long lines wrap */
+    word-break: break-word; /* Break long words */
+}
+
+/* Progress Bar Styling */
+#progress-bar {
+    display: none; /* Hidden by default */
+    padding: 5px 12px;
+    background-color: #444; /* Match terminal borders */
+    color: #eee;
+    text-align: center;
+    font-size: 0.9em;
+    font-family: 'Courier New', monospace;
+    margin-bottom: 10px; /* Space before input */
+    border-radius: 3px;
+    flex-shrink: 0; /* Prevent shrinking */
+}
+#progress-bar span {
+    display: inline-block;
+}
+
+
+.terminal-input-wrapper {
+    display: flex;
+    align-items: center;
+    background-color: #2a2a2a;
+    border: 2px solid #444;
+    padding: 8px;
+    flex-shrink: 0; /* Prevent shrinking */
+}
+
+.prompt {
+    color: #aaa;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    margin-right: 8px;
+}
+
+#terminal-input {
+    flex-grow: 1;
+    background-color: transparent;
+    border: none;
+    outline: none;
+    font-family: 'Courier New', monospace;
+    font-size: 16px;
+    color: #fff;
+}
+
+/* Style for disabled input */
+#terminal-input:disabled {
+    background-color: #222; /* Slightly different background */
+    color: #888; /* Dim text color */
+    cursor: not-allowed; /* Indicate disabled state */
+}
+
+
+/* Control Panel */
+.control-panel {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0 0 0; /* Padding top only */
+    /* background-color: #333; */ /* Removed background */
+    /* border-radius: 5px; */ /* Removed border-radius */
+    margin-top: 10px;
+    flex-shrink: 0; /* Prevent shrinking */
+}
+
+.control-button {
+    padding: 8px 15px;
+    background-color: #444;
+    color: #ddd;
+    border: 1px solid #555;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.control-button:hover {
+    background-color: #555;
+}
+
+/* Fullscreen button */
+.fullscreen-btn {
+    position: absolute;
+    top: 10px; /* Adjust as needed */
+    right: 10px; /* Adjust as needed */
+    background-color: #444;
+    color: #ddd;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s, transform 0.2s;
+    z-index: 10; /* Ensure it stays above other elements */
+}
+
+.fullscreen-btn:hover {
+    background-color: #555;
+    transform: scale(1.1);
+}
+
+/* Fullscreen terminal */
+.terminal-container.fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: #333;
+    z-index: 1000;
+    padding: 20px;
+    box-shadow: none;
+    overflow: hidden; /* Prevent content overflow */
+    display: flex; /* Ensure flex layout in fullscreen */
+    flex-direction: column;
+}
+
+/* Native fullscreen pseudo-class */
+.terminal-container:fullscreen {
+    width: 100vw; /* Full viewport width */
+    height: 100vh; /* Full viewport height */
+    background-color: #1e1e1e; /* Match terminal screen background */
+    padding: 10px; /* Add some padding */
+    margin: 0; /* Remove margin */
+    border: none; /* Remove border */
+    display: flex;
+    flex-direction: column;
+}
+
+.terminal-container:fullscreen .terminal-screen {
+    flex-grow: 1; /* Expand to fill available space */
+    height: auto;
+    margin: 0;
+    border: none;
+    padding: 10px;
+}
+
+.terminal-container:fullscreen .terminal-output {
+    flex-grow: 1;
+    height: 100%; /* Fill available vertical space */
+    margin: 0 0 10px 0; /* Margin bottom before progress/input */
+    border: none;
+    padding: 10px;
+}
+
+.terminal-container:fullscreen #progress-bar {
+    margin: 0 0 10px 0; /* Margin bottom before input */
+}
+
+.terminal-container:fullscreen .terminal-input-wrapper {
+    border: none;
+    padding: 10px;
+    margin: 0;
+}
+
+.terminal-container:fullscreen .control-panel {
+    margin: 10px 0 0 0; /* Margin top */
+    padding: 10px;
+    border: none;
+}
+
+.terminal-container:fullscreen .fullscreen-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1001; /* Ensure above other fullscreen content */
+}
+
+/* Gradient buttons */
+.gradient-btn {
+    background: linear-gradient(135deg, #555, #333); /* Grayscale gradient */
+    color: #fff;
+    border: 1px solid #666; /* Slightly lighter border */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); /* Adjusted shadow */
+    transition: background 0.3s, transform 0.2s, box-shadow 0.3s;
+}
+
+.gradient-btn:hover {
+    background: linear-gradient(135deg, #666, #444); /* Lighter gradient on hover */
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4); /* Enhanced shadow on hover */
+}
+
+/* Wiki footer */
+.wiki-footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.8em;
+    color: #555;
+}
+:root.dark .wiki-footer {
+    color: #aaa;
+}
+
+.wiki-footer p {
+    margin-bottom: 0.5rem;
+}
+
+.wiki-footer a {
+    color: var(--lnk);
+    text-decoration: none;
+}
+
+.wiki-footer a:hover {
+    text-decoration: underline;
+}
+
+/* Status indicators */
+.status-bar {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: #888;
+    padding: 5px;
+    background-color: #2a2a2a;
+    border-radius: 3px;
+    flex-shrink: 0; /* Prevent shrinking */
+}
+
+.status-indicator {
+    display: inline-block;
+    margin-right: 15px; /* Add spacing between indicators */
+}
+.status-indicator:last-child {
+    margin-right: 0;
+}
+
+/* Connection Status Colors */
+#connection-status.status-connected {
+    color: #0f0; /* Green for connected */
+}
+#connection-status.status-disconnected {
+    color: #f00; /* Red for disconnected */
+}
+/* Default color if class is missing or different */
+#connection-status {
+    color: #aaa;
+}
+
+
+/* Style semantic decorators */
+.semantic-decorator {
+    color: #888;
+    font-size: 14px;
+    margin: 5px 0;
+}
+
+/* Response styles */
+.core-response {
+    color: #ddd;
+    border-left: 3px solid #555;
+    padding-left: 10px;
+    margin: 5px 0;
+}
+
+/* History indicator */
+.history-indicator {
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    font-size: 12px;
+    color: #888;
+}
+
+/* Terminal focus effect */
+.terminal-screen.focus {
+    border-color: #666;
+}
+
+/* Blinking cursor */
+.blinking-cursor {
+    display: inline-block;
+    width: 8px;
+    height: 16px;
+    background-color: #ddd;
+    animation: blink 1s infinite;
+    margin-left: 2px;
+    vertical-align: middle;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* tree view - Added from wiki.css */
+/* Remove or comment out old #tree-root and #research-tree styles */
+
+/* --- New Tree View Enhancements --- */
+
+/* Base styles for the tree container */
+.tree-root {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    font-size: 0.95rem; /* Slightly smaller font for tree */
+}
+
+/* Style for each list item (folder or file) */
+.tree-root li {
+    margin-left: 0; /* Reset margin */
+    padding-left: 1.2rem; /* Indentation for nesting */
+    position: relative; /* Needed for potential future guide lines */
+    line-height: 1.7; /* Spacing between items */
+}
+
+/* Style the summary element (clickable folder header) */
+.tree-root summary {
+    cursor: pointer;
+    list-style: none; /* Remove default marker */
+    display: flex;
+    align-items: center; /* Vertically align icon, toggle, and text */
+    padding: 2px 0; /* Small padding for summary */
+}
+.tree-root summary::-webkit-details-marker { display: none; } /* Hide marker in WebKit */
+.tree-root summary:focus { outline: none; } /* Optional: remove focus outline */
+
+/* Style the toggle button (▶/▼) */
+.tree-root .toggle-btn {
+    color: #666;
+    margin-right: 4px; /* Space after toggle */
+    font-size: 0.7rem; /* Smaller toggle icon */
+    width: 1em; /* Fixed width */
+    display: inline-block;
+    text-align: center;
+    flex-shrink: 0; /* Prevent shrinking */
+    transition: transform 0.1s ease-in-out; /* Smooth rotation */
+}
+:root.dark .tree-root .toggle-btn { color: #aaa; }
+.tree-root details:not([open]) > summary .toggle-btn {
+    transform: rotate(-90deg); /* Point right when closed */
+}
+.tree-root details[open] > summary .toggle-btn {
+    transform: rotate(0deg); /* Point down when open */
+}
+
+
+/* Style folder and file icons */
+.tree-root .folder-icon,
+.tree-root .file-icon {
+    margin-right: 6px; /* Space after icon */
+    font-size: 1em; /* Match surrounding text size */
+    display: inline-block;
+    width: 1.2em; /* Ensure consistent spacing */
+    text-align: center;
+    flex-shrink: 0;
+}
+
+/* Style folder label text */
+.tree-root .folder-label {
+    font-weight: normal; /* Use normal weight */
+    color: var(--fg);
+    transition: color 0.2s;
+}
+.tree-root summary:hover .folder-label {
+    color: var(--lnk); /* Change color on hover */
+}
+
+/* Style file container */
+.tree-root .file {
+    display: flex;
+    align-items: center;
+    padding: 2px 0; /* Small padding for file lines */
+}
+
+/* Style file links */
+.tree-root .file a {
+    text-decoration: none;
+    color: var(--lnk);
+    transition: color 0.2s;
+}
+.tree-root .file a:hover {
+    text-decoration: underline;
+    color: var(--lnk); /* Ensure link color on hover */
+}
+
+/* Container for nested items within a folder */
+.tree-root .folder-content {
+    /* Indentation is handled by the nested li's padding-left */
+    margin-left: 0;
+}
+
+/* --- End New Tree View Enhancements --- */
+
+
+/* breadcrumbs - Added from wiki.css */
+.breadcrumbs{font-size:.9rem;margin:0 0 1rem;}
+/* Style for research page breadcrumbs */
+.breadcrumb { font-size: 0.9rem; margin-bottom: 1rem; color: #666; }
+.breadcrumb a { color: var(--lnk); text-decoration: none; }
+.breadcrumb a:hover { text-decoration: underline; }
+
+/* Additional styles for research page from research/index.html */
+.search-box {
+    padding: 0.5rem;
+    width: 100%;
+    max-width: 400px;
+    margin-bottom: 1rem;
+    border: 1px solid #a2a9b1;
+    border-radius: 4px;
+}
+
+.page-subtitle {
+    color: #666;
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+    font-style: italic;
+}
+
+/* User indicator */
+.user-indicator {
+    background-color: #f8f9fa;
+    border: 1px solid #a2a9b1;
+    padding: 0.5rem 1rem;
+    margin: 1rem 0;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+}
+
+.user-avatar {
+    width: 32px;
+    height: 32px;
+    background-color: #f0f0f0;
+    border-radius: 50%;
+    margin-right: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: #666;
+}
+
+/* Statistics boxes */
+.stats-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.stat-box {
+    flex: 1;
+    min-width: 150px;
+    background-color: #fff;
+    border: 1px solid #a2a9b1;
+    padding: 15px;
+    border-radius: 4px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 5px;
+    position: relative;
+    z-index: 2;
+}
+
+.stat-label {
+    color: #666;
+    font-size: 0.9rem;
+    position: relative;
+    z-index: 2;
+}
+
+/* Improved ferrofluid animations */
+.ferrofluid {
+    position: relative;
+    height: 100px;
+    overflow: hidden;
+    border-radius: 50%;
+    margin: 10px auto;
+    width: 100px;
+}
+
+.ferrofluid-animation {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at center, #000 10%, rgba(0,0,0,0.8) 40%, transparent 70%);
+    animation: ferrofluid-pulse 8s infinite ease-in-out;
+    box-shadow: 0 0 15px rgba(0,0,0,0.3);
+    border-radius: 50%;
+}
+
+.ferrofluid-docs .ferrofluid-animation {
+    background: radial-gradient(circle at center, #000 10%, #222 40%, transparent 80%);
+}
+
+.ferrofluid-categories .ferrofluid-animation {
+    background: radial-gradient(circle at center, #000 10%, #252525 40%, transparent 80%);
+}
+
+.ferrofluid-tags .ferrofluid-animation {
+    background: radial-gradient(circle at center, #000 10%, #202020 40%, transparent 80%);
+}
+
+@keyframes ferrofluid-pulse {
+    0%, 100% {
+        transform: scale(0.85);
+        box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    }
+    25% {
+        transform: scale(0.95) translateX(-5px) translateY(5px);
+    }
+    50% {
+        transform: scale(1) translateX(5px) translateY(-5px);
+        box-shadow: 0 0 20px rgba(0,0,0,0.4);
+    }
+    75% {
+        transform: scale(0.9) translateX(3px) translateY(3px);
+    }
+}
+
+/* Tabs system */
+.tab-container {
+    margin-top: 20px;
+    border: 1px solid #a2a9b1;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.tab-buttons {
+    display: flex;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #a2a9b1;
+}
+
+.tab-btn {
+    padding: 10px 20px;
+    cursor: pointer;
+    border: none;
+    background: none;
+    border-right: 1px solid var(--subtle-border); /* Use subtle border */
+    background-color: var(--tab-bg); /* Use transparent background */
+}
+
+.tab-btn.active {
+    background-color: var(--tab-active-bg); /* Use active background */
+    border-color: var(--border); /* Use main border color */
+    font-weight: bold;
+}
+
+.tab-content {
+    display: none;
+    padding: 15px;
+    background-color: var(--tab-active-bg); /* Use active background */
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Two-column layout */
+.content-container {
+    display: flex;
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.file-explorer {
+    flex: 1;
+    min-width: 250px;
+}
+
+.document-viewer {
+    flex: 2;
+    border: 1px solid var(--border); /* Use main border color */
+    border-radius: 4px;
+    padding: 15px;
+    background-color: var(--tab-active-bg); /* Use active background */
+    min-height: 500px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Markdown viewer */
+.markdown-title {
+    margin-top: 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border); /* Use main border color */
+}
+
+.markdown-meta {
+    margin: 10px 0;
+    font-size: 0.9rem;
+    color: #666;
+}
+
+.markdown-content {
+    padding: 1rem;
+    border-radius: 4px;
+    margin: 15px 0;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--border); /* Use main border color */
+}
+
+.document-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+}
+
+.action-btn {
+    padding: 5px 15px;
+    background-color: var(--tab-bg); /* Use transparent background */
+    border: 1px solid var(--border); /* Use main border color */
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.action-btn:hover {
+    background-color: var(--subtle-border); /* Use subtle border */
+}
+
+.tag, .category {
+    display: inline-block;
+    padding: 2px 8px;
+    margin: 2px;
+    border-radius: 10px;
+    font-size: 0.8rem;
+}
+
+.tag {
+    background-color: #eaecf0;
+    color: #555;
+}
+
+.category {
+    background-color: #dae8fc;
+    color: #333;
+}
+
+/* Initially hide document viewer */
+.document-viewer.hidden {
+    display: none;
+}

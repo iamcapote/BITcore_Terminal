@@ -6,22 +6,24 @@
  */
 class Terminal {
   constructor(elementId) {
-    this.container = document.getElementById(elementId) || document.querySelector(elementId);
-    this.outputArea = null;
-    this.inputArea = null;
-    this.input = null;
-    this.prompt = null;
+    // The elementId is now expected to be the ID of the terminal output area, e.g., 'terminal-output'
+    this.outputArea = document.getElementById(elementId);
+    this.container = this.outputArea ? this.outputArea.closest('.terminal-container') : null; // Find container relative to output
+    this.inputArea = null; // Will be found within initialize
+    this.input = null; // Will be found within initialize
+    this.prompt = null; // Will be found within initialize
     this.history = [];
     this.historyIndex = -1;
     this.inputEnabled = false; // Start disabled until server confirms connection and enables
-    this.currentPrompt = '> ';
+    this.currentPrompt = '▶ '; // Default prompt from new UI
     this.passwordMode = false;
     this.pendingPasswordResolve = null; // To handle password prompts
     this.pendingPasswordReject = null; // To handle password prompt errors/cancel
     this.pendingPromptResolve = null; // To handle generic prompts
     this.pendingPromptReject = null; // To handle generic prompt errors/cancel
-    this.progressBar = null;
-    this.statusElement = null;
+    this.progressBar = null; // Will be found within initialize
+    this.statusElement = null; // Will be found within initialize (connection status)
+    this.userStatusElement = null; // Will be found within initialize (user status)
     this.eventListenersInitialized = false;
     this.mode = 'command'; // Track current mode: 'command', 'chat', 'research', 'prompt'
     this.scrollTimeout = null; // For debouncing scroll
@@ -32,96 +34,56 @@ class Terminal {
     // Initialize terminal UI
     this.initialize();
 
-    // Add input field to input area if not already present
-    if (this.inputArea && this.input && !this.inputArea.contains(this.input)) {
-      this.inputArea.appendChild(this.input);
-    }
-
-    // Event listeners
-    this.initializeEventListeners();
+    // Event listeners are initialized within initialize() now
   }
 
   /**
-   * Initialize the terminal container and UI elements
+   * Initialize the terminal container and UI elements based on the new HTML structure
    */
   initialize() {
+    if (!this.outputArea) {
+      console.error("Terminal output area element not found (expected ID: 'terminal-output')");
+      return;
+    }
     if (!this.container) {
-      console.error("Terminal container element not found");
-      return;
+        console.error("Terminal container element not found (expected ancestor class: 'terminal-container')");
+        // Attempt to find globally if ancestor search failed
+        this.container = document.querySelector('.terminal-container');
+        if (!this.container) return; // Still not found, exit
     }
 
-    // For direct usage of the element ID 'output' from HTML
-    if (this.container.id === 'output') {
-      // For the pre-existing HTML structure
-      this.outputArea = this.container;
-      this.input = document.getElementById('input');
-      this.prompt = document.getElementById('prompt');
-      this.progressBar = document.getElementById('progress-bar'); // Get progress bar from HTML
-      this.statusElement = document.getElementById('connection-status'); // Get status from HTML
+    // Find elements based on IDs in the new HTML structure
+    this.input = document.getElementById('terminal-input');
+    this.prompt = document.getElementById('prompt');
+    this.progressBar = document.getElementById('progress-bar');
+    this.statusElement = document.getElementById('connection-status'); // Connection status
+    this.userStatusElement = document.getElementById('user-status'); // User status
 
-      // Clear the initial "Initializing Research CLI..." message
-      // this.outputArea.textContent = ''; // Keep initial content if any
-
-      // Add initial messages only if output is empty
-      if (!this.outputArea.textContent.trim()) {
-        this.appendOutput('Welcome to MCP Web Terminal');
-        this.appendOutput('Type /help for available commands');
-      }
-      this.setPrompt(this.currentPrompt); // Ensure initial prompt is set
-      this.hideProgressBar(); // Ensure progress bar is hidden initially
-
-      return;
+    if (!this.input || !this.prompt || !this.progressBar || !this.statusElement || !this.userStatusElement) {
+        console.error("One or more required terminal elements (input, prompt, progress bar, status, user status) not found by ID.");
+        return;
     }
 
-    // Otherwise create a new terminal UI structure (Fallback, less likely used now)
-    // Clear container
-    this.container.innerHTML = '';
-    this.container.className = 'terminal-container';
+    // Find the input area wrapper if needed for styling/layout, though not directly used by logic
+    this.inputArea = this.input.closest('.terminal-input-wrapper');
 
-    // Create output area
-    this.outputArea = document.createElement('div');
-    this.outputArea.className = 'terminal-output';
-    this.container.appendChild(this.outputArea);
+    // Preserve initial content if desired, or clear specific lines
+    // For now, we assume the initial HTML content is static and new output appends after it.
+    // If clearing is needed:
+    // this.outputArea.innerHTML = ''; // Clears everything
+    // this.appendOutput('Welcome to MCP Web Terminal'); // Add back initial dynamic messages
+    // this.appendOutput('Type /help for available commands');
 
-    // Create progress bar (hidden by default)
-    this.progressBar = document.createElement('div');
-    this.progressBar.className = 'terminal-progress';
-    this.progressBar.style.display = 'none';
-    this.progressBar.innerHTML = '<span></span>'; // Inner span for text/progress
-    this.container.appendChild(this.progressBar);
-
-    // Create status indicator
-    this.statusElement = document.createElement('div');
-    this.statusElement.className = 'terminal-status';
-    this.statusElement.style.display = 'none';
-    this.container.appendChild(this.statusElement);
-
-    // Create input area
-    this.inputArea = document.createElement('div');
-    this.inputArea.className = 'terminal-input-area';
-    this.container.appendChild(this.inputArea);
-
-    // Create prompt
-    this.prompt = document.createElement('span');
-    this.prompt.className = 'terminal-prompt';
-    this.prompt.innerText = this.currentPrompt;
-    this.inputArea.appendChild(this.prompt);
-
-    // Create input field
-    this.input = document.createElement('input');
-    this.input.type = 'text';
-    this.input.className = 'terminal-input';
-    this.input.autocapitalize = 'off';
-    this.input.autocomplete = 'off';
-    this.input.spellcheck = false;
-    this.inputArea.appendChild(this.input);
-
-    // Initial message
-    this.appendOutput('Welcome to MCP Web Terminal');
-    this.appendOutput('Type /help for available commands');
-    console.log("Terminal initialized. Input enabled:", this.inputEnabled); // Log initial state
+    this.setPrompt(this.currentPrompt); // Ensure initial prompt is set visually
+    this.hideProgressBar(); // Ensure progress bar is hidden initially
     this.disableInput(); // Ensure input starts visually disabled
-    console.log("Terminal initialized. Input initially disabled.");
+    this.setStatus('disconnected'); // Set initial visual status
+    this.updateUserStatus('public'); // Set initial user status
+
+    console.log("Terminal initialized using new HTML structure. Input initially disabled.");
+
+    // Initialize event listeners now that elements are found
+    this.initializeEventListeners();
   }
 
   /**
@@ -129,19 +91,20 @@ class Terminal {
    */
   initializeEventListeners() {
     if (this.eventListenersInitialized) return;
-    this.eventListenersInitialized = true;
 
-    if (!this.input) {
-      console.error("Terminal input element not found");
+    // Ensure elements exist before adding listeners
+    if (!this.input || !this.container) {
+      console.error("Cannot initialize event listeners: Input or container element not found.");
       return;
     }
+    this.eventListenersInitialized = true; // Set flag early
 
     // Add event listener for keyboard events on the input field
     this.input.addEventListener('keydown', this.handleKeyDown.bind(this));
 
-    // Focus input when terminal is clicked
-    if (this.container) {
-      this.container.addEventListener('click', (event) => {
+    // Focus input when terminal output area (or container) is clicked
+    // Use outputArea for more specific clicking
+    this.outputArea.addEventListener('click', (event) => {
         // Prevent focusing if clicking on a link within the output
         if (event.target.tagName === 'A') {
           return;
@@ -155,7 +118,6 @@ class Terminal {
            }
         }
       });
-    }
 
     // Handle WebSocket messages
     if (window.webcomm) {
@@ -171,7 +133,6 @@ class Terminal {
       webcomm.registerHandler('chat-ready', this.handleChatReady.bind(this));
       webcomm.registerHandler('chat-exit', this.handleChatExit.bind(this));
       webcomm.registerHandler('research_start', this.handleResearchStart.bind(this));
-      // --- ADDED research_result_ready handler ---
       webcomm.registerHandler('research_result_ready', this.handleResearchResultReady.bind(this));
       webcomm.registerHandler('research_complete', this.handleResearchComplete.bind(this));
       webcomm.registerHandler('chat-response', this.handleChatResponse.bind(this));
@@ -180,13 +141,12 @@ class Terminal {
       webcomm.registerHandler('logout_success', this.handleLogoutSuccess.bind(this));
       webcomm.registerHandler('enable_input', this.handleEnableInput.bind(this));
       webcomm.registerHandler('disable_input', this.handleDisableInput.bind(this));
-      webcomm.registerHandler('download_file', this.handleDownloadFile.bind(this)); // Add download handler
+      webcomm.registerHandler('download_file', this.handleDownloadFile.bind(this));
     } else {
         console.error("WebComm not initialized when trying to register handlers.");
     }
 
-
-    // Focus input field
+    // Focus input field initially
     setTimeout(() => this.focusInput(), 100);
   }
 
@@ -1064,21 +1024,15 @@ class Terminal {
    * @param {string} status - Status ('connected', 'disconnected')
    */
   setStatus(status) {
-    const statusElement = document.getElementById('connection-status');
-    if (statusElement) {
-        statusElement.className = `status-${status}`;
-        statusElement.textContent = status === 'connected' ? 'Connected' : 'Disconnected';
-    } else if (this.statusElement) {
-        // Fallback if using dynamically created element
-        this.statusElement.style.display = 'block';
-        this.statusElement.className = `terminal-status terminal-status-${status}`;
-        this.statusElement.innerText = status === 'connected' ? 'Connected' : 'Disconnected';
-
-        setTimeout(() => {
-          if (this.statusElement) {
-            this.statusElement.style.display = 'none';
-          }
-        }, 3000);
+    // Use the specific status element found in initialize
+    if (this.statusElement) {
+        // Remove existing status classes and add the new one
+        this.statusElement.classList.remove('status-connected', 'status-disconnected');
+        this.statusElement.classList.add(`status-${status}`);
+        // Update text content based on status
+        this.statusElement.textContent = `Status: ${status === 'connected' ? 'Connected' : 'Disconnected'}`;
+    } else {
+        console.warn("Connection status element not found during setStatus.");
     }
   }
 
@@ -1087,9 +1041,17 @@ class Terminal {
    * @param {string} username - The username to display ('public' if logged out).
    */
   updateUserStatus(username) {
-      const userStatusEl = document.getElementById('user-status');
-      if (userStatusEl) {
-          userStatusEl.textContent = `User: ${username || 'public'}`;
+      // Use the specific user status element found in initialize
+      if (this.userStatusElement) {
+          this.userStatusElement.textContent = `User: ${username || 'public'}`;
+          // Optionally add/remove an 'active' class if needed by CSS
+          if (username && username !== 'public') {
+              this.userStatusElement.classList.add('active'); // Assuming 'active' means logged in
+          } else {
+              this.userStatusElement.classList.remove('active');
+          }
+      } else {
+          console.warn("User status element not found during updateUserStatus.");
       }
   }
 
@@ -1149,14 +1111,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // Ensure webcomm is created ONLY here, with the correct URL
   if (!window.webcomm) {
       const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // Use the URL the server expects
       const wsUrl = `${wsProtocol}//${window.location.host}/api/research/ws`;
-      console.log("Initializing WebComm with URL:", wsUrl); // Add log
-      window.webcomm = new WebComm(wsUrl); // Assuming WebComm class exists globally or is imported
-      // Connection is initiated AFTER terminal and commandProcessor are initialized
+      console.log("Initializing WebComm with URL:", wsUrl);
+      window.webcomm = new WebComm(wsUrl);
   } else {
       console.warn("WebComm already existed during DOMContentLoaded.");
-      // Ensure URL is correct if it existed somehow
+      // Correct URL if needed (logic remains the same)
       if (!window.webcomm.url || window.webcomm.url !== `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/research/ws`) {
           const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
           const wsUrl = `${wsProtocol}//${window.location.host}/api/research/ws`;
@@ -1165,29 +1125,28 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   }
 
-  // Initialize Terminal AFTER webcomm instance exists
+  // Initialize Terminal AFTER webcomm instance exists, targeting the new output ID
   if (!window.terminal) {
-      window.terminal = new Terminal('output'); // Assumes element with id="output" exists
+      // Pass the ID of the output area
+      window.terminal = new Terminal('terminal-output');
       console.log("Terminal initialized.");
+      // Dispatch a custom event if other modules need to know terminal is ready
+      window.dispatchEvent(new CustomEvent('terminal-ready'));
   } else {
       console.log("Terminal already initialized.");
   }
 
-
   // Ensure commandProcessor is created AFTER terminal and webcomm are ready
   if (window.terminal && window.webcomm && !window.commandProcessor) {
-    console.log("Initializing CommandProcessor."); // Add log
-    window.commandProcessor = new CommandProcessor(window.terminal, window.webcomm); // Assumes CommandProcessor class exists
+    console.log("Initializing CommandProcessor.");
+    window.commandProcessor = new CommandProcessor(window.terminal, window.webcomm);
   } else if (!window.commandProcessor) {
       console.error("Could not initialize CommandProcessor. Terminal:", !!window.terminal, "Webcomm:", !!window.webcomm);
   } else {
       console.log("CommandProcessor already initialized.");
   }
 
-  // Set initial user status display
-  if (window.terminal) {
-      window.terminal.updateUserStatus('public');
-  }
+  // Initial user status is set within terminal.initialize() now
 
   // Start the connection attempt AFTER all components are initialized and handlers registered
   if (window.webcomm && !window.webcomm.isConnected() && !window.webcomm.isConnecting) {

@@ -1,0 +1,3 @@
+Toroidal Field Theory and Consciousness
+Categories: physicsconsciousness
+Tags: toroidalconsciousness
