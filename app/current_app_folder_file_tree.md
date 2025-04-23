@@ -19,6 +19,7 @@ commands/
   users.cli.mjs
 
 config/
+  index.mjs
   websocket.mjs
 
 current_app_folder_file_tree.md

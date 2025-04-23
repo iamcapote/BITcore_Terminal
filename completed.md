@@ -383,3 +383,18 @@ This file logs tasks that have been completed during development.
 *   Fixed routing logic in `ws.on('message')` to correctly pass in-chat commands starting with `/` to `handleChatMessage`. (Done in previous step)
 *   Passed `output`/`error` handlers down to in-chat command executions (`exitMemory`, `executeResearch`, `executeExitResearch`) within `handleChatMessage`. (Done in previous step)
 *   Passed `progressHandler` down to `executeResearch` and `executeExitResearch` when called from `handleChatMessage`. (Done in previous step)
+
+
+- **Fix Research Flow:** Addressed issues preventing the research command from executing correctly, including argument passing and recursive calls in `ResearchPath`.
+- **Remove Local File Saving:** Modified `ResearchEngine` to generate markdown content in memory instead of saving to a local file.
+- **Implement Post-Research Prompt (Web-CLI):**
+    - Added `research_result_ready` WebSocket message.
+    - Implemented server-side prompt context (`post_research_action`) in `routes.mjs`.
+    - Added client-side handling in `terminal.js` to display the prompt.
+    - Implemented action handling (`Download`, `Upload`, `Keep`) in `routes.mjs` based on prompt response.
+    - Implemented client-side download trigger via `download_file` message.
+    - Integrated GitHub upload functionality using `uploadToGitHub` utility.
+- **Refined Input State Management:** Improved WebSocket input enable/disable logic using explicit server messages (`enable_input`, `disable_input`) and handler return values.
+- **Improved Prompt Handling:** Added context to server-side prompts (`wsPrompt`) and client-side prompt handlers (`promptForInput`, `promptForPassword`). Handled prompt cancellation via Escape key.
+- **Enhanced Logging:** Added more detailed logging throughout the WebSocket and command execution flow.
+- **Session Management:** Added clearing of research results and other relevant data on logout, error, and session timeout. Added `session-expired` message.
