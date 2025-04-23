@@ -8,6 +8,8 @@ import { LLMClient } from '../ai/venice.llm-client.mjs';
 import { generateQueries } from '../../features/ai/research.providers.mjs';
 // Import safeSend for progress updates
 import { safeSend } from '../../utils/websocket.utils.mjs';
+// --- Import suggestSearchProvider ---
+import { suggestSearchProvider } from '../search/search.providers.mjs';
 
 /**
  * Main research engine that coordinates research paths
@@ -66,6 +68,22 @@ export class ResearchEngine {
         // Proceed without user info if necessary, but log warning
         this.user = this.user || { username: 'unknown', role: 'unknown' };
     }
+
+    // --- Instantiate Search Provider ONCE ---
+    try {
+        this.searchProvider = suggestSearchProvider({
+            type: 'web',
+            apiKey: this.braveApiKey,
+            outputFn: this.debug, // Use debug for provider logs
+            errorFn: this.error
+        });
+        this.debug(`[ResearchEngine] Search provider initialized successfully.`);
+    } catch (providerError) {
+        this.error(`[ResearchEngine] CRITICAL: Failed to initialize search provider: ${providerError.message}`);
+        throw providerError; // Re-throw critical error
+    }
+    // --- End Instantiate Search Provider ---
+
     this.debug(`[ResearchEngine] Initialized for user: ${this.user.username}`);
     if (this.overrideQueries) {
         this.debug(`[ResearchEngine] Initialized with ${this.overrideQueries.length} override queries.`);
@@ -78,7 +96,7 @@ export class ResearchEngine {
    * @param {object} params.query - The query object { original: string, tokenClassification?: string, metadata?: any }. Used for context/summary, NOT necessarily for initial search if overrides exist.
    * @param {number} params.depth - Research depth.
    * @param {number} params.breadth - Research breadth.
-   * @returns {Promise<object>} Research results including learnings, sources, summary, and filename.
+   * @returns {Promise<object>} Research results including learnings, sources, summary, markdownContent, and suggestedFilename.
    */
   async research({ query, depth = 2, breadth = 3 }) {
     // Use parameters passed to this method
@@ -119,14 +137,19 @@ export class ResearchEngine {
         totalQueries: 0, // Will be calculated later
         completedQueries: 0,
         status: 'Initializing',
+        currentAction: 'Initializing research engine...'
       };
       // Send initial progress if handler exists
       progressFn(progressData);
 
 
       // Create ResearchPath with the engine's config (API keys, user, handlers, progress)
-      // Pass the engine's config object and the progressData object
-      const pathInstance = new ResearchPath(this.config, progressData); // Pass engine config and progressData object
+      // Pass the engine's config object, the progressData object, AND the shared searchProvider instance
+      const pathConfig = {
+          ...this.config, // Pass original config (keys, user, handlers)
+          searchProvider: this.searchProvider // Pass the shared provider instance
+      };
+      const pathInstance = new ResearchPath(pathConfig, progressData); // Pass combined config and progressData object
 
       // Store path instance for potential override logic or testing
       this.path = pathInstance;
@@ -152,8 +175,13 @@ export class ResearchEngine {
         // Execute standard research flow using the path instance
         this.output(`[ResearchEngine] Starting standard research flow for query: "${contextQuery.original}" (Depth: ${currentDepth}, Breadth: ${currentBreadth})`);
         // Estimate total queries for standard flow
-        const estimatedTotal = 1 + (breadth * depth);
+        // A more accurate estimate considering recursion: Sum(breadth^i for i from 0 to depth)
+        let estimatedTotal = 0;
+        for (let i = 0; i <= currentDepth; i++) {
+            estimatedTotal += Math.pow(currentBreadth, i);
+        }
         this.path.updateProgress({ totalQueries: estimatedTotal });
+
 
         // Pass the runtime query, depth, breadth to the path's research method
         result = await pathInstance.research({ query: contextQuery, depth: currentDepth, breadth: currentBreadth });
@@ -162,33 +190,46 @@ export class ResearchEngine {
       // Generate summary using the results
       this.output('[ResearchEngine] Generating summary...');
       progressData.status = 'Generating Summary';
+      progressData.currentAction = 'Generating final summary...';
       progressFn(progressData);
 
       const summary = await generateSummary({
         query: contextQuery.original, // Use original context query text
         learnings: result.learnings,
         metadata: contextQuery.metadata || null, // Pass metadata if available
-        apiKey: this.veniceApiKey // Use engine's key
+        apiKey: this.veniceApiKey, // Use engine's key
+        outputFn: this.debug,
+        errorFn: this.error
       });
       this.output('[ResearchEngine] Summary generated.');
 
-      // Save results
-      this.output('[ResearchEngine] Saving results...');
-      progressData.status = 'Saving Results';
+      // Generate markdown content (no longer saves file)
+      this.output('[ResearchEngine] Generating result markdown...');
+      progressData.status = 'Generating Result';
+      progressData.currentAction = 'Formatting final report...';
       progressFn(progressData);
 
-      const filename = await this.saveResults(
+      const resultData = await this.generateMarkdownResult(
         contextQuery.original, // Save using the original context query
         result.learnings,
         result.sources,
         summary
       );
+      if (!resultData) throw new Error('Failed to generate markdown result content.');
 
       progressData.status = 'Complete';
+      progressData.currentAction = 'Research complete.';
       progressFn(progressData);
 
-      this.output(`[ResearchEngine] Research complete. Results saved to: ${filename}`);
-      return { ...result, summary, filename }; // Include summary in the final result
+      // --- FIX: Include summary and markdownContent in the final result ---
+      // The 'result' object from pathInstance.research() contains learnings, sources, followUpQueries
+      // We add summary and markdownContent to it.
+      this.output(`[ResearchEngine] Research complete. Suggested Filename: ${resultData.suggestedFilename}`);
+      return {
+          ...result, // learnings, sources, followUpQueries
+          summary,
+          markdownContent: resultData.markdownContent,
+          suggestedFilename: resultData.suggestedFilename };
 
     } catch (error) {
       this.error(`[ResearchEngine] Error during research: ${error.message}`);
@@ -199,7 +240,8 @@ export class ResearchEngine {
            status: 'Error',
            error: error.message,
            completedQueries: progressData?.completedQueries || 0,
-           totalQueries: progressData?.totalQueries || 0
+           totalQueries: progressData?.totalQueries || 0,
+           currentAction: `Error: ${error.message}`
        };
        progressFn(errorProgress);
       // Return a minimal error structure
@@ -207,7 +249,8 @@ export class ResearchEngine {
         learnings: [`Research failed for query: ${contextQuery?.original || 'N/A'}`],
         sources: [],
         summary: `Error during research: ${error.message}`,
-        filename: null,
+        markdownContent: null,
+        suggestedFilename: null,
         error: error.message // Include error message in result
       };
     }
@@ -215,7 +258,7 @@ export class ResearchEngine {
 
   /**
    * Execute research using override queries.
-   * @param {ResearchPath} pathInstance - The research path instance.
+   * @param {ResearchPath} pathInstance - The research path instance (already configured with shared provider).
    * @param {number} depth - Runtime depth for each override query path.
    * @param {number} breadth - Runtime breadth for each override query path.
    * @param {Array<Object>} overrideQueries - The list of override query objects { original: string, metadata?: any }.
@@ -237,15 +280,17 @@ export class ResearchEngine {
 
       this.output(`[ResearchEngine] Processing override query ${i+1}/${overrideQueries.length}: "${queryObj.original}"`);
 
-      // Use the path instance's processQuery method for each override query
+      // Use the path instance's research method for each override query
       // This will handle the recursive search for each starting query.
-      await pathInstance.processQuery(
-        queryObj,
-        depth, // Use runtime depth for this path
-        breadth, // Use runtime breadth for this path
-        learnings, // Accumulate learnings
-        sources    // Accumulate sources (passed as Set)
-      );
+      const pathResult = await pathInstance.research({
+        query: queryObj,
+        depth: depth, // Use runtime depth for this path
+        breadth: breadth // Use runtime breadth for this path
+      });
+
+      // Accumulate results
+      learnings.push(...pathResult.learnings);
+      pathResult.sources.forEach(source => sources.add(source));
 
       // Results are accumulated directly in learnings/sources by processQuery
     }
@@ -263,23 +308,43 @@ export class ResearchEngine {
     // ... existing code ...
     // This method seems less relevant now as query generation is handled in executeExitResearch
     // Keep it for potential future use or direct calls? For now, leave as is.
+    this.output('[ResearchEngine] generateQueriesFromChatContext called (potentially deprecated).');
+    // Placeholder implementation if needed
+    const context = chatHistory.map(m => `${m.role}: ${m.content}`).join('\n');
+    return generateQueries({
+        apiKey: this.veniceApiKey,
+        query: context,
+        numQueries: numQueries,
+        outputFn: this.debug,
+        errorFn: this.error
+    });
   }
 
-  async saveResults(query, learnings, sources, summary = 'No summary available.') {
+  /**
+   * Generates markdown content for research results. Does not save to file.
+   * @param {string} query - The original query.
+   * @param {Array<string>} learnings - Array of key learnings.
+   * @param {Array<string>} sources - Array of source URLs.
+   * @param {string} [summary='No summary available.'] - The research summary.
+   * @returns {Promise<{suggestedFilename: string, markdownContent: string}|null>} Object containing suggested filename and markdown content, or null on error.
+   */
+  async generateMarkdownResult(query, learnings, sources, summary = 'No summary available.') {
     try {
-      await ensureDir('research');
+      // Ensure 'research' directory exists for potential temporary use if needed, but not for saving final result
+      // await ensureDir('research'); // Can be removed if no temp files are ever created
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       // Sanitize query for filename more robustly
-      const subject = (query || 'untitled')
-          .replace(/[^a-zA-Z0-9\s]+/g, '') // Remove non-alphanumeric (allow spaces)
+      const subject = (query || 'untitled-research') // Ensure a default subject
+          .replace(/[^a-zA-Z0-9\s-]+/g, '') // Remove non-alphanumeric (allow spaces and hyphens)
           .replace(/\s+/g, '-') // Replace spaces with hyphens
           .toLowerCase()
           .substring(0, 50); // Limit length
-      const filename = path.join('research', `research-${subject}-${timestamp}.md`);
+      // Suggest a filename based on the 'research' directory structure, even if not saved there
+      const suggestedFilename = path.join('research', `research-${subject}-${timestamp}.md`).replace(/\\/g, '/'); // Use forward slashes
 
       // Generate markdown
-      const markdown = [
+      const markdownContent = [
         '# Research Results',
         '---',
         `## Query\n\n${query}`,
@@ -294,13 +359,15 @@ export class ResearchEngine {
         ...(sources || []).map(s => `- ${s}`), // Handle potentially undefined sources
       ].join('\n');
 
-      await fs.writeFile(filename, markdown);
-      this.output(`[ResearchEngine] Results saved to ${filename}`); // Use engine's output handler
-      return filename;
+      // await fs.writeFile(filename, markdownContent); // REMOVED: Do not save file locally
+      this.output(`[ResearchEngine] Markdown content generated (suggested filename: ${suggestedFilename})`); // Use engine's output handler
+      return { suggestedFilename: suggestedFilename, markdownContent: markdownContent }; // Return filename suggestion and content
     } catch (error) {
-      this.error(`[ResearchEngine] Error saving research results: ${error.message}`); // Use engine's error handler
+      this.error(`[ResearchEngine] Error generating markdown result: ${error.message}`); // Use engine's error handler
       console.error(error.stack);
       return null;
     }
   }
 }
+
+export default ResearchEngine;

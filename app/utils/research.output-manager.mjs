@@ -159,3 +159,6 @@ export class OutputManager {
 
 // Export a singleton instance
 export const output = new OutputManager();
+
+// Ensure outputManager is exported
+export const outputManager = new OutputManager();

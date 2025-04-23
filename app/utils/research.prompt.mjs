@@ -58,3 +58,47 @@ Example format:
 
 DO NOT include any introductory text. Just list the questions directly.`;
 }
+
+export async function singlePrompt(message, isPassword = false) {
+  // Simple Node.js prompt using readline
+  const readline = await import('readline');
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    if (isPassword) {
+      // Hide input for password
+      process.stdout.write(message);
+      process.stdin.setRawMode(true);
+      let input = '';
+      process.stdin.on('data', (char) => {
+        char = char + '';
+        switch (char) {
+          case '\n':
+          case '\r':
+          case '\u0004':
+            process.stdin.setRawMode(false);
+            process.stdout.write('\n');
+            rl.close();
+            resolve(input);
+            break;
+          case '\u0003':
+            process.stdin.setRawMode(false);
+            rl.close();
+            resolve('');
+            break;
+          default:
+            process.stdout.write('*');
+            input += char;
+            break;
+        }
+      });
+    } else {
+      rl.question(message, (answer) => {
+        rl.close();
+        resolve(answer);
+      });
+    }
+  });
+}

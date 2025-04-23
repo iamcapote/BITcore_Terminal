@@ -315,3 +315,71 @@
 - [x] **(Web-CLI Bug Fix)** Fix `TypeError: Cannot read properties of undefined (reading 'progressHandler')` in `ResearchEngine` constructor. (`research.engine.mjs`, `research.cli.mjs`)
 - [x] Implement `/exitresearch` command: Added logic in `routes.mjs` (`handleChatMessage`) to exit chat, combine history into a query, and call `executeResearch`. Updated help text and README.
 - [x] **(Web-CLI Bug Fix)** Fix `/exitresearch` command failing with `Internal Error: wsPrompt function not provided for executeExitResearch.` by correctly passing `wsPrompt` from `routes.mjs` to `executeExitResearch` in `chat.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module './features/research/routes.mjs' does not provide an export named 'cleanupInactiveSessions'` by adding the `export` keyword to the `cleanupInactiveSessions` function definition in `app/features/research/routes.mjs`.
+- [x] **WebSocket Input State:** Implemented explicit `enableClientInput` and `disableClientInput` helpers and integrated them into the message handling loop (`ws.on('message')`) and command handlers (`handleCommandMessage`, `handleChatMessage`, `handleInputMessage`, `wsPrompt`) to manage client input state more reliably during command execution, prompts, and error handling.
+- **WebSocket Prompting:** Implemented `wsPrompt` function to handle server-initiated prompts (like password requests) over WebSocket, managing state (`pendingPromptResolve`, `pendingPromptReject`, `promptTimeoutId`) within the user session.
+- **Password Handling:** Integrated password prompting (`wsPrompt`) into `handleCommandMessage` and `handleChatMessage` for commands/actions requiring API key decryption (`/research`, `/chat`, `/keys`, etc.). Added session password caching (`session.password`) upon successful authentication or key usage.
+- **API Key Propagation (WebSocket /research):** Modified the `research` command function (`app/commands/research.mjs`) to retrieve Brave and Venice API keys using `userManager.getApiKey` with the session username and password. These keys are now correctly passed in the configuration object when instantiating `ResearchEngine`. Modified `ResearchEngine` constructor and `ResearchPath` constructor to accept and use these keys, resolving the "Missing BRAVE_API_KEY" error in the web-cli research flow. Added progress handler propagation.
+- **WebSocket:** Implemented basic WebSocket connection handling (`handleWebSocketConnection`).
+- **WebSocket:** Added session management (`activeChatSessions`, `wsSessionMap`).
+- **WebSocket:** Implemented basic command routing (`handleCommandMessage`).
+- **WebSocket:** Implemented basic chat message handling (`handleChatMessage`).
+- **WebSocket:** Added helpers for sending output (`wsOutputHelper`) and errors (`wsErrorHelper`).
+- **WebSocket:** Implemented client input state control (`enableClientInput`, `disableClientInput`).
+- **WebSocket:** Implemented server-side prompting mechanism (`wsPrompt`) and handling of client input responses (`handleInputMessage`).
+- **WebSocket:** Implemented `/login` command handling specific to WebSocket sessions.
+- **WebSocket:** Implemented `/chat` command to enter chat mode.
+- **WebSocket:** Implemented in-chat commands: `/exit`, `/exitmemory`, `/memory stats`, `/research`, `/exitresearch`, `/help`.
+- **WebSocket:** Integrated LLM calls for chat responses.
+- **WebSocket:** Integrated memory retrieval and storage during chat.
+- **WebSocket:** Added session inactivity cleanup (`cleanupInactiveSessions`).
+- **Auth:** Separated user authentication (`authenticateUser`) from CLI login (`login`).
+- **Auth:** Passed `requestingUser` object to command functions for permission checks.
+- **Auth:** Fixed admin permission check logic in `/users` command for Web-CLI. (Moved from gaps.md)
+- **Auth:** Removed default rate/usage limits for authenticated users in `userManager`. (Moved from gaps.md)
+- **Status:** Updated `/status` command to correctly display limits (or lack thereof) for the current user. (Moved from gaps.md)
+- [x] **Startup Error:** Fixed `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/workspaces/MCP/app/commands/storage.cli.mjs'` by commenting out the import and usage in `app/commands/index.mjs`.
+- [x] **Startup Error:** Fixed `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/workspaces/MCP/app/commands/export.cli.mjs'` by commenting out the import and usage in `app/commands/index.mjs`.
+- [x] **Startup Error:** Fixed `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/workspaces/MCP/app/utils/github.utils.mjs'` by commenting out the import and related code in `app/commands/research.cli.mjs`. **(Re-enabled import)**
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module './chat.cli.mjs' does not provide an export named 'getChatHelpText'` by adding the export in `app/commands/chat.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module './login.cli.mjs' does not provide an export named 'getLoginHelpText'` by adding the export in `app/commands/login.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module './logout.cli.mjs' does not provide an export named 'getLogoutHelpText'` by adding the export in `app/commands/logout.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module './memory.cli.mjs' does not provide an export named 'getMemoryHelpText'` by adding the export in `app/commands/memory.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module './password.cli.mjs' does not provide an export named 'getPasswordChangeHelpText'` by adding the export in `app/commands/password.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module './status.cli.mjs' does not provide an export named 'getStatusHelpText'` by adding the export in `app/commands/status.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module '../utils/research.output-manager.mjs' does not provide an export named 'outputManager'` by ensuring `outputManager` is correctly exported as a named export in `app/utils/research.output-manager.mjs` and imported as such in `app/commands/status.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module './users.cli.mjs' does not provide an export named 'getUsersHelpText'` by adding the export in `app/commands/users.cli.mjs`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module '../utils/cli-error-handler.mjs' does not provide an export named 'handleError'` by updating the import in `app/commands/users.cli.mjs` to use the likely correct export name `handleCliError`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module '../utils/research.prompt.mjs' does not provide an export named 'promptHiddenFixed'` by removing the import and updating usage in `app/commands/users.cli.mjs` to use `singlePrompt` with `hidden: true`.
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module '../utils/research.prompt.mjs' does not provide an export named 'singlePrompt'` by updating the import in `app/commands/users.cli.mjs` to use the default export (renamed to `promptUser`).
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module '../utils/research.prompt.mjs' does not provide an export named 'default'` by updating the import in `app/commands/users.cli.mjs` to use the named export `prompt` (renamed to `promptUser`).
+- [x] **Startup Error:** Fixed `SyntaxError: The requested module '../utils/research.prompt.mjs' does not provide an export named 'prompt'` by updating the import in `app/commands/users.cli.mjs` to use the named export `singlePrompt` (renamed to `promptUser`).
+- [x] **(Web-CLI Bug Fix)** Fix `context is not defined` error in `handleInputMessage`. (Implemented context passing via session).
+- [x] **(Web-CLI Bug Fix)** Implement post-research action prompt and handling (`Display`, `Download`, `Upload`, `Discard`) in `handleInputMessage`.
+- [x] **(Web-CLI Bug Fix)** Fix GitHub upload logic in `handleInputMessage` to correctly use `uploadToGitHub` utility, fetch config/token, and handle password prompts.
+- [x] **(Web-CLI Bug Fix)** Pass `wsPrompt` to `executeResearch` in `handleCommandMessage`.
+- [x] **(Web-CLI Bug Fix)** Use `wsPrompt` in `executeResearch` for password prompts in WebSocket mode.
+- [x] **(Web-CLI Bug Fix)** Correct `executeResearch` return state to `keepDisabled: true` on success in WebSocket mode.
+- [x] **(Web-CLI Bug Fix)** Display research summary/learnings before prompting for post-research action.
+- [x] **(Web-CLI Bug Fix)** Refine error handling and state management around prompts and command execution.
+- [x] **Logging Discrepancy:** Review `ResearchEngine` and dependencies (`search.provider.mjs`, `summarizer.mjs`, etc.) to replace direct `console.*` calls with the `outputHandler`, `errorHandler`, and `debugHandler` passed through the configuration, ensuring logs reach the web-cli. **(Implemented)**
+- [x] **Frontend Download Implementation:** The backend now sends a `download_file` message. The frontend (`terminal.js`) needs to handle this message type and trigger a file download in the browser using the provided filename and content. **(Implemented)**
+
+# MCP Application - Completed Tasks
+
+This file logs tasks that have been completed during development.
+
+*   Fixed `effectiveError is not a function` in `executeResearch` catch block by defining handlers outside the try block. (Done in previous step)
+*   Fixed `cmdOutput is not a function` in `executeChat` for public users by ensuring handlers are passed correctly and adding validation. (Done in previous step)
+*   Ensured public users cannot execute `/research` command by adding an early check in `executeResearch`. (Done in previous step)
+*   Ensured public users receive the correct notice in `/chat` and are returned to command mode. (Done in previous step)
+*   Ensured output/error handlers (`cmdOutput`, `cmdError`) are correctly passed from `handleCommandMessage` into the `options` object for `executeChat` and `executeResearch`. (Done in previous step)
+*   Verified GitHub upload pipeline in `handleInputMessage`:
+    *   Ensured `userManager.getGitHubConfig` is called with password. (Done in previous step)
+    *   Ensured decrypted token is passed to `uploadToGitHub`. (Done in previous step)
+    *   Added robust error handling for config retrieval and upload. (Done in previous step)
+    *   Handled nested password prompt for GitHub token using `wsPrompt` context. (Done in previous step)
+*   Ensured `promptData` (like `suggestedFilename`) is correctly set in `session.promptData` within `executeResearch` before prompting for post-research action. (Done in previous step)
+*   Fixed routing logic in `ws.on('message')` to correctly pass in-chat commands starting with `/` to `handleChatMessage`. (Done in previous step)
+*   Passed `output`/`error` handlers down to in-chat command executions (`exitMemory`, `executeResearch`, `executeExitResearch`) within `handleChatMessage`. (Done in previous step)
+*   Passed `progressHandler` down to `executeResearch` and `executeExitResearch` when called from `handleChatMessage`. (Done in previous step)

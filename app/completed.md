@@ -1,23 +1,13 @@
-- **Startup Error:** Fixed `SyntaxError: The requested module './features/research/routes.mjs' does not provide an export named 'cleanupInactiveSessions'` by adding the `export` keyword to the `cleanupInactiveSessions` function definition in `app/features/research/routes.mjs`.
-- **WebSocket Input State:** Implemented explicit `enableClientInput` and `disableClientInput` helpers and integrated them into the message handling loop (`ws.on('message')`) and command handlers (`handleCommandMessage`, `handleChatMessage`, `handleInputMessage`, `wsPrompt`) to manage client input state more reliably during command execution, prompts, and error handling.
-- **WebSocket Prompting:** Implemented `wsPrompt` function to handle server-initiated prompts (like password requests) over WebSocket, managing state (`pendingPromptResolve`, `pendingPromptReject`, `promptTimeoutId`) within the user session.
-- **Password Handling:** Integrated password prompting (`wsPrompt`) into `handleCommandMessage` and `handleChatMessage` for commands/actions requiring API key decryption (`/research`, `/chat`, `/keys`, etc.). Added session password caching (`session.password`) upon successful authentication or key usage.
-- **API Key Propagation (WebSocket /research):** Modified the `research` command function (`app/commands/research.mjs`) to retrieve Brave and Venice API keys using `userManager.getApiKey` with the session username and password. These keys are now correctly passed in the configuration object when instantiating `ResearchEngine`. Modified `ResearchEngine` constructor and `ResearchPath` constructor to accept and use these keys, resolving the "Missing BRAVE_API_KEY" error in the web-cli research flow. Added progress handler propagation.
-- **WebSocket:** Implemented basic WebSocket connection handling (`handleWebSocketConnection`).
-- **WebSocket:** Added session management (`activeChatSessions`, `wsSessionMap`).
-- **WebSocket:** Implemented basic command routing (`handleCommandMessage`).
-- **WebSocket:** Implemented basic chat message handling (`handleChatMessage`).
-- **WebSocket:** Added helpers for sending output (`wsOutputHelper`) and errors (`wsErrorHelper`).
-- **WebSocket:** Implemented client input state control (`enableClientInput`, `disableClientInput`).
-- **WebSocket:** Implemented server-side prompting mechanism (`wsPrompt`) and handling of client input responses (`handleInputMessage`).
-- **WebSocket:** Implemented `/login` command handling specific to WebSocket sessions.
-- **WebSocket:** Implemented `/chat` command to enter chat mode.
-- **WebSocket:** Implemented in-chat commands: `/exit`, `/exitmemory`, `/memory stats`, `/research`, `/exitresearch`, `/help`.
-- **WebSocket:** Integrated LLM calls for chat responses.
-- **WebSocket:** Integrated memory retrieval and storage during chat.
-- **WebSocket:** Added session inactivity cleanup (`cleanupInactiveSessions`).
-- **Auth:** Separated user authentication (`authenticateUser`) from CLI login (`login`).
-- **Auth:** Passed `requestingUser` object to command functions for permission checks.
-- **Auth:** Fixed admin permission check logic in `/users` command for Web-CLI. (Moved from gaps.md)
-- **Auth:** Removed default rate/usage limits for authenticated users in `userManager`. (Moved from gaps.md)
-- **Status:** Updated `/status` command to correctly display limits (or lack thereof) for the current user. (Moved from gaps.md)
+- **Fix Research Flow:** Addressed issues preventing the research command from executing correctly, including argument passing and recursive calls in `ResearchPath`.
+- **Remove Local File Saving:** Modified `ResearchEngine` to generate markdown content in memory instead of saving to a local file.
+- **Implement Post-Research Prompt (Web-CLI):**
+    - Added `research_result_ready` WebSocket message.
+    - Implemented server-side prompt context (`post_research_action`) in `routes.mjs`.
+    - Added client-side handling in `terminal.js` to display the prompt.
+    - Implemented action handling (`Download`, `Upload`, `Keep`) in `routes.mjs` based on prompt response.
+    - Implemented client-side download trigger via `download_file` message.
+    - Integrated GitHub upload functionality using `uploadToGitHub` utility.
+- **Refined Input State Management:** Improved WebSocket input enable/disable logic using explicit server messages (`enable_input`, `disable_input`) and handler return values.
+- **Improved Prompt Handling:** Added context to server-side prompts (`wsPrompt`) and client-side prompt handlers (`promptForInput`, `promptForPassword`). Handled prompt cancellation via Escape key.
+- **Enhanced Logging:** Added more detailed logging throughout the WebSocket and command execution flow.
+- **Session Management:** Added clearing of research results and other relevant data on logout, error, and session timeout. Added `session-expired` message.

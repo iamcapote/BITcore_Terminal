@@ -1,5 +1,29 @@
 import readline from 'readline';
 import { userManager } from '../features/auth/user-manager.mjs';
+import { outputManager } from '../utils/research.output-manager.mjs';
+// Remove the problematic import as promptUser is not used
+// import { prompt as promptUser } from '../utils/research.prompt.mjs';
+import { ErrorTypes, handleCliError } from '../utils/cli-error-handler.mjs';
+
+/**
+ * Provides help text for the /users command.
+ * @returns {string} Help text.
+ */
+export function getUsersHelpText() {
+    return `
+/users <action> [options] - Manage users (Admin only).
+Actions:
+  list                     List all users.
+  create <username>        Create a new user interactively.
+  create <username> --role=<role> [--password=<password>]
+                           Create a new user non-interactively.
+                           Role must be 'client' or 'admin'.
+  delete <username>        Delete a user. Requires confirmation.
+Options:
+  --role=<role>            Specify user role ('client' or 'admin').
+  --password=<password>    Specify user password (use with caution).
+`;
+}
 
 /**
  * CLI command for user management. Accepts a single options object.
@@ -70,9 +94,7 @@ export async function executeUsers(options = {}) {
           return await listUsers(requestingUser, cmdOutput, cmdError);
       }
   } catch (error) {
-      cmdError(`Error during users command: ${error.message}`);
-      console.error(error.stack); // Log stack trace server-side
-      return { success: false, error: error.message, handled: true, keepDisabled: false };
+      return handleCliError(error, { command: 'users', action, error: cmdError }); // Pass the error function
   }
 }
 

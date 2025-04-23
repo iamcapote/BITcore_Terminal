@@ -1,6 +1,14 @@
 import { userManager } from '../features/auth/user-manager.mjs';
 
 /**
+ * Provides help text for the /logout command.
+ * @returns {string} Help text.
+ */
+export function getLogoutHelpText() {
+    return `/logout - Log out the current user.`;
+}
+
+/**
  * CLI command for user logout
  */
 export async function executeLogout() {

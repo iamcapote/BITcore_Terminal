@@ -2,6 +2,15 @@ import { userManager } from '../features/auth/user-manager.mjs';
 import { handleCliError, ErrorTypes } from '../utils/cli-error-handler.mjs';
 
 /**
+ * Provides help text for the /memory command.
+ * @returns {string} Help text.
+ */
+export function getMemoryHelpText() {
+    return `/memory stats - Display statistics about the current memory session (only available within /chat --memory).`;
+    // Add help for other potential actions like clear, list, search later
+}
+
+/**
  * CLI command for interacting with the memory system.
  * Usage: /memory stats
  */

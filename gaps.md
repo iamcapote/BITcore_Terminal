@@ -435,3 +435,86 @@ This document outlines identified gaps, areas needing refinement, and potential 
 4.  **Persistent Memory:** Design and implement persistent memory storage linked to users, beyond the current session/GitHub file approach.
 5.  **Advanced Roles/Permissions:** Define and implement more granular roles and permissions if required.
 6.  **UI Overhaul:** A more sophisticated web interface beyond the basic terminal simulation.
+
+
+## Current Gaps & Areas for Improvement
+
+1.  **API Key Management:**
+    *   **Propagation:** API keys fetched using user credentials are not consistently passed down through the `ResearchEngine` to the actual API providers (like `BraveSearchProvider`). This leads to errors like "Missing BRAVE_API_KEY". (FIXED for WebSocket /research)
+    *   **Error Handling:** Need clearer error messages if keys are missing or invalid during research/chat initiation.
+    *   **Security:** Ensure keys are never logged or exposed unintentionally.
+
+2.  **WebSocket State Management:**
+    *   **Input Disabling:** While `enableClientInput` and `disableClientInput` exist, the logic determining *when* to call them needs careful review, especially around asynchronous operations (commands, prompts, LLM calls) and error conditions. Input sometimes gets stuck disabled.
+    *   **Error Recovery:** If an error occurs mid-command, ensure the client state (input enabled/disabled, mode) is reset correctly.
+    *   **Concurrency:** Potential race conditions if multiple messages arrive while a long command is processing (though input disabling mitigates this).
+
+3.  **Research Workflow:**
+    *   **Progress Reporting:** The `onProgress` callback in `research.controller.mjs` isn't wired up correctly for WebSocket communication. Need a way to send progress updates (`{ type: 'progress', ... }`) back to the client during research. (Partially addressed by adding handler to engine config).
+    *   **Chat Integration (`/research` in chat):** The `startResearchFromChat` function needs proper implementation to instantiate `ResearchEngine` with keys and manage the flow, sending results back into the chat context or as a separate report.
+    *   **Error Handling:** Errors within `ResearchPath` or `ResearchEngine` need to be reliably propagated back to the WebSocket client with appropriate messages and state changes.
+
+4.  **Chat & Memory:**
+    *   **LLM Calls:** The LLM call in `handleChatMessage` needs the Venice API key, requiring password handling similar to `/research`.
+    *   **Memory Implementation:** `MemoryManager` exists but `exitMemory` and memory retrieval logic are placeholders or incomplete.
+    *   **Context Management:** Limiting chat history (`maxHistoryLength`) is basic; more sophisticated context window management might be needed.
+
+5.  **Authentication & Authorization:**
+    *   **Session Management:** WebSocket sessions store user state, but CLI relies on `userManager.currentUser` and a session file. Ensure consistency and security, especially preventing privilege escalation.
+    *   **Permissions:** Command authorization relies on role checks (`session.role`, `options.currentUser.role`). Review if this is sufficient for all commands.
+    *   **Admin Permissions:** The `/users` command in the Web-CLI was incorrectly checking permissions. (FIXED by passing `requestingUser` correctly)
+    *   **User Limits:** Limits were being applied to all users by default. Authenticated users should not have default limits imposed by the system itself, only the public user should. (FIXED by adjusting `userManager` and `status` command)
+
+6.  **WebSocket Input State:**
+    *   **Input Disabling:** Input disabling/enabling logic needs careful review to ensure it's consistently applied, especially around prompts and errors. (Ongoing Refinement)
+    *   **Password Prompts:** Server-side password prompts (`wsPrompt`) need robust handling for various commands (`keys set/test`, `password-change`, `chat`, `research`, potentially `users delete`). (Partially Implemented, needs review for all cases)
+
+7.  **Command Consistency:** Ensure command behavior and argument parsing are consistent between CLI and Web-CLI where applicable.
+
+8.  **Error Handling:** Improve user-facing error messages for clarity.
+
+9.  **Session Management:** WebSocket session handling (creation, cleanup, state updates) needs thorough testing.
+
+10.  **Code Structure & Maintainability:**
+    *   **Command Handling:** `handleCommandMessage` is becoming large. Consider breaking down command logic further.
+    *   **Error Handling:** Centralize or standardize error reporting, especially for WebSocket communication (`wsErrorHelper`).
+    *   **Configuration:** How API keys and other settings are managed (env vars vs. user profiles) needs clarity.
+
+11.  **Testing:** Lack of automated tests makes refactoring risky and bugs harder to catch.
+
+- **Comprehensive Testing:** Need more robust unit, integration, and end-to-end tests, especially for WebSocket interactions, authentication flows, and the research pipeline.
+- **Frontend Enhancements:** Improve the web terminal UI/UX (e.g., better progress indicators, handling download messages, clearer state changes). See `todo.md`.
+- **Configuration Management:** Centralize configuration (timeouts, API endpoints, default research params) instead of hardcoding values.
+- **Scalability:** Consider potential bottlenecks for concurrent WebSocket users and long-running research tasks. Explore options like task queues or worker threads if needed.
+- **Security Hardening:** Review security aspects like input validation, dependency vulnerabilities, rate limiting effectiveness, and potential denial-of-service vectors.
+- **Documentation:** Improve inline code comments and generate more comprehensive documentation (user guide, API docs).
+- **Logging Strategy:** Formalize the logging strategy – levels, formats, destinations (file, console, external service). Address discrepancy noted in `todo.md`.
+
+# MCP Application - Identified Gaps & Areas for Improvement
+
+This document outlines identified gaps, potential issues, and areas for future improvement in the MCP application based on the current codebase.
+
+## Core Functionality Gaps
+
+1.  **Error Handling Consistency:** While error handling exists, its consistency across different modules (CLI commands, WebSocket handlers, core logic) could be improved. Centralized error reporting or more standardized error objects might be beneficial.
+2.  **Input Validation:** More robust input validation could be added, especially for command arguments (e.g., ensuring `--depth` is a number within a specific range).
+3.  **Configuration Management:** API keys and other configurations are managed via `userManager`. A more dedicated configuration module might be useful for settings not tied directly to users (e.g., default timeouts, LLM model choices).
+4.  **Resource Management:** Ensure resources like file handles or network connections (beyond WebSockets managed by `ws`) are properly closed, especially in error scenarios. (Partially addressed with session cleanup).
+5.  **Concurrency:** The current WebSocket handling processes messages sequentially per connection. High-load scenarios might require exploring concurrent processing or queuing if commands become long-running. (Low priority for now).
+
+## Feature Enhancements
+
+1.  **Research Persistence:** Research results are currently only stored in the WebSocket session or optionally uploaded to GitHub. Implementing persistent storage options (e.g., local database, cloud storage) accessible via commands (`/research list`, `/research download <id>`) would be valuable. (Partially addressed by GitHub upload).
+2.  **Memory Management UI/Commands:** More user-facing commands to interact with the memory system (e.g., view summaries, delete memories, search memories).
+3.  **LLM Abstraction:** The `LLMClient` currently targets Venice. Abstracting this further could allow easier integration of different LLM providers.
+4.  **Token Usage Tracking:** Implement tracking for API token usage (Brave, Venice) to monitor costs and enforce user limits more effectively.
+5.  **Streaming Responses:** For long LLM responses or research steps, streaming output back to the client would improve user experience. (Partially addressed with progress updates).
+6.  **Testing Framework:** Implement a more comprehensive automated testing suite (unit, integration, e2e) to ensure stability and prevent regressions.
+7.  **UI Enhancements:** The web terminal UI could be enhanced with features like command history persistence (client-side), better formatting for results, etc.
+8.  **Security Hardening:** Review security aspects like input sanitization, dependency vulnerabilities, rate limiting, and potential denial-of-service vectors.
+
+## Specific Code/Logic Issues (Potential)
+
+1.  **Password Caching:** Passwords cached in the session are cleared on logout/error/disconnect, but the security implications of holding decrypted passwords in memory during an active session should be considered. Short-lived caching is a trade-off for usability.
+2.  **`executeResearch` Complexity:** This function handles multiple concerns (API keys, classification, engine init, results handling, prompting). Refactoring might improve maintainability.
+3.  **CLI vs WebSocket Logic:** Some commands have slightly different flows or capabilities depending on whether they are run via CLI or WebSocket. Ensuring consistency where appropriate is important. (e.g., prompting).

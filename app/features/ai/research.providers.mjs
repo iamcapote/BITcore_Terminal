@@ -73,20 +73,22 @@ function processResponse(type, content) {
  * @param {string} params.prompt - The user prompt.
  * @param {number} [params.temperature=0.7] - Sampling temperature.
  * @param {number} [params.maxTokens=1000] - Maximum tokens to generate.
+ * @param {function} [params.outputFn=console.log] - Function to handle output logs.
+ * @param {function} [params.errorFn=console.error] - Function to handle error logs.
  * @returns {Promise<Object>} - Result object with success status and data or error.
  */
-export async function generateOutput({ apiKey, type, system, prompt, temperature = 0.7, maxTokens = 1000 }) {
+export async function generateOutput({ apiKey, type, system, prompt, temperature = 0.7, maxTokens = 1000, outputFn = console.log, errorFn = console.error }) {
   // Ensure API key is provided
   if (!apiKey) {
-      console.error("[generateOutput] Error: API key is missing.");
+      errorFn("[generateOutput] Error: API key is missing.");
       return { success: false, error: 'API key is required for generateOutput.' };
   }
   // Instantiate client with the provided key
-  const client = new LLMClient({ apiKey });
+  const client = new LLMClient({ apiKey, outputFn, errorFn });
   try {
-    console.log(`[generateOutput] Calling LLM for type: ${type}. Max Tokens: ${maxTokens}, Temp: ${temperature}`); // DEBUG LOG
-    // console.log(`[generateOutput] System Prompt:\n${system}`); // Optional: Log system prompt if needed
-    // console.log(`[generateOutput] User Prompt:\n${prompt}`); // Optional: Log full prompt if needed (can be long)
+    outputFn(`[generateOutput] Calling LLM for type: ${type}. Max Tokens: ${maxTokens}, Temp: ${temperature}`); // DEBUG LOG
+    // outputFn(`[generateOutput] System Prompt:\n${system}`); // Optional: Log system prompt if needed
+    // outputFn(`[generateOutput] User Prompt:\n${prompt}`); // Optional: Log full prompt if needed (can be long)
 
     const response = await client.complete({
       system,
@@ -95,34 +97,34 @@ export async function generateOutput({ apiKey, type, system, prompt, temperature
       maxTokens
     });
 
-    console.log(`[generateOutput] LLM Raw Response (type: ${type}):\n---START---\n`, response.content, `\n---END---`); // DEBUG LOG
+    outputFn(`[generateOutput] LLM Raw Response (type: ${type}):\n---START---\n`, response.content, `\n---END---`); // DEBUG LOG
 
     let parsed = processResponse(type, response.content);
     if (parsed.success) {
-      console.log(`[generateOutput] Initial parsing successful for type ${type}.`); // DEBUG LOG
+      outputFn(`[generateOutput] Initial parsing successful for type ${type}.`); // DEBUG LOG
       return { success: true, data: parsed };
     }
 
     // Fallback attempt (optional, consider if needed)
-    console.warn(`[generateOutput] Initial parsing failed for type ${type}. Error: ${parsed.error}. Retrying with simpler prompt.`);
+    errorFn(`[generateOutput] Initial parsing failed for type ${type}. Error: ${parsed.error}. Retrying with simpler prompt.`);
     const fallbackResponse = await client.complete({
       system,
       prompt: `${prompt}\n\nPlease ensure your response is structured clearly according to the expected format for type "${type}".`,
       temperature: 0.5, // Lower temperature for fallback
       maxTokens
     });
-    console.log(`[generateOutput] LLM Fallback Raw Response (type: ${type}):\n---START---\n`, fallbackResponse.content, `\n---END---`); // DEBUG LOG
+    outputFn(`[generateOutput] LLM Fallback Raw Response (type: ${type}):\n---START---\n`, fallbackResponse.content, `\n---END---`); // DEBUG LOG
     parsed = processResponse(type, fallbackResponse.content);
     if (parsed.success) {
-      console.warn(`[generateOutput] Fallback parsing successful for type ${type}.`);
+      errorFn(`[generateOutput] Fallback parsing successful for type ${type}.`);
       return { success: true, data: parsed };
     }
 
-    console.error(`[generateOutput] Fallback parsing also failed for type ${type}. Error: ${parsed.error}`);
+    errorFn(`[generateOutput] Fallback parsing also failed for type ${type}. Error: ${parsed.error}`);
     return { success: false, error: parsed.error || 'Failed to parse LLM response after fallback.' };
 
   } catch (error) {
-    console.error(`[generateOutput] LLM API call failed: ${error.message}`, error);
+    errorFn(`[generateOutput] LLM API call failed: ${error.message}`, error);
     // Check if it's an LLMError and provide more details if possible
     const errorMessage = error instanceof LLMError ? `${error.name}: ${error.message}` : error.message;
     return { success: false, error: `LLM API Error: ${errorMessage}` };
@@ -137,33 +139,35 @@ export async function generateOutput({ apiKey, type, system, prompt, temperature
  * @param {number} [params.numQueries=3] - Number of queries to generate.
  * @param {Array<string>} [params.learnings=[]] - Key learnings from previous steps.
  * @param {string|null} [params.metadata=null] - Metadata from token classification or other context.
+ * @param {function} [params.outputFn=console.log] - Function to handle output logs.
+ * @param {function} [params.errorFn=console.error] - Function to handle error logs.
  * @returns {Promise<Array<Object>>} - Array of generated query objects { original: string, metadata?: any }.
  */
-export async function generateQueries({ apiKey, query, numQueries = 3, learnings = [], metadata = null }) {
+export async function generateQueries({ apiKey, query, numQueries = 3, learnings = [], metadata = null, outputFn = console.log, errorFn = console.error }) {
   // ** Add explicit checks for required parameters **
   if (!apiKey) {
-      console.error("[generateQueries] Error: API key is missing.");
+      errorFn("[generateQueries] Error: API key is missing.");
       throw new Error('API key is required for generateQueries.');
   }
   // Allow potentially long query strings (like chat history) but log a warning if very long
   if (!query || typeof query !== 'string' || !query.trim()) {
-      console.error(`[generateQueries] Error: Invalid query provided: ${query}`);
+      errorFn(`[generateQueries] Error: Invalid query provided: ${query}`);
       throw new Error('Invalid query: must be a non-empty string.');
   }
   if (query.length > 10000) { // Add a length warning for very long context strings
-      console.warn(`[generateQueries] Input query/context string is very long (${query.length} chars). This might affect LLM performance.`);
+      errorFn(`[generateQueries] Input query/context string is very long (${query.length} chars). This might affect LLM performance.`);
   }
   if (isNaN(numQueries) || numQueries <= 0) {
-      console.warn(`[generateQueries] Invalid numQueries (${numQueries}), defaulting to 3.`);
+      errorFn(`[generateQueries] Invalid numQueries (${numQueries}), defaulting to 3.`);
       numQueries = 3;
   }
 
   // Log input and metadata
   const logQuery = query.length > 300 ? query.substring(0, 300) + '...' : query; // Truncate long query for logging
-  console.log(`[generateQueries] Generating ${numQueries} queries for context: "${logQuery}"${metadata ? ' with metadata: Yes' : ''}`);
+  outputFn(`[generateQueries] Generating ${numQueries} queries for context: "${logQuery}"${metadata ? ' with metadata: Yes' : ''}`);
   if (metadata) {
-      console.log('[generateQueries] Metadata (Venice AI response):');
-      console.log(typeof metadata === 'object' ? JSON.stringify(metadata, null, 2) : String(metadata));
+      outputFn('[generateQueries] Metadata (Venice AI response):');
+      outputFn(typeof metadata === 'object' ? JSON.stringify(metadata, null, 2) : String(metadata));
   }
 
   // Create a prompt that adapts based on input length (heuristic for chat history)
@@ -202,11 +206,13 @@ Keep queries plain, clear, and focused on the core concepts identified. Ensure t
     system: systemPrompt(),
     prompt: enrichedPrompt,
     temperature: 0.7,
-    maxTokens: 500 // Reduced max tokens for query generation
+    maxTokens: 500, // Reduced max tokens for query generation
+    outputFn,
+    errorFn
   });
 
   // --- Start: Enhanced Logging ---
-  console.log(`[generateQueries] LLM result for query generation:`, JSON.stringify(result));
+  outputFn(`[generateQueries] LLM result for query generation:`, JSON.stringify(result));
   // --- End: Enhanced Logging ---
 
   if (result.success && result.data.queries && result.data.queries.length > 0) {
@@ -220,16 +226,16 @@ Keep queries plain, clear, and focused on the core concepts identified. Ensure t
 
     // After generating queries
     if (Array.isArray(queries)) {
-        console.log('[generateQueries] Successfully generated queries:');
+        outputFn('[generateQueries] Successfully generated queries:');
         queries.forEach((q, i) => {
-            console.log(`  ${i + 1}. ${q.original}${q.metadata ? ` [metadata: ${JSON.stringify(q.metadata)}]` : ''}`);
+            outputFn(`  ${i + 1}. ${q.original}${q.metadata ? ` [metadata: ${JSON.stringify(q.metadata)}]` : ''}`);
         });
     }
 
     return queries;
   } else {
       // --- Start: Log the specific error from the result object ---
-      console.error(`[generateQueries] Failed to generate queries via LLM. Error: ${result?.error || 'Unknown error during generateOutput'}. Falling back to basic queries.`);
+      errorFn(`[generateQueries] Failed to generate queries via LLM. Error: ${result?.error || 'Unknown error during generateOutput'}. Falling back to basic queries.`);
       // --- End: Log the specific error ---
 
       // --- Refined Fallback Logic ---
@@ -247,7 +253,7 @@ Keep queries plain, clear, and focused on the core concepts identified. Ensure t
           // If the original query is short, use it as the topic
           fallbackTopic = query;
       }
-      console.warn(`[generateQueries] Using fallback topic: "${fallbackTopic}"`);
+      errorFn(`[generateQueries] Using fallback topic: "${fallbackTopic}"`);
 
       // Generate very simple fallback queries based on the extracted topic
       return [
@@ -267,16 +273,18 @@ Keep queries plain, clear, and focused on the core concepts identified. Ensure t
  * @param {number} [params.numLearnings=3] - Minimum number of learnings to extract.
  * @param {number} [params.numFollowUpQuestions=3] - Minimum number of follow-up questions.
  * @param {string|null} [params.metadata=null] - Metadata from token classification or other context.
+ * @param {function} [params.outputFn=console.log] - Function to handle output logs.
+ * @param {function} [params.errorFn=console.error] - Function to handle error logs.
  * @returns {Promise<Object>} - Object containing arrays of learnings and followUpQuestions.
  */
-export async function processResults({ apiKey, query, content, numLearnings = 3, numFollowUpQuestions = 3, metadata = null }) {
+export async function processResults({ apiKey, query, content, numLearnings = 3, numFollowUpQuestions = 3, metadata = null, outputFn = console.log, errorFn = console.error }) {
   // ** Add explicit checks for required parameters **
   if (!apiKey) {
-      console.error("[processResults] Error: API key is missing.");
+      errorFn("[processResults] Error: API key is missing.");
       throw new Error('API key is required for processResults.');
   }
   if (!Array.isArray(content) || content.length === 0) {
-      console.error(`[processResults] Error: Invalid content provided for query "${query}". Must be a non-empty array.`);
+      errorFn(`[processResults] Error: Invalid content provided for query "${query}". Must be a non-empty array.`);
       // Return empty results instead of throwing? Or throw? Let's throw for now.
       throw new Error('Invalid content: must be a non-empty array of strings.');
   }
@@ -298,17 +306,17 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
   const maxContentLength = 50000; // Adjust as needed based on model limits
   const trimmedContent = trimPrompt(combinedContent, maxContentLength);
   if (combinedContent.length > maxContentLength) {
-      console.warn(`[processResults] Content truncated to ${maxContentLength} characters for analysis.`);
+      errorFn(`[processResults] Content truncated to ${maxContentLength} characters for analysis.`);
   }
   // --- Start: Log combined content length ---
-  console.log(`[processResults] Combined content length for analysis: ${trimmedContent.length} characters.`);
+  outputFn(`[processResults] Combined content length for analysis: ${trimmedContent.length} characters.`);
   // --- End: Log combined content length ---
 
   analysisPrompt += `Content:\n${trimmedContent}\n\n`;
   analysisPrompt += `Based *only* on the content provided above, extract:\n1. Key Learnings (at least ${numLearnings}):\n   - Focus on specific facts, data points, or summaries found in the text.\n   - Each learning should be a concise statement.\n2. Follow-up Questions (at least ${numFollowUpQuestions}):\n   - Generate questions that arise *directly* from the provided content and would require further research.\n   - Must start with What, How, Why, When, Where, or Which.\n\nFormat the output strictly as:\nKey Learnings:\n1. [Learning 1]\n2. [Learning 2]\n...\n\nFollow-up Questions:\n1. [Question 1]\n2. [Question 2]\n...`;
 
   // --- Start: Log the final prompt being sent ---
-  console.log(`[processResults] Final prompt for learning extraction (query: "${query}"):\n---START---\n`, analysisPrompt, `\n---END---`);
+  outputFn(`[processResults] Final prompt for learning extraction (query: "${query}"):\n---START---\n`, analysisPrompt, `\n---END---`);
   // --- End: Log the final prompt ---
 
   const result = await generateOutput({
@@ -317,18 +325,20 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
     system: systemPrompt(), // Use standard system prompt
     prompt: analysisPrompt,
     temperature: 0.5,
-    maxTokens: 1000 // Allow sufficient tokens for learnings/questions
+    maxTokens: 1000, // Allow sufficient tokens for learnings/questions
+    outputFn,
+    errorFn
   });
 
   // --- Start: Enhanced Logging ---
-  console.log(`[processResults] LLM result for learning extraction (query: "${query}"):`, JSON.stringify(result));
+  outputFn(`[processResults] LLM result for learning extraction (query: "${query}"):`, JSON.stringify(result));
   // --- End: Enhanced Logging ---
 
   if (result.success && result.data) { // Check result.data exists
     // Ensure arrays exist even if empty
     const extractedLearnings = (result.data.learnings || []);
     const extractedFollowUpQuestions = (result.data.followUpQuestions || []);
-    console.log(`[processResults] Successfully extracted ${extractedLearnings.length} learnings and ${extractedFollowUpQuestions.length} follow-up questions for query: "${query}"`); // DEBUG LOG
+    outputFn(`[processResults] Successfully extracted ${extractedLearnings.length} learnings and ${extractedFollowUpQuestions.length} follow-up questions for query: "${query}"`); // DEBUG LOG
     // Slice *after* logging the total extracted count
     const finalLearnings = extractedLearnings.slice(0, numLearnings);
     const finalFollowUpQuestions = extractedFollowUpQuestions.slice(0, numFollowUpQuestions);
@@ -336,7 +346,7 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
   }
 
   // Throw error if processing failed
-  console.error(`[processResults] Failed to process results via LLM for query "${query}". Error: ${result.error || 'Unknown error'}`); // DEBUG LOG
+  errorFn(`[processResults] Failed to process results via LLM for query "${query}". Error: ${result.error || 'Unknown error'}`); // DEBUG LOG
   throw new Error(`Failed to process results via LLM: ${result.error || 'Unknown error'}`);
 }
 
@@ -347,12 +357,14 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
  * @param {string} params.query - The original user query.
  * @param {Array<string>} [params.learnings=[]] - Accumulated key learnings.
  * @param {string|null} [params.metadata=null] - Metadata from token classification or other context.
+ * @param {function} [params.outputFn=console.log] - Function to handle output logs.
+ * @param {function} [params.errorFn=console.error] - Function to handle error logs.
  * @returns {Promise<string>} - The generated summary markdown text.
  */
-export async function generateSummary({ apiKey, query, learnings = [], metadata = null }) {
+export async function generateSummary({ apiKey, query, learnings = [], metadata = null, outputFn = console.log, errorFn = console.error }) {
   if (!apiKey) throw new Error('API key is required for generateSummary.');
   if (!learnings || learnings.length === 0) {
-    console.warn("[generateSummary] No learnings provided to generate summary.");
+    errorFn("[generateSummary] No learnings provided to generate summary.");
     return `No summary could be generated for "${query}" as no key learnings were extracted during the research process.`;
   }
 
@@ -371,14 +383,16 @@ export async function generateSummary({ apiKey, query, learnings = [], metadata 
     system: systemPrompt(), // Use standard system prompt
     prompt,
     temperature: 0.7,
-    maxTokens: 2000 // Allow more tokens for the final report
+    maxTokens: 2000, // Allow more tokens for the final report
+    outputFn,
+    errorFn
   });
 
   if (result.success && result.data.reportMarkdown) {
     return result.data.reportMarkdown;
   }
 
-  console.error(`[generateSummary] Failed to generate summary via LLM. Error: ${result.error}. Returning basic list.`);
+  errorFn(`[generateSummary] Failed to generate summary via LLM. Error: ${result.error}. Returning basic list.`);
   // Fallback: return the learnings list if summary fails
   return `Failed to generate a narrative summary. Key Learnings:\n${learnings.map(l => `- ${l}`).join('\n')}`;
 }
@@ -387,8 +401,10 @@ export async function generateSummary({ apiKey, query, learnings = [], metadata 
  * Trims text to a maximum length.
  * @param {string} [text=''] - The text to trim.
  * @param {number} [maxLength=100000] - The maximum allowed length.
+ * @param {function} [outputFn=console.log] - Function to handle output logs.
+ * @param {function} [errorFn=console.error] - Function to handle error logs.
  * @returns {string} - The trimmed text.
  */
-export function trimPrompt(text = '', maxLength = 100000) {
+export function trimPrompt(text = '', maxLength = 100000, outputFn = console.log, errorFn = console.error) {
   return text.length <= maxLength ? text : text.slice(0, maxLength);
 }

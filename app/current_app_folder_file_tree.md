@@ -1,6 +1,8 @@
 # Current APP Folder File Tree
 
 ```plaintext
+cli/
+
 commands/
   admin.cli.mjs
   chat.cli.mjs
@@ -9,10 +11,15 @@ commands/
   keys.cli.mjs
   login.cli.mjs
   logout.cli.mjs
+  memory.cli.mjs
   password.cli.mjs
   research.cli.mjs
+  research.mjs
   status.cli.mjs
   users.cli.mjs
+
+config/
+  websocket.mjs
 
 current_app_folder_file_tree.md
 features/
@@ -21,6 +28,7 @@ features/
 
   auth/
     encryption.mjs
+    routes.mjs
     user-manager.mjs
     user-manager.mjs.bak
 
@@ -37,8 +45,6 @@ infrastructure/
     venice.models.mjs
     venice.response-processor.mjs
 
-  auth/
-
   memory/
     github-memory.integration.mjs
     memory.manager.mjs
@@ -51,6 +57,8 @@ infrastructure/
     search.mjs
     search.providers.mjs
 
+  storage/
+
 
 public/
   chat.js
@@ -59,6 +67,8 @@ public/
   research.js
   terminal.js
   webcomm.js
+
+routes/
 
 start.mjs
 tests/
@@ -80,13 +90,16 @@ utils/
   cli-args-parser.mjs
   cli-error-handler.mjs
   cli-runner.mjs
+  github.utils.mjs
   research.clean-query.mjs
   research.ensure-dir.mjs
+  research.file-utils.mjs
   research.object-utils.mjs
   research.output-manager.mjs
   research.prompt.mjs
   research.rate-limiter.mjs
   token-classifier.mjs
+  websocket.utils.mjs
 
 
 ```

@@ -2,6 +2,14 @@ import readline from 'readline';
 import { userManager } from '../features/auth/user-manager.mjs';
 
 /**
+ * Provides help text for the /password-change command.
+ * @returns {string} Help text.
+ */
+export function getPasswordChangeHelpText() {
+    return `/password-change - Change your account password. You will be prompted for your current and new passwords.`;
+}
+
+/**
  * CLI command to change user password
  * @returns {Promise<Object>} Result of password change
  */

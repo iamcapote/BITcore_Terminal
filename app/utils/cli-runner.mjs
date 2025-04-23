@@ -2,7 +2,7 @@
  * CLI Runner - Utility for running CLI commands programmatically
  */
 
-import { commands, parseCommandArgs, displayHelp } from '../commands/index.mjs';
+import { commands, parseCommandArgs, getHelpText } from '../commands/index.mjs';
 import readline from 'readline';
 
 /**
@@ -78,7 +78,9 @@ export function interactiveCLI(options = {}) {
           onOutput(`Error executing command: ${error.message}`);
         }
       } else if (command === 'help') {
-        await displayHelp(onOutput);
+        const helpCommand = options.positionalArgs[0];
+        logInfo(getHelpText(helpCommand));
+        return;
       } else if (command === 'exit' || command === 'quit') {
         if (onExit) {
           onExit();

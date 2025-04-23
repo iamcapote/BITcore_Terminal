@@ -1,267 +1,240 @@
-import { suggestSearchProvider, SearchError } from '../search/search.providers.mjs';
-// Rename extractLearnings to processResults in the import
+import { suggestSearchProvider } from '../search/search.providers.mjs'; // Keep for type checking if needed, but not for instantiation here
 import { generateQueries, processResults } from '../../features/ai/research.providers.mjs';
-import { cleanQuery } from '../../utils/research.clean-query.mjs';
+import { LLMClient } from '../ai/venice.llm-client.mjs'; // Assuming LLMClient is used
 
-/**
- * Represents a single research path exploring queries depth-first.
- */
+// Helper function to safely get query string
+function getQueryString(query) {
+    if (!query) return '';
+    if (typeof query === 'string') {
+        return query;
+    }
+    // --- FIX: Check for 'original' property ---
+    if (query && typeof query.original === 'string') {
+        return query.original;
+    }
+    // Fallback or error handling if query structure is unexpected
+    console.warn('[getQueryString] Unexpected query format, returning empty string:', query);
+    return ''; // Or throw an error
+}
+
 export class ResearchPath {
-    constructor(engineConfig, progressData) {
-        this.config = engineConfig; // Contains API keys, user info, handlers
-        this.progress = progressData; // Shared progress object
-        this.output = this.config.outputHandler;
-        this.error = this.config.errorHandler;
-        this.debug = this.config.debugHandler;
-        this.progressCallback = this.config.progressHandler; // Function to call with updates
+    constructor(engineConfig, progressData) { // Receive engine config and progress data object
+        const {
+            // query, // Query is passed to research method
+            user,
+            visitedUrls = new Set(),
+            braveApiKey, // Still needed for potential direct use? Or remove if provider is always passed? Let's keep for now.
+            veniceApiKey,
+            output = console.log,
+            error = console.error,
+            debug = () => {},
+            progressHandler = () => {},
+            searchProvider // <-- ADD: Accept searchProvider instance
+        } = engineConfig; // Destructure from engineConfig
 
-        // Initialize search provider using the key from config
-        try {
-            this.searchProvider = suggestSearchProvider({
-                type: 'web',
-                apiKey: this.config.braveApiKey // Pass the key here
-            });
-            this.debug('[ResearchPath] BraveSearchProvider initialized successfully.');
-        } catch (providerError) {
-            this.error(`[ResearchPath] Failed to initialize search provider: ${providerError.message}`);
-            // Rethrow or handle? Rethrowing ensures the engine knows initialization failed.
-            throw new Error(`Failed to initialize search provider: ${providerError.message}`);
-        }
+        // if (!query) throw new Error('Query is required for ResearchPath'); // Query passed later
+        if (!user) throw new Error('User context is required for ResearchPath');
+        // if (!braveApiKey) throw new Error('Brave API key is required for ResearchPath'); // No longer needed if provider passed
+        if (!veniceApiKey) throw new Error('Venice API key is required for ResearchPath');
+        if (!searchProvider) throw new Error('Search provider instance is required for ResearchPath'); // Add check
 
-        this.visitedUrls = new Set(); // Track visited URLs within this path
-        this.processedQueries = new Set(); // Track processed queries to avoid loops
+        // this.query = query; // Store original query object/string - Stored per research call
+        this.user = user;
+        this.visitedUrls = visitedUrls;
+        // this.braveApiKey = braveApiKey; // Store key - No longer needed directly
+        this.veniceApiKey = veniceApiKey; // Store key
+        this.output = output; // Store handler
+        this.error = error;   // Store handler
+        this.debug = debug;   // Store handler
+        this.progressHandler = progressHandler; // Store handler
+        this.progressData = progressData; // Store reference to progress data object
+        this.config = engineConfig; // Store original config which NOW includes the provider
+        this.searchProvider = searchProvider; // <-- STORE the passed provider instance
+
+        // Pass handlers if LLMClient is used here (or create instance as needed)
+        // this.llmClient = new LLMClient({ apiKey: this.veniceApiKey /*, other options */ });
+
+        this.debug(`[ResearchPath] Initialized.`);
     }
 
-    /**
-     * Updates and reports progress.
-     */
-    updateProgress(updates) {
-        // Ensure completedQueries doesn't exceed totalQueries if total is known
-        if (this.progress.totalQueries > 0 && updates.completedQueries !== undefined) {
-            updates.completedQueries = Math.min(updates.completedQueries, this.progress.totalQueries);
-        }
-        // Update progress object
-        Object.assign(this.progress, updates);
-
-        if (this.progressCallback) {
-            try {
-                // Send a copy to avoid downstream mutations affecting the shared object
-                this.progressCallback({ ...this.progress });
-            } catch (callbackError) {
-                this.error(`[ResearchPath] Error in progress callback: ${callbackError.message}`);
+    // --- NEW: Helper to update progress ---
+    updateProgress(update) {
+        if (this.progressData && this.progressHandler) {
+            Object.assign(this.progressData, update);
+            // Ensure completed doesn't exceed total
+            if (this.progressData.completedQueries > this.progressData.totalQueries) {
+                this.debug(`[Progress Warning] Completed queries (${this.progressData.completedQueries}) exceeded total (${this.progressData.totalQueries}). Clamping.`);
+                this.progressData.completedQueries = this.progressData.totalQueries;
             }
+            this.progressHandler(this.progressData);
         }
     }
 
-
     /**
-     * Starts the research process for a given query, depth, and breadth.
-     * Called when NOT using overrideQueries.
-     * @param {object} params - Research parameters.
-     * @param {object} params.query - The initial query object { original: string, metadata?: any }.
-     * @param {number} params.depth - Research depth.
-     * @param {number} params.breadth - Research breadth.
-     * @returns {Promise<object>} Object containing learnings and sources.
+     * Processes a single query node in the research graph.
+     * @param {object} params - Research parameters for this node.
+     * @param {object} params.query - The query object { original: string, metadata?: any }.
+     * @param {number} params.depth - Remaining depth for recursion.
+     * @param {number} params.breadth - Breadth for generating sub-queries.
+     * @returns {Promise<{learnings: string[], sources: string[], followUpQueries: object[]}>} Aggregated results from this path.
      */
     async research({ query, depth, breadth }) {
-        const learnings = [];
-        const sources = new Set(); // Use Set for unique sources
-
-        // Estimate total queries (rough estimate, might change)
-        // Initial query + (breadth queries per level * depth levels)
-        // This estimation is done in the engine now.
-        // const estimatedTotal = 1 + (breadth * depth);
-        // this.updateProgress({ totalQueries: estimatedTotal, status: 'Starting Research' });
-        this.updateProgress({ status: 'Starting Research' }); // Total is set by engine
+        const queryString = getQueryString(query); // Get the string part for searching/logging
+        this.updateProgress({ status: 'Processing Query', currentAction: `Processing: ${queryString.substring(0, 50)}...` });
 
         try {
-            await this.processQuery(query, depth, breadth, learnings, sources);
-            this.updateProgress({ status: 'Consolidating Results' });
-        } catch (err) {
-            this.error(`[ResearchPath] Unhandled error during research for "${query.original}": ${err.message}`);
-            console.error(err.stack); // Log stack trace
-            learnings.push(`Critical error during research: ${err.message}`);
-            this.updateProgress({ status: 'Error', error: err.message });
-        }
+            this.output(`[ResearchPath D:${depth}] Processing query: "${queryString}"`);
 
-        return {
-            learnings: Array.from(new Set(learnings)), // Deduplicate learnings
-            sources: Array.from(sources) // Convert Set to Array
-        };
-    }
+            // 1. Generate Search Queries (if needed, or use provided query)
+            // For the first level (or if no sub-queries generated yet), use the main query.
+            // In subsequent levels, this method is called with generated follow-up queries.
+            this.updateProgress({ currentAction: `Searching web for: ${queryString.substring(0, 50)}...` });
+            // --- Use the SHARED searchProvider instance ---
+            // const searchProvider = suggestSearchProvider({ // REMOVE THIS
+            //     type: 'web',
+            //     user: this.user,
+            //     apiKey: this.braveApiKey, // Pass the key
+            //     outputFn: this.debug,      // Pass handlers
+            //     errorFn: this.error
+            // });
+            const searchProvider = this.searchProvider; // Use the instance passed in constructor
 
-    /**
-     * Recursively processes a query.
-     * @param {object} queryObj - The query object { original: string, metadata?: any }.
-     * @param {number} depth - Remaining depth.
-     * @param {number} breadth - Breadth for generating sub-queries.
-     * @param {Array<string>} learnings - Accumulated learnings.
-     * @param {Set<string>} sources - Accumulated sources.
-     */
-    async processQuery(queryObj, depth, breadth, learnings, sources) {
-        // Add detailed check for queryObj structure
-        if (!queryObj || typeof queryObj.original !== 'string') {
-             const errorMsg = `[processQuery] Invalid queryObj received. Expected { original: string, ... }, got: ${JSON.stringify(queryObj)}`;
-             this.error(errorMsg);
-             learnings.push(`Internal error: Invalid query object received.`);
-             // Increment completed count even for invalid queries to prevent progress stall
-             this.updateProgress({
-                 completedQueries: (this.progress.completedQueries || 0) + 1,
-                 status: `Error processing invalid query object`
-             });
-             return; // Stop processing this path
-        }
-
-        const queryText = cleanQuery(queryObj.original);
-        // Add detailed logging for queryText type and value
-        this.debug(`[processQuery] Processing queryText (type: ${typeof queryText}): "${queryText}"`);
-        this.debug(`[processQuery] Depth=${depth}, Breadth=${breadth}`);
-
-
-        if (depth <= 0 || this.processedQueries.has(queryText)) {
-            this.debug(`[processQuery] Skipping query (depth=${depth}, processed=${this.processedQueries.has(queryText)}): "${queryText}"`);
-            return;
-        }
-        this.processedQueries.add(queryText);
-        this.updateProgress({
-            // currentDepth calculation might be less accurate with override queries, focus on completed/total
-            // currentDepth: this.progress.totalDepth - depth + 1,
-            status: `Processing: ${queryText}`
-        });
-
-
-        try {
-            // 1. Search
-            this.debug(`[search] Attempting search with queryText (type: ${typeof queryText}): "${queryText}"`);
-            if (typeof queryText !== 'string' || !queryText.trim()) { // Extra safety check + empty check
-                throw new Error(`[processQuery] queryText is not a valid non-empty string before search: "${queryText}"`);
+            // 2. Execute Search
+            this.debug(`[ResearchPath D:${depth}] Executing search for: "${queryString}"`);
+            // Truncate query before sending to search provider
+            const truncatedQuery = queryString.length > 1000 ? queryString.substring(0, 1000) : queryString;
+            if (truncatedQuery !== queryString) {
+                this.debug(`[ResearchPath D:${depth}] Query truncated to ${truncatedQuery.length} chars for search provider.`);
             }
-            const searchResults = await this.searchProvider.search(queryText);
-            this.debug(`[search] Found ${searchResults.length} results for: "${queryText}"`);
+            // --- Use the shared provider's search method ---
+            const searchResults = await searchProvider.search(truncatedQuery); // Use truncated query
+            this.debug(`[ResearchPath D:${depth}] Received ${searchResults?.length || 0} search results.`);
+            this.updateProgress({ currentAction: `Found ${searchResults?.length || 0} web results for: ${queryString.substring(0, 50)}...` });
 
-            // Add sources from search results
-            searchResults.forEach(r => sources.add(r.source));
+            // Filter out visited URLs and limit results processed per query
+            const MAX_RESULTS_PER_QUERY = 5; // Limit processing to avoid excessive cost/time
+            const newResults = searchResults.filter(result => result.url && !this.visitedUrls.has(result.url)).slice(0, MAX_RESULTS_PER_QUERY);
+            const newContent = newResults.map(r => r.content || ''); // Extract content
+            newResults.forEach(result => this.visitedUrls.add(result.url)); // Add new URLs to visited set
+            this.debug(`[ResearchPath D:${depth}] Processing ${newResults.length} new results after filtering visited URLs.`);
 
-            // 2. Extract Learnings
-            if (searchResults.length > 0) {
-                this.updateProgress({ status: `Extracting learnings: ${queryText}` });
-                const contentArray = searchResults.map(result => result.content).filter(Boolean);
+            let currentLearnings = [];
+            let currentSources = newResults.map(r => r.url); // Get sources from the new results
 
-                if (contentArray.length > 0) {
-                    this.debug(`[learnings] Calling processResults with queryText (type: ${typeof queryText}): "${queryText}"`);
-                    if (typeof queryText !== 'string') { // Extra safety check
-                         throw new Error(`[processQuery] queryText is not a string before processResults: ${typeof queryText}`);
-                    }
-                    // --- Start: Add try/catch around processResults ---
-                    try {
-                        const learningResult = await processResults({
-                            apiKey: this.config.veniceApiKey, // Pass API key
-                            query: queryText,
-                            content: contentArray, // Pass array of content strings
-                            // numLearnings: 3, // Optional: Default is 3
-                            // numFollowUpQuestions: 3, // Optional: Default is 3
-                            metadata: queryObj.metadata || null
-                        });
-
-                        if (learningResult && learningResult.learnings && learningResult.learnings.length > 0) {
-                            this.debug(`[learnings] Extracted ${learningResult.learnings.length} learnings for "${queryText}". Adding to main list.`);
-                            learnings.push(...learningResult.learnings); // Add extracted learnings
-                        } else {
-                            this.debug(`[learnings] processResults returned no learnings for "${queryText}".`);
-                            learnings.push(`No specific learnings extracted from content for: ${queryText}`); // Add placeholder
-                        }
-                        // Optionally handle followUpQuestions if needed later
-                        // if (learningResult.followUpQuestions && learningResult.followUpQuestions.length > 0) {
-                        //     this.debug(`[learnings] Extracted ${learningResult.followUpQuestions.length} follow-up questions.`);
-                        // }
-
-                    } catch (learningError) {
-                        this.error(`[learnings] Error calling processResults for query "${queryText}": ${learningError.message}`);
-                        console.error(learningError.stack); // Log stack trace for learning error
-                        learnings.push(`Error extracting learnings for '${queryText}': ${learningError.message}`);
-                    }
-                    // --- End: Add try/catch around processResults ---
-
-                } else {
-                    this.debug(`[learnings] No content extracted from search results for: "${queryText}"`);
-                    learnings.push(`No usable content found in search results for: ${queryText}`);
-                }
-
+            if (newResults.length === 0) {
+                this.output(`[ResearchPath D:${depth}] No new relevant search results found for "${queryString}".`);
+                this.updateProgress({ completedQueries: (this.progressData.completedQueries || 0) + 1 }); // Increment completed count
             } else {
-                learnings.push(`No search results found for: ${queryText}`);
-            }
-
-            // Increment completed queries *after* processing this query
-            this.updateProgress({ completedQueries: (this.progress.completedQueries || 0) + 1 });
-
-
-            // 3. Generate & Recurse (if depth > 1)
-            if (depth > 1) {
-                this.updateProgress({ status: `Generating sub-queries: ${queryText}` });
-                this.debug(`[sub-queries] Calling generateQueries with queryText (type: ${typeof queryText}): "${queryText}"`);
-                 if (typeof queryText !== 'string') { // Extra safety check
-                     throw new Error(`[processQuery] queryText is not a string before generateQueries: ${typeof queryText}`);
-                 }
-                // --- Start: Add try/catch around generateQueries ---
-                let subQueries = [];
+                // 3. Process Results (Extract Learnings)
+                this.updateProgress({ currentAction: `Extracting learnings from ${newResults.length} results...` });
                 try {
-                    // --- FIX: Use accumulated learnings correctly ---
-                    // Pass only the learnings relevant to *this* query, or a subset of recent ones?
-                    // Passing *all* accumulated learnings might become too large.
-                    // Let's pass the learnings extracted *in this step* if available, otherwise the original query.
-                    const recentLearnings = learnings.slice(-5); // Pass last 5 learnings as context
-
-                    subQueries = await generateQueries({
-                        query: queryText,
-                        learnings: recentLearnings, // Use recent learnings for context
-                        numQueries: breadth,
-                        metadata: queryObj.metadata || null,
-                        apiKey: this.config.veniceApiKey // Pass API key
+                    const processed = await processResults({
+                        apiKey: this.veniceApiKey, // Pass API key
+                        query: queryString,        // Pass query string for context
+                        content: newContent,       // Pass search results content array
+                        outputFn: this.debug,      // Pass handlers
+                        errorFn: this.error
                     });
-                    this.debug(`[sub-queries] Generated ${subQueries.length} sub-queries.`);
-                } catch (queryGenError) {
-                    this.error(`[sub-queries] Error calling generateQueries for query "${queryText}": ${queryGenError.message}`);
-                    console.error(queryGenError.stack); // Log stack trace for query generation error
-                    learnings.push(`Error generating sub-queries for '${queryText}': ${queryGenError.message}`);
-                    // Continue without sub-queries if generation fails
-                }
-                // --- End: Add try/catch around generateQueries ---
-
-
-                // Process sub-queries concurrently only if subQueries were generated
-                if (subQueries.length > 0) {
-                    const subQueryPromises = subQueries.map(subQueryObj =>
-                        // Ensure subQueryObj is valid before recursing
-                        this.processQuery(subQueryObj, depth - 1, breadth, learnings, sources)
-                    );
-                    await Promise.all(subQueryPromises);
-                } else {
-                    this.debug(`[sub-queries] No sub-queries generated or generation failed, skipping recursion for "${queryText}".`);
+                    currentLearnings = processed.learnings || [];
+                    // Note: processResults doesn't return sources, we got them above
+                    this.debug(`[ResearchPath D:${depth}] Extracted ${currentLearnings.length} learnings.`);
+                    this.updateProgress({
+                        completedQueries: (this.progressData.completedQueries || 0) + 1, // Increment completed count
+                        currentAction: `Extracted ${currentLearnings.length} learnings for: ${queryString.substring(0, 50)}...`
+                    });
+                } catch (procError) {
+                    this.error(`[ResearchPath D:${depth}] Error processing results for "${queryString}": ${procError.message}`);
+                    currentLearnings.push(`Error processing search results for: ${queryString}`);
+                    this.updateProgress({ completedQueries: (this.progressData.completedQueries || 0) + 1 }); // Still increment count on error
                 }
             }
 
-        } catch (error) {
-            // Make error message more specific
-            this.error(`[processQuery] Error during processing of query "${queryText}": ${error.message}`);
-            console.error(error.stack); // Log full stack trace for better debugging
-            learnings.push(`Error researching '${queryText}': ${error.message}`);
-            // Increment completed count even if there was an error to avoid progress getting stuck
-            this.updateProgress({
-                 completedQueries: (this.progress.completedQueries || 0) + 1,
-                 status: `Error on: ${queryText}`
-            });
-            // Optionally re-throw if the error should halt the entire research?
-            // For now, we log, add an error learning, and continue if possible.
-            // If it's an auth error from search, maybe re-throw?
-            if (error instanceof SearchError && error.code === 'AUTH_ERROR') {
-                this.error(`[processQuery] Authentication error encountered. Aborting further searches.`);
-                throw error; // Re-throw auth errors to stop the engine
+            // 4. Generate Follow-up Queries (if depth > 0)
+            let followUpQueries = [];
+            if (depth > 0) {
+                this.updateProgress({ currentAction: `Generating follow-up queries (Depth ${depth - 1})...` });
+                try {
+                    followUpQueries = await generateQueries({
+                        apiKey: this.veniceApiKey, // Pass API key
+                        query: queryString,        // Pass original query string for context
+                        learnings: currentLearnings, // Pass learnings from this level
+                        numQueries: breadth,       // Pass breadth
+                        metadata: query.metadata,  // Pass metadata from original query object
+                        outputFn: this.debug,      // Pass handlers
+                        errorFn: this.error
+                    });
+                    this.debug(`[ResearchPath D:${depth}] Generated ${followUpQueries.length} follow-up queries.`);
+                    this.updateProgress({ currentAction: `Generated ${followUpQueries.length} follow-up queries...` });
+                } catch (genError) {
+                    this.error(`[ResearchPath D:${depth}] Error generating follow-up queries for "${queryString}": ${genError.message}`);
+                    currentLearnings.push(`Error generating follow-up queries for: ${queryString}`);
+                }
+            } else {
+                 this.debug(`[ResearchPath D:${depth}] Reached max depth, not generating follow-up queries.`);
+                 this.updateProgress({ currentAction: 'Reached maximum research depth.' });
             }
-             // If it's the 422 error, log specific warning but don't necessarily stop everything
-             if (error instanceof SearchError && error.status === 422) {
-                 this.error(`[processQuery] Validation error (422) encountered for query "${queryText}". This query might be invalid for the search provider.`);
-                 // Don't re-throw, allow other paths to continue.
-             }
+
+            // --- FIX: Combine results from this path ---
+            const pathResult = {
+                learnings: [...currentLearnings], // Copy learnings from this level
+                sources: [...currentSources],     // Copy sources from this level
+                followUpQueries: followUpQueries  // Follow-up queries generated at this level
+            };
+
+
+            // --- FIX: Recursive calls for follow-up queries ---
+            if (depth > 0 && followUpQueries.length > 0) {
+                this.updateProgress({ currentAction: `Processing ${followUpQueries.length} sub-paths (Depth ${depth - 1})...` });
+                const followUpPromises = followUpQueries.map(async (followUpQueryObj) => {
+                    // Create a new path instance for the sub-query
+                    // Pass the *current* config (this.config), which includes the shared searchProvider
+                    // Pass the *same* progressData object for shared updates
+                    // --- Ensure this.config is passed, as it contains the searchProvider ---
+                    const subPath = new ResearchPath(this.config, this.progressData);
+                    // Recursively call research with decremented depth
+                    return subPath.research({ query: followUpQueryObj, depth: depth - 1, breadth: breadth });
+                });
+
+                const followUpResults = await Promise.allSettled(followUpPromises);
+
+                followUpResults.forEach((settledResult, index) => {
+                    if (settledResult.status === 'fulfilled') {
+                        const subResult = settledResult.value;
+                        // Aggregate learnings and sources
+                        pathResult.learnings.push(...subResult.learnings);
+                        pathResult.sources.push(...subResult.sources);
+                        // Note: We don't typically aggregate follow-up queries from sub-paths
+                    } else {
+                        const subQueryString = getQueryString(followUpQueries[index]);
+                        this.error(`[ResearchPath D:${depth}] Sub-path failed for query "${subQueryString}": ${settledResult.reason?.message || settledResult.reason}`);
+                        // Optionally add an error learning
+                        pathResult.learnings.push(`Error processing sub-query: ${subQueryString}`);
+                    }
+                });
+                 // Deduplicate learnings and sources after aggregation
+                pathResult.learnings = [...new Set(pathResult.learnings)];
+                pathResult.sources = [...new Set(pathResult.sources)];
+            }
+            // --- End FIX ---
+
+
+            this.debug(`[ResearchPath D:${depth}] Path finished for "${queryString}".`);
+            // Return aggregated results from this path and its children
+            return pathResult; // { learnings, sources, followUpQueries (only from this level) }
+
+        } catch (err) {
+            this.error(`[ResearchPath D:${depth}] Error processing path for query "${queryString}": ${err.message}`);
+            this.debug(err.stack); // Log stack trace for debugging
+            this.updateProgress({ currentAction: `Path failed: ${err.message}` });
+            // Re-throw or return error structure
+            // Return a structure indicating failure but allowing summary generation
+            return {
+                learnings: [`Error during research path for "${queryString}": ${err.message}`],
+                sources: [],
+                followUpQueries: [],
+                error: err.message // Include error message
+            };
+            // throw err; // Don't throw, let the engine handle aggregation and summary
         }
     }
 }

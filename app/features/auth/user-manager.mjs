@@ -6,6 +6,11 @@ import argon2 from 'argon2';
 import { encryptApiKey, decryptApiKey, deriveKey } from './encryption.mjs';
 import readline from 'readline'; // Keep for potential future CLI interactions
 import fetch from 'node-fetch'; // Needed for testApiKeys
+import { Octokit } from '@octokit/rest'; // Import Octokit
+import crypto from 'crypto'; // Import crypto
+import { ensureDir } from '../../utils/research.ensure-dir.mjs';
+import { output } from '../../utils/research.output-manager.mjs'; // Use output manager
+import { outputManager } from '../../utils/research.output-manager.mjs'; // Use outputManager for logging
 
 // Rate limiting for login attempts
 class RateLimiter {
@@ -295,7 +300,12 @@ export class UserManager {
       username: 'public',
       role: 'public',
       created: new Date().toISOString(),
-      limits: { maxQueriesPerHour: 3, maxDepth: 2, maxBreadth: 3 } // Example limits
+      limits: { maxQueriesPerHour: 3, maxDepth: 2, maxBreadth: 3 }, // Example limits
+      // --- FIX: Ensure GitHub fields are initialized for public profile ---
+      githubOwner: null,
+      githubRepo: null,
+      githubBranch: null,
+      encryptedGitHubToken: null,
     };
     try {
         await fs.writeFile(
@@ -346,7 +356,13 @@ export class UserManager {
       if (!username || username === 'public') {
           try {
               const publicData = await fs.readFile(path.join(this.userDir, 'public.json'), 'utf8');
-              return JSON.parse(publicData);
+              // Ensure default GitHub fields exist for public user (even if null)
+              const publicUser = JSON.parse(publicData);
+              publicUser.githubOwner = publicUser.githubOwner || null;
+              publicUser.githubRepo = publicUser.githubRepo || null;
+              publicUser.githubBranch = publicUser.githubBranch || null;
+              publicUser.encryptedGitHubToken = publicUser.encryptedGitHubToken || null;
+              return publicUser;
           } catch (error) {
               console.error(`[Auth] Failed to get public user data: ${error.message}`);
               return null;
@@ -355,7 +371,13 @@ export class UserManager {
       try {
           const userPath = path.join(this.userDir, `${username}.json`);
           const userData = await fs.readFile(userPath, 'utf8');
-          return JSON.parse(userData);
+          const user = JSON.parse(userData);
+          // Ensure default GitHub fields exist if loading older user data
+          user.githubOwner = user.githubOwner || null;
+          user.githubRepo = user.githubRepo || null;
+          user.githubBranch = user.githubBranch || null;
+          user.encryptedGitHubToken = user.encryptedGitHubToken || null;
+          return user;
       } catch (error) {
           // Don't log ENOENT as an error, just return null
           if (error.code !== 'ENOENT') {
@@ -559,7 +581,12 @@ export class UserManager {
       salt,
       created: new Date().toISOString(),
       encryptedApiKeys: {},
-      limits: {} // Set empty limits object for new users
+      limits: {}, // Set empty limits object for new users
+      // Initialize GitHub fields
+      githubOwner: null,
+      githubRepo: null,
+      githubBranch: null,
+      encryptedGitHubToken: null,
     };
 
     await fs.writeFile(userPath, JSON.stringify(newUser, null, 2));
@@ -584,14 +611,37 @@ export class UserManager {
   }
 
   /**
-   * Changes password for a given user. Requires current password verification.
-   * Re-encrypts API keys.
-   * @param {string} username - The user whose password to change.
-   * @param {string} currentPassword - The user's current password.
-   * @param {string} newPassword - The desired new password.
-   * @returns {Promise<boolean>} True on success.
-   * @throws {Error} On failure (user not found, incorrect password, etc.).
+   * Saves user data back to the JSON file.
+   * @param {string} username - The username.
+   * @param {object} userData - The complete user data object to save.
+   * @private
    */
+  async saveUserData(username, userData) {
+    if (!username || username === 'public') {
+      // Optionally save public user data if needed, but generally avoid modifying it frequently
+      // For now, prevent saving public user this way
+      console.warn('[Auth] Attempted to save data for public user. Skipping.');
+      return;
+      // throw new Error('Cannot save data for public user.');
+    }
+    try {
+      const userPath = path.join(this.userDir, `${username}.json`);
+      await fs.writeFile(userPath, JSON.stringify(userData, null, 2));
+      console.log(`[Auth] User data saved for ${username}.`);
+
+      // If saving the currently loaded CLI user, update this.currentUser
+      if (this.currentUser && this.currentUser.username === username) {
+          this.currentUser = userData;
+          console.log("[Auth CLI] Updated process user context after saving data.");
+      }
+
+    } catch (error) {
+      console.error(`[Auth] Failed to save user data for ${username}: ${error.message}`);
+      throw error; // Re-throw error to indicate failure
+    }
+  }
+
+
   async changePassword(username, currentPassword, newPassword) {
     if (!username || username === 'public') {
       throw new Error('Cannot change password for public or unspecified user');
@@ -616,10 +666,11 @@ export class UserManager {
     }
 
     const newHash = await argon2.hash(newPassword, { type: argon2.argon2id });
+    const newSalt = randomBytes(16).toString('hex'); // Generate a new salt regardless of keys
 
-    // Re-encrypt API keys
+    // Re-encrypt API keys (Brave, Venice)
     if (userData.encryptedApiKeys && Object.keys(userData.encryptedApiKeys).length > 0) {
-      console.log(`[Auth] Re-encrypting API keys for ${username} due to password change.`);
+      console.log(`[Auth] Re-encrypting standard API keys for ${username} due to password change.`);
       const oldKey = await deriveKey(currentPassword, userData.salt);
       const decryptedKeys = {};
       try {
@@ -631,33 +682,47 @@ export class UserManager {
           throw new Error(`Failed to decrypt existing API keys. Password change aborted. Please verify keys or reset them after changing password.`);
       }
 
-      const newSalt = randomBytes(16).toString('hex'); // Generate a new salt
-      const newKey = await deriveKey(newPassword, newSalt);
+      const newDerivedKey = await deriveKey(newPassword, newSalt); // Use new salt
       const reEncrypted = {};
       for (const [service, rawKey] of Object.entries(decryptedKeys)) {
-        reEncrypted[service] = await encryptApiKey(rawKey, newKey);
+        reEncrypted[service] = await encryptApiKey(rawKey, newDerivedKey);
       }
       userData.encryptedApiKeys = reEncrypted;
-      userData.salt = newSalt; // Store the new salt
-      console.log(`[Auth] API keys re-encrypted successfully for ${username}.`);
-    } else {
-      // If no keys, still generate a new salt
-      userData.salt = randomBytes(16).toString('hex');
+      console.log(`[Auth] Standard API keys re-encrypted successfully for ${username}.`);
     }
 
+    // Re-encrypt GitHub Token
+    if (userData.encryptedGitHubToken) {
+        console.log(`[Auth] Re-encrypting GitHub token for ${username} due to password change.`);
+        const oldKey = await deriveKey(currentPassword, userData.salt); // Use old salt for decryption
+        try {
+            const decryptedToken = await decryptApiKey(userData.encryptedGitHubToken, oldKey);
+            const newDerivedKey = await deriveKey(newPassword, newSalt); // Use new salt for encryption
+            userData.encryptedGitHubToken = await encryptApiKey(decryptedToken, newDerivedKey);
+            console.log(`[Auth] GitHub token re-encrypted successfully for ${username}.`);
+        } catch (decryptionError) {
+            console.error(`[Auth] Failed to decrypt existing GitHub token during password change for ${username}: ${decryptionError.message}`);
+            // Decide whether to abort or just warn and clear the token
+            userData.encryptedGitHubToken = null; // Clear token on decryption failure
+            console.warn(`[Auth] Cleared GitHub token for ${username} due to decryption failure during password change.`);
+            // Optionally throw: throw new Error(`Failed to decrypt existing GitHub token...`);
+        }
+    }
+
+    // Update hash and salt
     userData.passwordHash = newHash;
+    userData.salt = newSalt; // Store the new salt
     userData.passwordChanged = new Date().toISOString(); // Track last change
 
-    // Save updated user data
-    const userPath = path.join(this.userDir, `${username}.json`);
-    await fs.writeFile(userPath, JSON.stringify(userData, null, 2));
+    // Save updated user data using the new helper method
+    await this.saveUserData(username, userData);
 
     console.log(`[Auth] Password changed successfully for user ${username}.`);
 
-    // If changing password for the currently loaded CLI user, update this.currentUser
+    // Update CLI session password cache if applicable
     if (this.currentUser && this.currentUser.username === username) {
-        this.currentUser = userData;
-        console.log("[Auth CLI] Updated process user context after password change.");
+        this.cliSessionPassword = newPassword;
+        console.log("[Auth CLI] Updated cached CLI session password.");
     }
 
     return true;
@@ -665,81 +730,215 @@ export class UserManager {
 
 
   /**
-   * Sets an API key for a specific user. Requires password verification.
-   * @param {string} service - The service name (e.g., 'venice', 'brave', 'github').
-   * @param {string} apiKey - The API key value.
+   * Sets an API key (Brave, Venice) for a specific user. Requires password verification.
+   * @param {string} service - The service name ('brave', 'venice').
+   * @param {string} apiKey - The API key value. Pass null or empty string to clear.
    * @param {string} password - The user's current password for verification.
    * @param {string} username - The user for whom to set the key.
    * @returns {Promise<boolean>} True on success.
    * @throws {Error} On failure.
    */
-  async setApiKey(service, apiKey, password, username) { // Added username param
+  async setApiKey(service, apiKey, password, username) {
     console.log(`[Auth] Setting API key for service: ${service}, user: ${username}`);
 
+    if (service !== 'brave' && service !== 'venice') {
+        throw new Error(`Invalid service type '${service}' for setApiKey. Use setGitHubConfig for GitHub.`);
+    }
     if (!username || username === 'public') {
         throw new Error('Cannot set API keys for public or unspecified user');
     }
 
     const userData = await this.getUserData(username);
-    if (!userData) {
-        throw new Error(`User ${username} not found.`);
-    }
-     if (!userData.passwordHash) {
-        throw new Error(`User ${username} does not have a password set.`);
-    }
+    if (!userData) throw new Error(`User ${username} not found.`);
+    if (!userData.passwordHash) throw new Error(`User ${username} does not have a password set.`);
 
     console.log(`[Auth] Verifying password for user ${username}`);
     if (!await argon2.verify(userData.passwordHash, password)) {
         console.error(`[Auth] Password verification failed for ${username}`);
         throw new Error('Password is incorrect');
     }
-
     console.log('[Auth] Password verified successfully');
+
     if (!userData.salt) {
         console.log(`[Auth] Generating new salt for user ${username}`);
         userData.salt = randomBytes(16).toString('hex');
     }
-
     if (!userData.encryptedApiKeys) {
-        console.log(`[Auth] Initializing encryptedApiKeys object for ${username}`);
         userData.encryptedApiKeys = {};
     }
 
-    console.log(`[Auth] Deriving encryption key for service: ${service}`);
-    const key = await deriveKey(password, userData.salt);
-    const encryptedKey = await encryptApiKey(apiKey, key);
-    userData.encryptedApiKeys[service] = encryptedKey;
-
-    const userFilePath = path.join(this.userDir, `${username}.json`);
-    console.log(`[Auth] Writing updated user profile to: ${userFilePath}`);
-    await fs.writeFile(userFilePath, JSON.stringify(userData, null, 2));
-
-    console.log(`[Auth] API key for ${service} set successfully for user ${username}.`);
-
-    // If setting key for the currently loaded CLI user, update this.currentUser
-    if (this.currentUser && this.currentUser.username === username) {
-        this.currentUser = userData;
-        console.log("[Auth CLI] Updated process user context after setting API key.");
+    if (apiKey === null || apiKey === '') {
+        // Clear the key
+        delete userData.encryptedApiKeys[service];
+        console.log(`[Auth] Cleared API key for ${service} for user ${username}.`);
+    } else {
+        // Set/update the key
+        console.log(`[Auth] Deriving encryption key for service: ${service}`);
+        const key = await deriveKey(password, userData.salt);
+        const encryptedKey = await encryptApiKey(apiKey, key);
+        userData.encryptedApiKeys[service] = encryptedKey;
+        console.log(`[Auth] API key for ${service} set/updated successfully for user ${username}.`);
     }
+
+    // Save updated user data
+    await this.saveUserData(username, userData);
+
     return true;
   }
 
   /**
-   * Gets a decrypted API key for a specific user. Requires password verification.
-   * @param {string} service - The service name.
-   * @param {string} password - The user's current password.
-   * @param {string} username - The user whose key to retrieve.
-   * @returns {Promise<string|null>} Decrypted API key or null if not found.
-   * @throws {Error} If password verification fails or decryption error occurs.
+   * Sets the GitHub configuration and optionally the token for a user.
+   * @param {string} username - The username.
+   * @param {string} password - The user's password for encryption.
+   * @param {object} config - GitHub config { owner, repo, branch, token? }.
+   * @returns {Promise<void>}
    */
-  async getApiKey(service, password, username) {
-    // Removed session validation here - password check is the primary gate.
-    // Session validation should happen at the command/route level before calling this.
+  async setGitHubConfig(username, password, config) {
+    const userData = await this.getUserData(username);
+    if (!userData) {
+        throw new Error(`User ${username} not found.`);
+    }
+
+    // Verify password before proceeding
+    if (!await this.verifyPassword(username, password)) {
+        throw new Error("Incorrect password provided.");
+    }
+
+    userData.githubConfig = userData.githubConfig || {};
+    if (config.owner) userData.githubConfig.owner = config.owner;
+    if (config.repo) userData.githubConfig.repo = config.repo;
+    if (config.branch) userData.githubConfig.branch = config.branch;
+
+    if (config.token) {
+        const encryptedToken = await encrypt(config.token, password);
+        userData.apiKeys = userData.apiKeys || {};
+        userData.apiKeys.githubToken = encryptedToken;
+        output.log(`[Auth] Encrypted and stored GitHub token for user ${username}.`);
+    }
+
+    await this.saveUserData(username, userData);
+    output.log(`[Auth] Updated GitHub configuration for user ${username}.`);
+
+    // Update cached currentUser if it matches
+    if (this.currentUser && this.currentUser.username === username) {
+        this.currentUser = userData;
+    }
+  }
+
+  /**
+   * Retrieves and decrypts the GitHub token for a user.
+   * @param {string} password - The user's password for decryption.
+   * @param {string} username - The username.
+   * @returns {Promise<string|null>} The decrypted GitHub token or null if not found/decryption fails.
+   */
+  async getGitHubToken(password, username) {
+    const userData = await this.getUserData(username);
+    if (!userData || !userData.apiKeys?.githubToken) {
+        output.warn(`[Auth] No GitHub token found for user ${username}.`);
+        return null;
+    }
+
+    // Verify password before attempting decryption
+    if (!await this.verifyPassword(username, password)) {
+         output.error(`[Auth] Password verification failed for user ${username} while retrieving GitHub token.`);
+         throw new Error("Incorrect password provided for GitHub token decryption.");
+    }
+
+    try {
+        const decryptedToken = await decrypt(userData.apiKeys.githubToken, password);
+        output.log(`[Auth] Successfully decrypted GitHub token for user ${username}.`);
+        return decryptedToken;
+    } catch (error) {
+        output.error(`[Auth] Failed to decrypt GitHub token for user ${username}: ${error.message}`);
+        throw new Error("GitHub token decryption failed. Check password.");
+    }
+  }
+
+  /**
+   * Retrieves the GitHub configuration for a user.
+   * @param {string} username - The username.
+   * @returns {Promise<object|null>} GitHub config { owner, repo, branch } or null if not found/configured.
+   */
+  async getGitHubConfig(username) {
+    const userData = await this.getUserData(username);
+    return userData?.githubConfig || null;
+  }
+
+  /**
+   * Checks if a GitHub token exists for the user (doesn't validate).
+   * @param {string} username - The username.
+   * @returns {Promise<boolean>} True if an encrypted token exists.
+   */
+  async hasGitHubToken(username) {
+    const userData = await this.getUserData(username);
+    return !!userData?.apiKeys?.githubToken;
+  }
+
+  /**
+   * Retrieves and decrypts an API key for a user.
+   * @param {object} options - Options object.
+   * @param {string} options.username - The username.
+   * @param {string} options.password - The user's password for decryption.
+   * @param {string} options.service - The service name ('brave', 'venice', 'github').
+   * @returns {Promise<string|null>} The decrypted API key or null if not found/decryption fails.
+   * @throws {Error} If user not found, password verification fails, decryption fails, or service is invalid.
+   */
+  async getApiKey(options) { // Keep single 'options' argument
+    // --- VERY FIRST LINE LOGGING ---
+    // console.log('[Auth][getApiKey] ABSOLUTE ENTRY - Raw arguments[0]:', arguments[0]); // Reduced verbosity
+    // --- END VERY FIRST LINE LOGGING ---
+
+    // Destructure AFTER logging the raw input
+    const { username, password, service } = options || {}; // Add default empty object to prevent destructuring error if options is undefined
+
+    // --- ADD RAW ARGUMENT LOGGING ---
+    // Log the destructured values (or undefined if options was missing)
+    // console.log(`[Auth][getApiKey] RAW ENTRY (Post-Destructure) - Options received:`, { username, password: password ? '******' : 'MISSING', service }); // Reduced verbosity
+    // --- END RAW ARGUMENT LOGGING ---
+
+    // --- Add detailed logging ---
+    // Log the exact values received by the function
+    outputManager.debug(`[Auth][getApiKey] RECEIVED - username: "${username}", password: "${password ? '******' : 'MISSING'}", service: "${service}"`);
+    if (typeof username !== 'string' || !username) {
+        outputManager.error(`[Auth][getApiKey] CRITICAL: Invalid username received: ${username}`);
+        throw new Error('Invalid username provided to getApiKey.'); // LINE ~897
+    }
+    // Add check for service type and value early
+    if (typeof service !== 'string' || !service) {
+         outputManager.error(`[Auth][getApiKey] CRITICAL: Invalid or missing service parameter received: ${service}`);
+         throw new Error('Invalid or missing service provided to getApiKey.');
+    }
+    // --- End detailed logging ---
+
+    // --- ADD SERVICE VALIDATION LOGGING ---
+    outputManager.debug(`[Auth][getApiKey] Validating service parameter: "${service}"`);
+    const validServices = ['brave', 'venice', 'github']; // Define valid services internally
+    if (!validServices.includes(service)) {
+        outputManager.error(`[Auth][getApiKey] Invalid service type received: "${service}". Valid types: ${validServices.join(', ')}`);
+        // Refine the error message for clarity
+        let errorMsg = `Invalid service type '${service}' received by getApiKey.`;
+        // Provide specific guidance only if 'github' was likely intended but misused
+        if (service === 'github') {
+             errorMsg += ' Use getGitHubToken method instead.'; // Assuming getGitHubToken exists or should
+        } else {
+             errorMsg += ` Valid services are: ${validServices.filter(s => s !== 'github').join(', ')}.`;
+        }
+        outputManager.error(`[Auth][getApiKey] Throwing error: ${errorMsg}`); // Log the exact error message
+        throw new Error(errorMsg); // Throw the refined error // LINE 895
+    }
+    // --- END SERVICE VALIDATION LOGGING ---
 
     if (!username || username === 'public') {
       console.log(`[Auth] Cannot get API key for public or unspecified user.`);
       return null;
     }
+
+    // --- FIX: Allow 'github' service here for consistency, but handle it separately ---
+    // if (service !== 'brave' && service !== 'venice') {
+    //     throw new Error(`Invalid service type '${service}' for getApiKey. Use getGitHubConfig for GitHub.`);
+    // }
+    // --- END FIX ---
+
 
     const userData = await this.getUserData(username);
     if (!userData) {
@@ -752,6 +951,33 @@ export class UserManager {
         throw new Error(`User ${username} does not have a password set.`);
     }
 
+    // --- Handle GitHub Token Decryption Separately ---
+    if (service === 'github') {
+        if (!userData.encryptedGitHubToken) {
+            console.warn(`[Auth] No GitHub token found for user '${username}'.`);
+            return null;
+        }
+        console.log(`[Auth] Verifying password to get GitHub token for user '${username}'`);
+        if (!await argon2.verify(userData.passwordHash, password)) {
+            console.warn(`[Auth] Incorrect password provided for user '${username}' when getting GitHub token.`);
+            throw new Error('Password is incorrect');
+        }
+        try {
+            if (!userData.salt) {
+                throw new Error(`User ${username} data is missing salt, cannot decrypt GitHub token.`);
+            }
+            const key = await deriveKey(password, userData.salt);
+            const decryptedToken = await decryptApiKey(userData.encryptedGitHubToken, key);
+            console.log(`[Auth] GitHub token retrieved successfully for user ${username}.`);
+            return decryptedToken;
+        } catch (decryptionError) {
+            console.error(`[Auth] Failed to decrypt GitHub token for user '${username}': ${decryptionError.message}`);
+            throw new Error(`Failed to decrypt GitHub token. Check password or token data.`);
+        }
+    }
+    // --- End GitHub Token Handling ---
+
+    // --- Handle Brave/Venice Key Decryption ---
     if (!userData.encryptedApiKeys || !userData.encryptedApiKeys[service]) {
       console.warn(`[Auth] No API key found for service '${service}' for user '${username}'.`);
       return null;
@@ -766,6 +992,9 @@ export class UserManager {
     }
 
     try {
+        if (!userData.salt) {
+            throw new Error(`User ${username} data is missing salt, cannot decrypt key.`);
+        }
         const key = await deriveKey(password, userData.salt);
         const decryptedKey = await decryptApiKey(userData.encryptedApiKeys[service], key);
         console.log(`[Auth] API key for ${service} retrieved successfully for user ${username}.`);
@@ -774,12 +1003,73 @@ export class UserManager {
         console.error(`[Auth] Failed to decrypt API key for service '${service}', user '${username}': ${decryptionError.message}`);
         throw new Error(`Failed to decrypt API key. Check password or key data.`);
     }
+    // --- End Brave/Venice Handling ---
   }
 
   /**
-   * Checks if an API key is stored for a specific user and service.
+   * Gets decrypted GitHub configuration for a specific user. Requires password verification.
+   * @param {string} username - The user whose config to retrieve.
+   * @param {string} password - The user's current password.
+   * @returns {Promise<{token: string, owner: string, repo: string, branch: string}|null>} Config object or null if incomplete/not found.
+   * @throws {Error} If password verification or decryption fails.
+   */
+  async getGitHubConfig(username, password) {
+    const userData = await this.getUserData(username);
+    if (!userData) {
+        throw new Error(`User ${username} not found.`);
+    }
+
+    // Verify password before proceeding
+    console.log(`[Auth] Verifying password for ${username} to get GitHub config.`);
+    if (!await argon2.verify(userData.passwordHash, password)) {
+        console.warn(`[Auth] Incorrect password provided for ${username} when getting GitHub config.`);
+        throw new Error('Password is incorrect');
+    }
+    console.log(`[Auth] Password verified for ${username}.`);
+
+    const config = {
+        owner: userData.githubOwner || null,
+        repo: userData.githubRepo || null,
+        branch: userData.githubBranch || 'main', // Default to main
+        token: null // Initialize token as null
+    };
+
+    // Check if essential parts are missing (excluding token for now)
+    if (!config.owner || !config.repo) {
+        console.warn(`[Auth] GitHub owner or repo not configured for ${username}.`);
+        // Return partial config or null? Let's return null if core parts missing.
+        // return config; // Return partial config without token
+        return null;
+    }
+
+    // Decrypt token if it exists
+    if (userData.encryptedGitHubToken) {
+        try {
+            if (!userData.salt) {
+                throw new Error(`User ${username} data is missing salt, cannot decrypt GitHub token.`);
+            }
+            console.log(`[Auth] Decrypting GitHub token for ${username}.`);
+            const key = await deriveKey(password, userData.salt);
+            config.token = await decryptApiKey(userData.encryptedGitHubToken, key);
+            console.log(`[Auth] GitHub token decrypted successfully for ${username}.`);
+        } catch (decryptionError) {
+            console.error(`[Auth] Failed to decrypt GitHub token for ${username}: ${decryptionError.message}`);
+            // Throw error as token decryption failure is critical if token exists
+            throw new Error(`Failed to decrypt GitHub token. Check password or token data.`);
+        }
+    } else {
+        console.warn(`[Auth] No encrypted GitHub token found for ${username}.`);
+        // Token remains null in the config object
+    }
+
+    // Return the full config object (token might be null if not set/decrypted)
+    return config;
+  }
+
+  /**
+   * Checks if an API key (Brave, Venice) is stored for a specific user and service.
    * Does not require password.
-   * @param {string} service - The service name.
+   * @param {string} service - The service name ('brave', 'venice').
    * @param {string} [username] - The username. Defaults to current CLI user if null.
    * @returns {Promise<boolean>} True if key exists, false otherwise.
    */
@@ -788,6 +1078,11 @@ export class UserManager {
     console.log(`[Auth] Checking if API key exists for service: ${service}, user: ${targetUsername}`);
 
     if (!targetUsername || targetUsername === 'public') {
+        return false;
+    }
+
+    if (service !== 'brave' && service !== 'venice') {
+        console.warn(`[Auth] hasApiKey called with invalid service type '${service}'. Use hasGitHubConfig for GitHub.`);
         return false;
     }
 
@@ -802,40 +1097,62 @@ export class UserManager {
     return true;
   }
 
-  /**
-   * Checks the configuration status of API keys for a given user.
-   * @param {string} username - The username to check.
-   * @returns {Promise<object>} An object indicating the status of each key (e.g., { brave: true, venice: false, github: true }).
+   /**
+   * Checks if GitHub configuration appears complete for a specific user.
+   * Does not require password.
+   * @param {string} [username] - The username. Defaults to current CLI user if null.
+   * @returns {Promise<boolean>} True if token, owner, repo, and branch seem to be set.
    */
-  async checkApiKeys(username) {
-    console.log(`[Auth] Checking API key configuration status for user: ${username}`);
+  async hasGitHubConfig(username = null) {
+    const targetUsername = username || this.getUsername();
+    console.log(`[Auth] Checking if GitHub config is set for user: ${targetUsername}`);
+
+    if (!targetUsername || targetUsername === 'public') {
+        return false;
+    }
+
+    const userData = await this.getUserData(targetUsername);
+
+    const isConfigured = !!(userData?.encryptedGitHubToken && userData.githubOwner && userData.githubRepo && userData.githubBranch);
+    console.log(`[Auth] GitHub config status for ${targetUsername}: ${isConfigured ? 'Configured' : 'Not Configured'}`);
+    return isConfigured;
+  }
+
+  /**
+   * Checks the configuration status of API keys and GitHub for a given user.
+   * @param {string} username - The username to check.
+   * @returns {Promise<object>} An object indicating the status (e.g., { brave: true, venice: false, github: true }).
+   */
+  async checkApiKeys(username) { // Renamed from checkApiKeysStatus for clarity
+    console.log(`[Auth] Checking API key and GitHub configuration status for user: ${username}`);
     if (!username || username === 'public') {
       return { brave: false, venice: false, github: false };
     }
     const userData = await this.getUserData(username);
     const keys = userData?.encryptedApiKeys || {};
+    const githubConfigured = !!(userData?.encryptedGitHubToken && userData.githubOwner && userData.githubRepo && userData.githubBranch);
     return {
       brave: !!keys.brave,
       venice: !!keys.venice,
-      github: !!keys.github,
+      github: githubConfigured,
     };
   }
 
   /**
-   * Tests the validity of configured API keys for a user by making simple API calls.
-   * Requires the user's password to decrypt the keys.
+   * Tests the validity of configured API keys and GitHub token for a user.
+   * Requires the user's password to decrypt the keys/token.
    * @param {string} password - The user's current password.
-   * @param {string} username - The username whose keys to test.
-   * @returns {Promise<object>} An object with test results for each service (e.g., { brave: { success: true }, venice: { success: false, error: 'Invalid Key' } }).
+   * @param {string} username - The username whose keys/token to test.
+   * @returns {Promise<object>} An object with test results for each service (e.g., { brave: { success: true }, github: { success: false, error: 'Invalid Token' } }).
    */
   async testApiKeys(password, username) {
-    console.log(`[Auth] Testing API keys for user: ${username}`);
+    console.log(`[Auth] Testing API keys and GitHub token for user: ${username}`);
     const results = {
-      brave: { success: false, error: 'Not configured or test failed' },
-      venice: { success: false, error: 'Not configured or test failed' },
-      github: { success: false, error: 'Not configured or test failed' },
+      brave: { success: null, error: 'Not configured or test failed' },
+      venice: { success: null, error: 'Not configured or test failed' },
+      github: { success: null, error: 'Not configured or test failed' },
     };
-    const API_TIMEOUT = 5000; // 5 seconds timeout for tests
+    const API_TIMEOUT = 7000; // Increased timeout
 
     // Helper to test endpoint
     const testEndpoint = async (url, headers = {}, method = 'GET') => {
@@ -855,19 +1172,21 @@ export class UserManager {
 
     // Test Brave
     try {
-        const braveKey = await this.getApiKey('brave', password, username);
-        if (braveKey) {
-            const testResult = await testEndpoint(
-                'https://api.search.brave.com/res/v1/web/ping',
-                { 'X-Subscription-Token': braveKey, 'Accept': 'application/json' }
-            );
-            if (testResult.success) {
-                results.brave = { success: true };
+        const hasKey = await this.hasApiKey('brave', username);
+        if (hasKey) {
+            // Use getApiKey with options object
+            const braveKey = await this.getApiKey({ username, password, service: 'brave' });
+            if (braveKey) {
+                const testResult = await testEndpoint(
+                    'https://api.search.brave.com/res/v1/web/ping',
+                    { 'X-Subscription-Token': braveKey, 'Accept': 'application/json' }
+                );
+                results.brave = { success: testResult.success, error: testResult.success ? null : (testResult.error || `API returned ${testResult.status}: ${testResult.statusText}`) };
             } else {
-                results.brave = { success: false, error: testResult.error || `API returned ${testResult.status}: ${testResult.statusText}` };
+                 results.brave = { success: false, error: 'Decryption failed (check password)' };
             }
         } else {
-             results.brave = { success: false, error: 'Not configured' };
+             results.brave = { success: null, error: 'Not configured' }; // Use null for success if not configured
         }
     } catch (error) {
         results.brave = { success: false, error: `Failed to get/test key: ${error.message}` };
@@ -875,19 +1194,21 @@ export class UserManager {
 
     // Test Venice
     try {
-        const veniceKey = await this.getApiKey('venice', password, username);
-        if (veniceKey) {
-            const testResult = await testEndpoint(
-                'https://api.venice.ai/api/v1/models',
-                { 'Authorization': `Bearer ${veniceKey}` }
-            );
-             if (testResult.success) {
-                results.venice = { success: true };
+        const hasKey = await this.hasApiKey('venice', username);
+         if (hasKey) {
+            // Use getApiKey with options object
+            const veniceKey = await this.getApiKey({ username, password, service: 'venice' });
+            if (veniceKey) {
+                const testResult = await testEndpoint(
+                    'https://api.venice.ai/api/v1/models',
+                    { 'Authorization': `Bearer ${veniceKey}` }
+                );
+                results.venice = { success: testResult.success, error: testResult.success ? null : (testResult.error || `API returned ${testResult.status}: ${testResult.statusText}`) };
             } else {
-                results.venice = { success: false, error: testResult.error || `API returned ${testResult.status}: ${testResult.statusText}` };
+                 results.venice = { success: false, error: 'Decryption failed (check password)' };
             }
         } else {
-             results.venice = { success: false, error: 'Not configured' };
+             results.venice = { success: null, error: 'Not configured' };
         }
     } catch (error) {
         results.venice = { success: false, error: `Failed to get/test key: ${error.message}` };
@@ -895,26 +1216,36 @@ export class UserManager {
 
     // Test GitHub
     try {
-        const githubKey = await this.getApiKey('github', password, username);
-        if (githubKey) {
-            const testResult = await testEndpoint(
-                'https://api.github.com/user',
-                { 'Authorization': `Bearer ${githubKey}`, 'Accept': 'application/vnd.github.v3+json' }
-            );
-             if (testResult.success) {
-                results.github = { success: true };
+        const hasConfig = await this.hasGitHubConfig(username);
+        if (hasConfig) {
+            // Use getGitHubConfig which internally uses getApiKey
+            const githubConfig = await this.getGitHubConfig(username, password);
+            if (githubConfig && githubConfig.token) {
+                // Basic check: Try to fetch user info using the token
+                const octokit = new Octokit({ auth: githubConfig.token });
+                try {
+                    await octokit.rest.users.getAuthenticated({ request: { timeout: API_TIMEOUT } });
+                    results.github = { success: true, error: null };
+                    console.log(`[Auth] GitHub token validation successful for ${username}`);
+                } catch (apiError) {
+                    results.github = { success: false, error: `API Error: ${apiError.message}` };
+                    console.log(`[Auth] GitHub token validation failed for ${username}: ${apiError.message}`);
+                }
             } else {
-                 // GitHub returns 401 for bad credentials, 403 for rate limit/permissions
-                results.github = { success: false, error: testResult.error || `API returned ${testResult.status}: ${testResult.statusText}` };
+                 // getGitHubConfig should throw if decryption fails, but handle null just in case
+                 results.github = { success: false, error: 'Failed to retrieve decrypted config (check password or config)' };
             }
         } else {
-             results.github = { success: false, error: 'Not configured' };
+             results.github = { success: null, error: 'Not configured' };
         }
     } catch (error) {
-        results.github = { success: false, error: `Failed to get/test key: ${error.message}` };
+        // This catches errors from getGitHubConfig (like decryption failure)
+        results.github = { success: false, error: `Failed to get/test config: ${error.message}` };
+         console.log(`[Auth] Error testing GitHub config for ${username}: ${error.message}`);
     }
 
-    console.log(`[Auth] API key test results for ${username}:`, results);
+
+    console.log(`[Auth] API key/token test results for ${username}:`, results);
     return results;
   }
 
@@ -1154,6 +1485,85 @@ export class UserManager {
   getCurrentUsername() {
     return this.currentUser ? this.currentUser.username : null;
   }
+
+  /**
+   * Decrypts a value using AES-256-GCM.
+   * @param {string} encryptedValueWithIvAndTag - The encrypted string containing IV, auth tag, and ciphertext.
+   * @param {string} password - The user's password.
+   * @param {string} username - The username (used for salt generation).
+   * @returns {Promise<string|null>} The decrypted string, or null if decryption fails.
+   */
+  async decryptValue(encryptedValueWithIvAndTag, password, username) {
+    if (!encryptedValueWithIvAndTag || typeof encryptedValueWithIvAndTag !== 'string') {
+      console.error(`[decryptValue] Invalid encrypted value provided for user ${username}:`, encryptedValueWithIvAndTag);
+      return null;
+    }
+    if (!password) {
+        console.error(`[decryptValue] Password missing for decryption for user ${username}.`);
+        return null; // Cannot decrypt without password
+    }
+
+    try {
+      const parts = encryptedValueWithIvAndTag.split(':');
+      // --- FIX: Add validation and logging ---
+      if (parts.length !== 3) {
+          console.error(`[decryptValue] Invalid encrypted format for user ${username}. Expected 3 parts, got ${parts.length}. Value: ${encryptedValueWithIvAndTag.substring(0, 50)}...`);
+          throw new Error('Invalid encrypted data format.');
+      }
+      const ivHex = parts[0];
+      const authTagHex = parts[1];
+      const encryptedHex = parts[2];
+
+      // Log lengths and types for debugging, but not the content itself directly
+      console.log(`[decryptValue] Debug Info for user ${username}:`);
+      console.log(`  - IV Hex provided: ${ivHex ? 'Yes' : 'No'}, Length: ${ivHex?.length}, Type: ${typeof ivHex}`);
+      console.log(`  - Auth Tag Hex provided: ${authTagHex ? 'Yes' : 'No'}, Length: ${authTagHex?.length}, Type: ${typeof authTagHex}`);
+      console.log(`  - Encrypted Hex provided: ${encryptedHex ? 'Yes' : 'No'}, Length: ${encryptedHex?.length}, Type: ${typeof encryptedHex}`);
+
+      // Validate components before converting to Buffer
+      if (!ivHex || typeof ivHex !== 'string' || ivHex.length !== 32) { // 16 bytes * 2 hex chars/byte
+          console.error(`[decryptValue] Invalid IV Hex for user ${username}. Length: ${ivHex?.length}`);
+          throw new Error('Invalid Initialization Vector.');
+      }
+      if (!authTagHex || typeof authTagHex !== 'string' || authTagHex.length !== 32) { // 16 bytes * 2 hex chars/byte
+          console.error(`[decryptValue] Invalid Auth Tag Hex for user ${username}. Length: ${authTagHex?.length}`);
+          throw new Error('Invalid Authentication Tag.');
+      }
+      if (!encryptedHex || typeof encryptedHex !== 'string') {
+          console.error(`[decryptValue] Invalid Encrypted Hex for user ${username}. Type: ${typeof encryptedHex}`);
+          throw new Error('Invalid Encrypted Data.');
+      }
+
+      const iv = Buffer.from(ivHex, 'hex');
+      const authTag = Buffer.from(authTagHex, 'hex');
+      const encryptedText = Buffer.from(encryptedHex, 'hex');
+      // --- End FIX ---
+
+      const salt = this.generateSalt(username);
+      const key = await this.deriveKey(password, salt);
+
+      // --- FIX: Log buffer lengths just before crypto call ---
+      console.log(`[decryptValue] Buffer lengths before crypto call for user ${username}: IV=${iv.length}, AuthTag=${authTag.length}, EncryptedText=${encryptedText.length}, Key=${key.length}`);
+      // --- End FIX ---
+
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag); // Set the authentication tag
+
+      let decrypted = decipher.update(encryptedText, undefined, 'utf8'); // Use 'undefined' for input encoding with Buffers
+      decrypted += decipher.final('utf8');
+
+      return decrypted;
+    } catch (error) {
+      // Log specific crypto errors vs. format errors
+      if (error.message.includes('Unsupported state') || error.message.includes('authentication tag')) {
+           console.error(`[decryptValue] Decryption failed for user ${username} (likely incorrect password or corrupted data): ${error.message}`);
+      } else {
+           console.error(`[decryptValue] Error during decryption setup for user ${username}: ${error.message}`, error.stack); // Log stack for setup errors
+      }
+      return null; // Return null on any decryption error
+    }
+  }
 }
 
 export const userManager = new UserManager();
+export default userManager; // Also export as default if needed elsewhere

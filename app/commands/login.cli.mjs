@@ -2,6 +2,15 @@ import readline from 'readline';
 import { userManager } from '../features/auth/user-manager.mjs';
 
 /**
+ * Provides help text for the /login command.
+ * @returns {string} Help text.
+ */
+export function getLoginHelpText() {
+    return `/login <username> [password] - Log in to the application.
+    If password is not provided, you will be prompted securely.`;
+}
+
+/**
  * CLI command for user login
  * Usage example: /login JohnDoe
  */

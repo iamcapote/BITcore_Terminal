@@ -19,6 +19,8 @@ import { safeSend } from '../utils/websocket.utils.mjs'; // Needed for sending m
 import { callVeniceWithTokenClassifier } from '../utils/token-classifier.mjs'; // Import the classifier utility
 // --- FIX: Import generateQueries ---
 import { generateQueries as generateResearchQueriesLLM } from '../features/ai/research.providers.mjs';
+// --- FIX: Import config to get public key ---
+import config from '../config/index.mjs';
 
 
 /**
@@ -40,65 +42,117 @@ import { generateQueries as generateResearchQueriesLLM } from '../features/ai/re
 export async function executeChat(options = {}) {
   const {
     memory = false,
-    depth = 'medium',
+    depth: memoryDepth = 'medium', // Renamed depth to memoryDepth for clarity
     verbose = false,
-    password, // Password from handleCommandMessage (payload/cache/prompt)
+    password: providedPassword, // Password from handleCommandMessage (payload/cache/prompt)
     isWebSocket = false,
     session, // WebSocket session object
     output: cmdOutput, // Renamed for clarity within function
     error: cmdError,   // Renamed for clarity within function
     currentUser, // User data from handleCommandMessage
+    webSocketClient, // Added for sending messages
     _testMode = false // Internal flag for testing
   } = options;
+
+  // --- FIX: Add check for valid output/error functions ---
+  if (typeof cmdOutput !== 'function') {
+      console.error("[executeChat] CRITICAL: cmdOutput is not a function.", options);
+      // Cannot easily send error back, log and return failure
+      return { success: false, error: "Internal server error: Output handler misconfigured.", handled: true, keepDisabled: false };
+  }
+  if (typeof cmdError !== 'function') {
+      console.error("[executeChat] CRITICAL: cmdError is not a function.", options);
+      // Log, but try to continue if possible
+      // If we can't report errors, things might fail silently
+      // Let's return an error here too for safety
+      return { success: false, error: "Internal server error: Error handler misconfigured.", handled: true, keepDisabled: false };
+  }
+  // --- End FIX ---
 
   const timeoutMs = options.timeout || 30000; // Example timeout
 
   try {
     // Use cmdOutput for logging
-    cmdOutput(`[CMD START] chat: Memory=${memory}, Depth=${depth}, Verbose=${verbose}`);
+    logCommandStart('chat', options); // Use helper for consistent logging
 
-    // --- Authentication Check ---
-    // Use currentUser passed in options
-    const isAuthenticated = !!currentUser && currentUser.role !== 'public';
-    const currentUsername = currentUser ? currentUser.username : 'public';
+    const isPublicUser = currentUser && currentUser.role === 'public';
+    let effectiveMemory = memory; // Use let to allow modification
 
-    if (!isAuthenticated) {
-      cmdError('You must be logged in to use the /chat command.');
-      return { success: false, error: 'Authentication required', handled: true, keepDisabled: false };
+    // --- Public User Handling ---
+    if (isPublicUser) {
+        // --- FIX: Allow chat, disable memory ---
+        cmdOutput("Entering chat mode for public user.");
+        cmdOutput("Memory and research features are disabled. Use /login for full features.");
+        effectiveMemory = false; // Force disable memory for public users
     }
+    // --- End Public User Handling ---
 
-    // --- API Key Check ---
-    const hasVeniceKeyConfigured = await userManager.hasApiKey('venice', currentUsername);
-    if (!hasVeniceKeyConfigured) {
-      cmdError('Missing Venice API key required for chat. Use /keys set to configure.');
-      return { success: false, error: 'Venice API key not configured', handled: true, keepDisabled: false };
+    // --- Authentication Check (Only for non-public users needing memory/research) ---
+    // Allow public users to proceed for basic chat
+    if (!isPublicUser && (!currentUser || currentUser.role === 'public')) { // Check added !isPublicUser
+      cmdError('You must be logged in to use memory or research features.');
+      // Don't return error here, allow basic chat for public
+      // return { success: false, error: 'Authentication required', handled: true, keepDisabled: false };
     }
+    // --- End Authentication Check ---
 
-    // --- Password Handling & Key Decryption ---
-    // Password should already be handled by handleCommandMessage (prompted if needed)
-    // and passed in options.password
-    let userPassword = options.password;
+    const currentUsername = currentUser.username; // Will be 'public' for public users
 
-    // If somehow password is still missing (should not happen if handleCommandMessage is correct)
-    if (!userPassword) {
-        // This indicates a logic error in the calling function (handleCommandMessage)
-        cmdError('Internal Error: Password required for API keys but was not provided or prompted.');
-        return { success: false, error: 'Password required but missing', handled: true, keepDisabled: false };
+    // --- API Key Check & Decryption ---
+    let veniceKey = null;
+    let llmClient = null; // Initialize llmClient here
+    let userPassword = null; // Initialize userPassword
+
+    if (isPublicUser) {
+        // --- FIX: Use public key for public users ---
+        veniceKey = config.venice.apiKey;
+        if (!veniceKey) {
+            cmdError('Public Venice API key is not configured in .env. Public chat disabled.');
+            return { success: false, error: 'Public API key not configured', handled: true, keepDisabled: false };
+        }
+        cmdOutput("Using public API key for chat.");
+        llmClient = new LLMClient({ apiKey: veniceKey }); // Initialize for public user
+    } else {
+        // --- Logged-in user key retrieval ---
+        const hasVeniceKeyConfigured = await userManager.hasApiKey('venice', currentUsername);
+        if (!hasVeniceKeyConfigured) {
+            cmdError('Missing Venice API key required for chat. Use /keys set venice <key> to configure.');
+            return { success: false, error: 'Venice API key not configured', handled: true, keepDisabled: false };
+        }
+
+        // --- Password Handling & Key Decryption ---
+        userPassword = session?.password || providedPassword; // Check session cache first
+        const needsPassword = !userPassword; // Only need password if not already cached/provided
+
+        if (needsPassword) {
+            cmdError('Internal Error: Password required for chat but was not provided or prompted.');
+            if (session) session.password = null; // Clear potentially invalid cache
+            return { success: false, error: 'Password required but missing', handled: true, keepDisabled: false };
+        }
+
+        // --- Get API Key ---
+        veniceKey = await userManager.getApiKey({ username: currentUsername, password: userPassword, service: 'venice' }); // Use options object
+
+        if (!veniceKey) {
+            if (session) session.password = null;
+            cmdError('Failed to decrypt Venice API key with the provided password.');
+            return { success: false, error: 'API key decryption failed', handled: true, keepDisabled: false };
+        } else {
+            if (session && !session.password) {
+                session.password = userPassword;
+                console.log(`[executeChat] Cached password in session ${session.sessionId} after successful key decryption.`);
+            }
+            // --- Initialize LLM Client (Only if key obtained) ---
+            llmClient = new LLMClient({ apiKey: veniceKey }); // Initialize for logged-in user
+        }
     }
+    // --- End API Key Check & Decryption ---
 
-    // --- Get API Key ---
-    const veniceKey = await userManager.getApiKey('venice', userPassword, currentUsername);
-
-    if (!veniceKey) {
-      // Clear cached password in session if decryption fails
-      if (session) session.password = null;
-      cmdError('Failed to decrypt Venice API key with the provided password.');
-      return { success: false, error: 'API key decryption failed', handled: true, keepDisabled: false };
-    }
 
     // --- Test Mode Handling ---
     if (_testMode) {
       cmdOutput("Running in test mode, skipping interactive chat");
+      logCommandSuccess('chat (test mode)', options);
       return {
         success: true,
         testMode: true,
@@ -107,71 +161,127 @@ export async function executeChat(options = {}) {
       };
     }
 
-    // --- Initialize Memory Manager (if needed) ---
+    // --- Initialize Memory Manager (if needed and NOT public user) ---
     let memoryManagerInstance = null;
-    if (memory) {
-      try {
-        memoryManagerInstance = new MemoryManager({
-          depth,
-          user: currentUsername // Use username from currentUser
+    if (effectiveMemory && !isPublicUser) { // Check effectiveMemory and !isPublicUser
+      try { // <-- Outer try for memory init
+        // --- FIX: Pass LLMClient and GitHub token if available ---
+        let llmApiKeyForMem = veniceKey; // Use the already decrypted key
+        let githubTokenForMem = null;
+        if (await userManager.hasGitHubConfig(currentUsername)) { // Check if config exists
+            try { // <-- Inner try for getGitHubConfig (around line 205)
+                // --- FIX: Pass password to getGitHubConfig ---
+                const ghConfig = await userManager.getGitHubConfig(currentUsername, userPassword); // Pass password here
+                if (ghConfig && ghConfig.token) {
+                    githubTokenForMem = ghConfig.token; // Note: getGitHubConfig should return decrypted token
+                }
+            } catch (ghError) { // <-- ADDED CATCH for inner try
+                cmdError(`Warning: Failed to get GitHub token for memory manager: ${ghError.message}`);
+                // Optionally clear cached password if token decryption failed specifically
+                if (ghError.message.toLowerCase().includes('password') || ghError.message.toLowerCase().includes('decrypt')) {
+                    if (session) session.password = null;
+                    cmdError('GitHub token decryption failed. Please check password.');
+                    // Decide if this should be a fatal error for memory mode
+                    // return { success: false, error: `GitHub token decryption failed: ${ghError.message}`, handled: true, keepDisabled: false };
+                }
+            } // <-- END ADDED CATCH for inner try
+        }
+
+        memoryManagerInstance = new MemoryManager(currentUsername, {
+            output: cmdOutput, // Use command's output handler
+            error: cmdError,   // Use command's error handler
+            llmClient: llmApiKeyForMem ? new LLMClient({ apiKey: llmApiKeyForMem }) : null, // Pass LLM client
+            githubToken: githubTokenForMem // Pass GitHub token
         });
-        cmdOutput('Memory mode enabled. Use /exitmemory to finalize and exit memory mode.');
-      } catch (error) {
+        // --- End FIX ---
+        cmdOutput(`Memory mode enabled (Depth: ${memoryDepth}). Use /exitmemory to finalize.`);
+      } catch (error) { // <-- Catch for outer try (already existed)
+        // Ensure this line uses correct backticks and syntax
         cmdError(`Failed to initialize memory system: ${error.message}`);
+        // Clear cached password if memory init failed due to key/token issues potentially related to password
+        if (error.message.toLowerCase().includes('password') || error.message.toLowerCase().includes('decrypt')) {
+             if (session) session.password = null;
+        }
         return { success: false, error: `Memory init failed: ${error.message}`, handled: true, keepDisabled: false };
       }
+    } else if (effectiveMemory && isPublicUser) {
+        // This message is now redundant as it's covered earlier
+        // cmdOutput("Memory features are disabled for public users.");
     }
 
-    // --- Start Chat Session ---
-    if (isWebSocket) {
-      // For WebSocket, signal readiness and let handleChatMessage manage the interaction
-      cmdOutput('Chat session started. Type /exit to end.'); // Use cmdOutput
-      return {
-        success: true,
-        type: 'chat-ready', // Signal to handleCommandMessage
-        memoryEnabled: memory,
-        memoryManager: memoryManagerInstance, // Pass instance to session
-        keepDisabled: false // Let handleCommandMessage enable input for chat prompt
-      };
-    } else {
-      // For Console CLI, start the interactive loop
-      // NOTE: Console CLI needs separate password handling if not passed via args
-      if (!userPassword && !isWebSocket) { // Re-prompt specifically for console if needed
-          userPassword = await promptHiddenFixed('Please enter your password to decrypt API keys: ');
-          if (!userPassword) {
-              cmdError('Password is required to decrypt API keys.');
-              return { success: false, error: 'Password required', handled: true };
-          }
-          // Optionally cache for CLI session if userManager supports it
-          // userManager.cliSessionPassword = userPassword;
-      }
-      // Re-fetch key if prompted in CLI mode
-      const cliVeniceKey = await userManager.getApiKey('venice', userPassword, currentUsername);
-      if (!cliVeniceKey) {
-          cmdError('Failed to decrypt Venice API key for CLI session.');
-          return { success: false, error: 'API key decryption failed', handled: true };
-      }
+    // --- FIX: Remove duplicate LLMClient initialization ---
+    // const llmClient = new LLMClient({ apiKey: veniceKey }); // REMOVED - Already initialized above
 
-      process.env.VENICE_API_KEY = cliVeniceKey; // Set for CLI LLMClient usage
-      const llmClient = new LLMClient({ apiKey: cliVeniceKey });
-      // Pass cmdOutput and cmdError directly to startInteractiveChat
-      const chatResult = await startInteractiveChat(llmClient, memoryManagerInstance, verbose, cmdOutput, cmdError); // Pass bound methods
-      delete process.env.VENICE_API_KEY; // Clean up env var
-      cmdOutput(`[CMD SUCCESS] chat: Completed successfully.`);
-      return chatResult; // Return result from interactive session
+    // --- Update Session State (Server-side) ---
+    if (session) {
+        session.isChatActive = true;
+        session.chatHistory = []; // Start fresh history
+        session.memoryManager = memoryManagerInstance; // Assign manager instance
+        session.llmClient = llmClient; // Assign LLM client instance
+        session.chatVerbose = verbose; // Store verbose setting
+        // session.password is already cached above if decryption succeeded
+        console.log(`[WebSocket] Session ${session.sessionId} entering chat mode.`);
+    } else if (!isWebSocket) {
+        console.warn("[CLI] Running chat without a session object. State will not persist across commands.");
+    }
+    // --- End Update Session State ---
+
+    // --- Signal Client (WebSocket) ---
+    if (isWebSocket && webSocketClient) {
+        const chatPrompt = memory ? `[chat:${memoryDepth}]> ` : '[chat]> ';
+        // Send chat-ready and mode_change together
+        safeSend(webSocketClient, { type: 'chat-ready', memoryEnabled: !!memoryManagerInstance });
+        safeSend(webSocketClient, { type: 'mode_change', mode: 'chat', prompt: chatPrompt });
+        // Input should be enabled by the client upon receiving mode change to 'chat'
+        logCommandSuccess('chat (WebSocket session started)', options);
+        // --- FIX: Return keepDisabled: false ---
+        // The client will enable input based on the mode_change message.
+        // The server should allow input to be enabled after this command completes.
+        return { success: true, keepDisabled: false };
+    }
+    // --- End Signal Client ---
+
+    // --- Start Interactive CLI Chat (Console Only) ---
+    if (!isWebSocket) {
+        try {
+            // Pass the bound output/error functions
+            await startInteractiveChat(llmClient, memoryManagerInstance, verbose, cmdOutput, cmdError);
+            logCommandSuccess('chat (CLI session ended)', options);
+            return { success: true, keepDisabled: false }; // Ensure input enabled after CLI chat
+        } catch (cliChatError) {
+            cmdError(`CLI chat session failed: ${cliChatError.message}`);
+            return handleCliError(cliChatError, { command: 'chat', error: cmdError });
+        }
     }
 
-  } catch (error) {
-    // Use cmdError for logging
-    cmdError(`Error during chat command: ${error.message}`);
-    // Return a result suitable for handleCommandMessage or CLI handler
-    return { success: false, error: error.message, handled: true, keepDisabled: false };
-  } finally {
-    // Ensure env var is cleaned up in CLI mode, even if errors occur
-    if (!options.isWebSocket) {
-      delete process.env.VENICE_API_KEY;
+    // Fallback case (shouldn't be reached)
+    cmdError("Failed to start chat session.");
+    return { success: false, error: "Failed to start chat session", handled: true, keepDisabled: false };
+
+  } catch (error) { // <-- Catch block for the main try statement
+    // Use the provided error handler, or console.error as a fallback
+    // --- FIX: Use the validated cmdError function ---
+    cmdError(`Unhandled error during chat command execution: ${error.message}`);
+    console.error(error.stack); // Log stack for debugging
+
+    // Clear potentially bad password cache on key/decryption errors
+    if (error.message.toLowerCase().includes('password') || error.message.toLowerCase().includes('api key')) {
+        if (options.session) options.session.password = null;
     }
-  }
+
+    // Ensure input is re-enabled on error for WebSocket clients
+    if (options.isWebSocket && options.webSocketClient) {
+        safeSend(options.webSocketClient, { type: 'mode_change', mode: 'command', prompt: '> ' });
+    }
+
+    // Return a generic error response
+    return {
+        success: false,
+        error: `Chat command failed: ${error.message}`,
+        handled: true, // Indicate the error was caught here
+        keepDisabled: false // Ensure input is enabled after error
+    };
+  } // <-- End of catch block
 }
 
 /**
@@ -261,6 +371,7 @@ async function startInteractiveChat(llmClient, memoryManager, verbose = false, o
       });
 
       let chatEnded = false; // Flag to prevent multiple resolves
+      const chatHistory = []; // Maintain history for CLI session
 
       rl.on('line', async (line) => {
         // If chat already ended, ignore further input (shouldn't happen often)
@@ -282,10 +393,37 @@ async function startInteractiveChat(llmClient, memoryManager, verbose = false, o
         }
 
         try {
-          // TODO: Integrate memoryManager.retrieveRelevantMemories and pass context
-          const response = await llmClient.completeChat({ messages: [{ role: 'user', content: userInput }] });
-          // TODO: Integrate memoryManager.storeMemory for user input and AI response
-          outputFn(`[AI] ${response.content}`); // Use passed outputFn
+          // Store user input
+          chatHistory.push({ role: 'user', content: userInput });
+          if (memoryManager) {
+              await memoryManager.storeMemory(userInput, 'user');
+          }
+
+          // Retrieve context if memory enabled
+          let retrievedMemoryContext = '';
+          if (memoryManager) {
+              const relevantMemories = await memoryManager.retrieveRelevantMemories(userInput);
+              if (relevantMemories && relevantMemories.length > 0) {
+                  retrievedMemoryContext = "Relevant information from memory:\n" + relevantMemories.map(mem => `- ${mem.content}`).join('\n') + "\n";
+              }
+          }
+          const systemPrompt = retrievedMemoryContext ? `${retrievedMemoryContext}Continue the conversation.` : 'You are a helpful assistant.';
+
+          // Prepare history for LLM (limit context window)
+          const maxHistoryLength = 10;
+          const llmHistory = chatHistory.slice(-maxHistoryLength);
+
+          // Call LLM
+          const response = await llmClient.completeChat(llmHistory, { system: systemPrompt });
+          const assistantResponse = cleanChatResponse(response);
+
+          // Store assistant response
+          chatHistory.push({ role: 'assistant', content: assistantResponse });
+          if (memoryManager) {
+              await memoryManager.storeMemory(assistantResponse, 'assistant');
+          }
+
+          outputFn(`[AI] ${assistantResponse}`); // Use passed outputFn
         } catch (error) {
           errorFn(`Error: ${error.message}`); // Use passed errorFn
         } finally {
@@ -296,16 +434,33 @@ async function startInteractiveChat(llmClient, memoryManager, verbose = false, o
         }
       });
 
-      rl.on('close', () => {
+      rl.on('close', async () => { // Make close handler async
         if (!chatEnded) { // Ensure message is logged even if closed externally (e.g., Ctrl+C)
             outputFn('Chat session ended.'); // Use passed outputFn
         }
+
+        // Finalize memory if enabled
+        if (memoryManager) {
+            outputFn('Finalizing memory...');
+            try {
+                const conversationText = chatHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n\n');
+                const finalizationResult = await memoryManager.summarizeAndFinalize(conversationText);
+                if (finalizationResult?.commitSha) {
+                    outputFn(`Memory committed to GitHub: ${finalizationResult.commitSha}`);
+                } else {
+                    outputFn('Memory finalized (local storage or commit failed/disabled).');
+                }
+            } catch (memError) {
+                errorFn(`Error finalizing memory: ${memError.message}`);
+            }
+        }
+
         resolve({ success: true, message: "Chat session ended." }); // Resolve the promise
       });
 
       // Handle Ctrl+C during chat
       rl.on('SIGINT', () => {
-          outputFn('\nChat interrupted. Type /exit to leave cleanly.');
+          outputFn('\nChat interrupted. Type /exit to leave cleanly, or Ctrl+C again to force exit.');
           // Don't close here, let user type /exit or Ctrl+C again in main loop
           rl.prompt(); // Show prompt again
       });
@@ -351,7 +506,6 @@ export async function exitMemory(options = {}) {
           .join('\n\n');
 
         const finalizationResult = await memoryManager.summarizeAndFinalize(conversationText);
-
         let commitSha = null;
         if (finalizationResult && finalizationResult.success && finalizationResult.summary && finalizationResult.summary.commitSha) {
           commitSha = finalizationResult.summary.commitSha;
@@ -367,7 +521,6 @@ export async function exitMemory(options = {}) {
           effectiveOutput('Memory finalized (local storage or GitHub commit failed/disabled).');
           return { success: true, keepDisabled: false }; // Enable input after success
         }
-
     } catch (error) {
         effectiveError(`Error during memory finalization: ${error.message}`);
         return { success: false, error: error.message, handled: true, keepDisabled: false }; // Enable input after error
@@ -379,7 +532,6 @@ export async function exitMemory(options = {}) {
         }
     }
 }
-
 
 /**
  * Generate research queries based on chat conversation context using LLM.
@@ -425,7 +577,7 @@ async function generateResearchQueriesFromContext(chatHistory, memoryBlocks = []
  * @param {Function} errorFn - Function to handle errors (e.g., console.error or WebSocket send)
  * @returns {Promise<Object>} Research result object
  */
-export async function startResearchFromChat(chatHistory, memoryBlocks = [], options = {}, outputFn = console.log, errorFn = console.error) {
+export async function startResearchFromChat(options = {}) { // Removed chatHistory, memoryBlocks as direct args
   try {
     const {
         // query: researchQuery, // Original query (long history) - No longer the primary input for engine.research
@@ -433,29 +585,36 @@ export async function startResearchFromChat(chatHistory, memoryBlocks = [], opti
         breadth = 3,
         verbose = false,
         password, // Password needed for keys
-        username, // Username needed for keys
+        // username, // Username needed for keys - Get from currentUser
+        currentUser, // Pass currentUser object
         isWebSocket,
         webSocketClient,
         classificationMetadata, // Added classification metadata
-        overrideQueries // --- NEW: Expect pre-generated queries ---
+        overrideQueries, // --- NEW: Expect pre-generated queries ---
+        output: outputFn, // Get output/error from options
+        error: errorFn,
+        progressHandler // Get progress handler from options
     } = options;
 
     // --- FIX: Validate overrideQueries instead of researchQuery ---
     if (!Array.isArray(overrideQueries) || overrideQueries.length === 0) {
       throw new Error("Research requires generated queries (overrideQueries).");
     }
+
     if (!password) {
         throw new Error("Password is required to retrieve API keys for research.");
     }
-     if (!username) {
+
+    if (!currentUser || !currentUser.username) { // Use currentUser
         throw new Error("Username is required to retrieve API keys for research.");
     }
+    const username = currentUser.username; // Get username from currentUser
 
     // --- Get API Keys ---
     let braveKey, veniceKey;
     try {
-        braveKey = await userManager.getApiKey('brave', password, username);
-        veniceKey = await userManager.getApiKey('venice', password, username);
+        braveKey = await userManager.getApiKey({ username, password, service: 'brave' }); // Use options object
+        veniceKey = await userManager.getApiKey({ username, password, service: 'venice' }); // Use options object
         if (!braveKey || !veniceKey) {
             throw new Error("Failed to retrieve one or both required API keys (Brave, Venice).");
         }
@@ -463,14 +622,13 @@ export async function startResearchFromChat(chatHistory, memoryBlocks = [], opti
         throw new Error(`API key retrieval failed: ${keyError.message}`);
     }
 
-
     // --- Prepare Context for Research Engine ---
     // Use the first generated query as the representative topic for logging/summary context
     const representativeQuery = overrideQueries[0]?.original || "Research from chat history";
     const contextSummary = `Research initiated from chat context. Main focus derived from: "${representativeQuery}"`;
 
     // User info for the engine
-    const userInfo = { username: username, role: options.currentUser?.role || 'client' }; // Get role from options if available
+    const userInfo = { username: username, role: currentUser?.role || 'client' }; // Get role from currentUser
 
     outputFn('Initializing research engine...'); // Use provided outputFn
 
@@ -483,14 +641,7 @@ export async function startResearchFromChat(chatHistory, memoryBlocks = [], opti
       outputHandler: outputFn, // Pass provided output function
       errorHandler: errorFn,   // Pass provided error function
       debugHandler: (msg) => { if (verbose) outputFn(`[DEBUG] ${msg}`); }, // Simple debug handler
-      progressHandler: (progress) => { // Define progress handler inline or pass one
-          if (isWebSocket && webSocketClient) {
-              safeSend(webSocketClient, { type: 'progress', data: progress });
-          } else {
-              // Basic console progress
-              outputFn(`Progress: ${progress.status} (${progress.completedQueries}/${progress.totalQueries || '?'})`);
-          }
-      },
+      progressHandler: progressHandler, // Pass progress handler from options
       isWebSocket: isWebSocket,
       webSocketClient: webSocketClient,
       overrideQueries: overrideQueries // Pass the generated queries here
@@ -519,7 +670,9 @@ export async function startResearchFromChat(chatHistory, memoryBlocks = [], opti
     };
 
   } catch (error) {
-    errorFn(`Error during research from chat: ${error.message}`); // Use the caught error object
+    // Use errorFn if available, otherwise console.error
+    const effectiveError = typeof options.error === 'function' ? options.error : console.error;
+    effectiveError(`Error during research from chat: ${error.message}`); // Use the caught error object
     return {
       success: false,
       error: error.message
@@ -543,10 +696,8 @@ export async function startResearchFromChat(chatHistory, memoryBlocks = [], opti
  */
 export async function executeExitResearch(options = {}) {
     const { session, output: outputFn, error: errorFn, currentUser, password: providedPassword, isWebSocket, webSocketClient } = options;
-
     // --- FIX: Define PROMPT_TIMEOUT_MS locally or import ---
     const PROMPT_TIMEOUT_MS = 2 * 60 * 1000; // Define timeout here
-
     // --- FIX: Need access to wsPrompt function ---
     // This is tricky as wsPrompt is defined in routes.mjs.
     // Best approach: Pass wsPrompt function itself in the options from handleChatMessage.
@@ -566,7 +717,6 @@ export async function executeExitResearch(options = {}) {
         return { success: false, keepDisabled: false }; // Enable input after error
     }
     // --- End FIX ---
-
 
     const effectiveOutput = typeof outputFn === 'function' ? outputFn : outputManagerInstance.log;
     const effectiveError = typeof errorFn === 'function' ? errorFn : outputManagerInstance.error;
@@ -598,7 +748,6 @@ export async function executeExitResearch(options = {}) {
         safeSend(webSocketClient, { type: 'research_start' });
     }
     // --- End FIX ---
-
 
     // Format chat history into a query string (used for context, not direct search)
     const researchContextString = chatHistory
@@ -666,7 +815,6 @@ export async function executeExitResearch(options = {}) {
                     useClassification = true;
                     effectiveOutput('Token classification enabled.');
                 }
-
             } catch (promptError) {
                 // Handle prompt errors (e.g., timeout, cancellation)
                 effectiveError(`Research parameter prompt failed: ${promptError.message}. Using defaults.`);
@@ -681,7 +829,7 @@ export async function executeExitResearch(options = {}) {
         let veniceKey;
         try {
             if (!userPassword) throw new Error("Password required for Venice API key.");
-            veniceKey = await userManager.getApiKey('venice', userPassword, session.username);
+            veniceKey = await userManager.getApiKey({ username: session.username, password: userPassword, service: 'venice' }); // Use options object
             if (!veniceKey) throw new Error("Failed to get/decrypt Venice API key.");
         } catch (keyError) {
             throw new Error(`Venice API key retrieval failed: ${keyError.message}`);
@@ -727,12 +875,15 @@ export async function executeExitResearch(options = {}) {
             depth: researchDepth, // Use gathered depth for execution
             breadth: researchBreadth, // Pass breadth (might be used by engine/path differently now)
             password: userPassword,
-            username: session.username,
+            // username: session.username, // Pass currentUser instead
             currentUser: currentUser, // Pass fetched user data
             isWebSocket: isWebSocket,
             webSocketClient: webSocketClient,
             classificationMetadata: classificationMetadata, // Pass metadata for summary
-            overrideQueries: generatedQueries // --- Pass the generated queries ---
+            overrideQueries: generatedQueries, // --- Pass the generated queries ---
+            output: effectiveOutput, // Pass handlers through
+            error: effectiveError,
+            progressHandler: options.progressHandler // Pass progress handler from original options
             // verbose: options.verbose // Add if needed
         };
 
@@ -751,13 +902,7 @@ export async function executeExitResearch(options = {}) {
 
         // --- Execute Research ---
         // Use the same handlers passed to executeExitResearch
-        researchResult = await startResearchFromChat(
-            chatHistory, // Pass history for logging/context if needed by startResearchFromChat
-            relevantMemories,
-            researchOptions, // Pass options including overrideQueries
-            effectiveOutput, // Pass the output handler
-            effectiveError   // Pass the error handler
-        );
+        researchResult = await startResearchFromChat(researchOptions); // Pass single options object
 
         // --- FIX: Send research_complete message on success ---
         if (researchResult.success && isWebSocket && webSocketClient) {
@@ -768,7 +913,6 @@ export async function executeExitResearch(options = {}) {
         }
         // --- End FIX ---
         // effectiveOutput("Research based on chat history complete."); // Message sent by research_complete handler
-
     } catch (error) {
         effectiveError(`Error during exitResearch: ${error.message}`);
         researchResult = { success: false, error: error.message };
@@ -794,6 +938,7 @@ export async function executeExitResearch(options = {}) {
             }
             // Don't clear session.password here, might be needed for subsequent commands. Clear on failure was handled above.
         }
+
         // Inform client about chat exit and mode change
         if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'chat-exit' });
@@ -805,5 +950,17 @@ export async function executeExitResearch(options = {}) {
     // The calling function (handleChatMessage) will use this return value.
     // Since research_complete and mode_change messages handle enabling input on the client,
     // we can return keepDisabled: false here.
-    return { success: researchResult.success, keepDisabled: false };
+    // --- FIX: Return researchResult which contains success status ---
+    return { ...researchResult, keepDisabled: false };
+}
+
+/**
+ * Provides help text for the /chat command.
+ * @returns {string} Help text.
+ */
+export function getChatHelpText() {
+    return `/chat [--memory=true] [--depth=short|medium|long] - Start an interactive chat session. Requires login.
+    --memory=true: Enable memory persistence for the session.
+    --depth=<level>: Set memory depth (short, medium, long). Requires --memory=true.
+    In-chat commands: /exit, /exitmemory, /memory stats, /research <query>, /exitresearch, /help`;
 }

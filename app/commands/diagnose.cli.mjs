@@ -24,136 +24,91 @@ const API_TIMEOUT = 10000; // 10 seconds timeout for API checks
 
 /**
  * Check API connectivity and keys (Internal helper for executeDiagnose)
- * @param {Function} output - Function to send output.
- * @param {Function} errorFn - Function to send errors.
  * @param {Object} options - Command options, potentially including session/password/currentUser.
  */
-async function checkApi(output, errorFn, options = {}) {
-  // ... (Keep internal checkApi function as is, it's called by executeDiagnose which now passes correct output/error) ...
-  // Note: This internal function uses `output` directly, which is fine as it receives the correct function from executeDiagnose.
-  // It might be slightly cleaner to pass output/errorFn explicitly, but not strictly necessary for the fix.
-  output('\n🔍 Checking API connectivity...');
-  const { session, password, currentUser } = options; // Use currentUser
-  const username = currentUser?.username; // Get username from currentUser
+async function checkApi(options) {
+    const { output, error, debug, currentUser, password } = options;
+    output('\n--- API Connectivity & Key Check ---');
+    let allOk = true;
 
-  // Check environment variables (Global Fallback)
-  const globalBraveApiKey = process.env.BRAVE_API_KEY;
-  const globalVeniceApiKey = process.env.VENICE_API_KEY;
-  const globalGithubApiKey = process.env.GITHUB_TOKEN; // Check for GitHub token too
-
-  // Attempt to get user-specific keys if logged in
-  let userBraveKey = null;
-  let userVeniceKey = null;
-  let userGithubKey = null;
-  let keyError = null;
-  let passwordUsed = password; // Use the password passed in options
-
-  if (username && username !== 'public') {
-    // If password wasn't passed directly, try the session cache (relevant for WS)
-    if (!passwordUsed && session?.password) {
-        output(`[Diagnose/checkApi] Using cached password from session for user '${username}'.`);
-        passwordUsed = session.password;
+    if (!currentUser || currentUser.username === 'public') {
+        error('Cannot test user API keys without being logged in.');
+        return false; // Cannot proceed without a logged-in user
     }
 
-    if (passwordUsed) {
-        output(`Attempting to decrypt keys for user '${username}'...`);
-        try {
-            // Use the determined password (from options or session cache)
-            userBraveKey = await userManager.getApiKey('brave', passwordUsed, username);
-            userVeniceKey = await userManager.getApiKey('venice', passwordUsed, username);
-            userGithubKey = await userManager.getApiKey('github', passwordUsed, username); // Check GitHub
-            output(`✅ Successfully decrypted keys for user '${username}'.`); // Log success
-        } catch (err) {
-            output(`⚠️ Error retrieving/decrypting user keys for '${username}': ${err.message}`);
-            keyError = err.message; // Store the specific error
-            // Don't assume password is wrong if decryption fails for other reasons
-            if (!err.message.toLowerCase().includes('password is incorrect')) {
-                 keyError = `Decryption failed (${err.message})`;
-            }
-        }
-    } else {
-       output(`⚠️ Cannot check user keys for '${username}' without password.`);
-       keyError = 'Password not provided or cached';
-    }
-  } else if (username === 'public') {
-      output(`ℹ️ Skipping user key check for public user.`);
-  }
-
-  // Determine which keys to use for testing
-  const braveApiKey = userBraveKey || globalBraveApiKey;
-  const veniceApiKey = userVeniceKey || globalVeniceApiKey;
-  const githubApiKey = userGithubKey || globalGithubApiKey; // Use GitHub key
-
-  // Report key availability
-  output(`🔑 Brave API Key: ${braveApiKey ? `Available (${userBraveKey ? `User: ${username}` : 'Global Env'})` : `NOT Available (Checked User: ${username || 'N/A'}, Global Env)`}${!braveApiKey && keyError ? ` (${keyError})` : ''}`);
-  output(`🔑 Venice API Key: ${veniceApiKey ? `Available (${userVeniceKey ? `User: ${username}` : 'Global Env'})` : `NOT Available (Checked User: ${username || 'N/A'}, Global Env)`}${!veniceApiKey && keyError ? ` (${keyError})` : ''}`);
-  output(`🔑 GitHub API Key: ${githubApiKey ? `Available (${userGithubKey ? `User: ${username}` : 'Global Env'})` : `NOT Available (Checked User: ${username || 'N/A'}, Global Env)`}${!githubApiKey && keyError ? ` (${keyError})` : ''}`);
-
-
-  // Create a simple test function to check API connectivity with a timeout
-  const testApiEndpoint = async (name, url, headers = {}, method = 'GET') => {
-    // ... (rest of testApiEndpoint remains the same) ...
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
-
-      const response = await fetch(url, {
-        method: method,
-        headers,
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        output(`✅ ${name} API is reachable.`);
-        return true;
-      } else {
-        output(`❌ ${name} API returned ${response.status}: ${response.statusText}`);
+    // Use the password from options if available (likely passed from session cache or prompt)
+    const userPassword = password;
+    if (!userPassword) {
+        error(`Password required for user ${currentUser.username} to test API keys, but none provided.`);
+        // Consider prompting if in interactive mode and no password available?
+        // For now, just fail the check.
         return false;
-      }
-    } catch (error) {
-      if (error.name === 'AbortError') {
-        output(`❌ ${name} API request timed out after ${API_TIMEOUT / 1000}s.`);
-      } else {
-        output(`❌ ${name} API connection failed: ${error.message}`);
-      }
-      return false;
     }
-  };
 
-  // Test Brave Search API connectivity
-  if (braveApiKey) {
-    await testApiEndpoint(
-      'Brave Search',
-      'https://api.search.brave.com/res/v1/web/ping',
-      { 'X-Subscription-Token': braveApiKey, 'Accept': 'application/json' }
-    );
-  } else {
-    output('⚠️ Skipping Brave Search API test - no key available.');
-  }
+    debug(`Checking APIs for user: ${currentUser.username}`);
 
-  // Test Venice API connectivity
-  if (veniceApiKey) {
-    await testApiEndpoint(
-      'Venice',
-      'https://api.venice.ai/api/v1/models', // Endpoint to list models
-      { 'Authorization': `Bearer ${veniceApiKey}` }
-    );
-  } else {
-    output('⚠️ Skipping Venice API test - no key available.');
-  }
+    // Check Brave
+    try {
+        debug(`Attempting to decrypt Brave key for ${currentUser.username}...`);
+        // Pass options object
+        const braveKey = await userManager.getApiKey({ username: currentUser.username, password: userPassword, service: 'brave' });
+        if (!braveKey) {
+            output('🟡 Brave: Key not set or decryption failed.');
+            allOk = false;
+        } else {
+            // Add a simple fetch test if possible, requires a known simple endpoint
+            output('🟢 Brave: Key decrypted successfully (Connectivity test skipped).');
+        }
+    } catch (e) {
+        error(`🔴 Brave: Error during key check/decryption: ${e.message}`);
+        allOk = false;
+    }
 
-   // Test GitHub API connectivity
-  if (githubApiKey) {
-    await testApiEndpoint(
-      'GitHub',
-      'https://api.github.com/user', // Simple endpoint requiring auth
-      { 'Authorization': `Bearer ${githubApiKey}`, 'Accept': 'application/vnd.github.v3+json' }
-    );
-  } else {
-    output('⚠️ Skipping GitHub API test - no key available.');
-  }
+    // Check Venice
+    try {
+        debug(`Attempting to decrypt Venice key for ${currentUser.username}...`);
+        // Pass options object
+        const veniceKey = await userManager.getApiKey({ username: currentUser.username, password: userPassword, service: 'venice' });
+        if (!veniceKey) {
+            output('🟡 Venice: Key not set or decryption failed.');
+            allOk = false;
+        } else {
+            debug('Venice key decrypted, attempting ping...');
+            const llmClient = new LLMClient(veniceKey);
+            await llmClient.ping();
+            output('🟢 Venice: Key decrypted and API ping successful.');
+        }
+    } catch (e) {
+        error(`🔴 Venice: Error during key check/test: ${e.message}`);
+        allOk = false;
+    }
+
+     // Check GitHub
+    try {
+        debug(`Attempting to decrypt GitHub token for ${currentUser.username}...`);
+        const githubToken = await userManager.getGitHubToken(currentUser.username, userPassword); // Assuming getGitHubToken needs password
+        if (!githubToken) {
+            output('🟡 GitHub: Token not set or decryption failed.');
+            // Not necessarily a failure if user doesn't use GitHub feature
+        } else {
+            debug('GitHub token decrypted, attempting authentication check...');
+            const octokit = new Octokit({ auth: githubToken });
+            await octokit.rest.users.getAuthenticated();
+            output('🟢 GitHub: Token decrypted and authentication successful.');
+        }
+    } catch (e) {
+         if (e.message.includes('decryption failed')) {
+             output('🟡 GitHub: Token decryption failed.');
+         } else if (e.message.includes('Not set')) {
+             output('🟡 GitHub: Token not set.');
+         } else {
+            error(`🔴 GitHub: Error during token check/test: ${e.message}`);
+            allOk = false; // Fail if test call fails
+         }
+    }
+
+    output(`API Check Result: ${allOk ? 'OK' : 'Issues found'}`);
+    return allOk;
 }
 
 
@@ -371,7 +326,7 @@ export async function executeDiagnose(options) {
              cmdOutput(`[Diagnose] Checking API keys. Password provided: ${providedPassword ? 'Yes' : 'No (will try session cache)'}`);
 
              // Pass the full options object, which includes password, session, and currentUser
-             await checkApi(cmdOutput, cmdError, options);
+             await checkApi(options);
              // Note: checkApi logs its own success/failure messages. We don't explicitly track its success here.
              results.api = { checked: true }; // Mark as checked
         }

@@ -27,6 +27,7 @@ class Terminal {
     this.scrollTimeout = null; // For debouncing scroll
     this.lastInputHandledTime = 0; // To prevent rapid double-enter issues
     this.currentPromptTimeoutId = null; // Store timeout ID for client-side prompts
+    this.currentPromptContext = null; // Store context for client-side prompts
 
     // Initialize terminal UI
     this.initialize();
@@ -170,6 +171,8 @@ class Terminal {
       webcomm.registerHandler('chat-ready', this.handleChatReady.bind(this));
       webcomm.registerHandler('chat-exit', this.handleChatExit.bind(this));
       webcomm.registerHandler('research_start', this.handleResearchStart.bind(this));
+      // --- ADDED research_result_ready handler ---
+      webcomm.registerHandler('research_result_ready', this.handleResearchResultReady.bind(this));
       webcomm.registerHandler('research_complete', this.handleResearchComplete.bind(this));
       webcomm.registerHandler('chat-response', this.handleChatResponse.bind(this));
       webcomm.registerHandler('memory_commit', this.handleMemoryCommit.bind(this));
@@ -177,6 +180,7 @@ class Terminal {
       webcomm.registerHandler('logout_success', this.handleLogoutSuccess.bind(this));
       webcomm.registerHandler('enable_input', this.handleEnableInput.bind(this));
       webcomm.registerHandler('disable_input', this.handleDisableInput.bind(this));
+      webcomm.registerHandler('download_file', this.handleDownloadFile.bind(this)); // Add download handler
     } else {
         console.error("WebComm not initialized when trying to register handlers.");
     }
@@ -253,6 +257,8 @@ class Terminal {
         this.appendOutput('Password entry cancelled.');
         const reject = this.pendingPasswordReject;
         this.clearPasswordPromptState(true); // Ensure mode/input reset on cancel
+        // --- Send cancellation input to server ---
+        webcomm.sendInput("").catch(err => console.error("Error sending cancel input:", err));
         if (reject) reject(new Error("Password entry cancelled by user."));
         e.preventDefault();
       } else if (this.pendingPromptResolve) {
@@ -261,6 +267,8 @@ class Terminal {
         this.appendOutput('Prompt cancelled.');
         const reject = this.pendingPromptReject;
         this.clearGenericPromptState(true); // Ensure mode/input reset on cancel
+        // --- Send cancellation input to server ---
+        webcomm.sendInput("").catch(err => console.error("Error sending cancel input:", err));
         if (reject) reject(new Error("Prompt cancelled by user."));
         e.preventDefault();
       } else if (this.inputEnabled) {
@@ -480,30 +488,33 @@ class Terminal {
       this.appendOutput(`Error: ${message.error}`);
     }
     // --- Start: Reset prompt state on error ---
-    if (this.pendingPromptResolve) {
-        console.log("Clearing pending client prompt due to server error.");
-        // Reject the pending promise to unblock any waiting code
-        this.pendingPromptResolve = null; // Clear resolve first
-        if (this.pendingPromptReject) {
-            this.pendingPromptReject(new Error(`Server error occurred during prompt: ${message.error}`));
-            this.pendingPromptReject = null;
-        }
-        if (this.promptTimeoutId) {
-            clearTimeout(this.promptTimeoutId);
-            this.promptTimeoutId = null;
-        }
-        this.isPasswordPrompt = false; // Reset flag
+    // Check both password and generic prompts
+    const wasPasswordPending = !!this.pendingPasswordResolve;
+    const wasGenericPending = !!this.pendingPromptResolve;
+
+    if (wasPasswordPending) {
+        console.log("Clearing pending client password prompt due to server error.");
+        const reject = this.pendingPasswordReject;
+        this.clearPasswordPromptState(false); // Clear state but let server control input enable
+        if (reject) reject(new Error(`Server error occurred during password prompt: ${message.error}`));
+    }
+    if (wasGenericPending) {
+        console.log("Clearing pending client generic prompt due to server error.");
+        const reject = this.pendingPromptReject;
+        this.clearGenericPromptState(false); // Clear state but let server control input enable
+        if (reject) reject(new Error(`Server error occurred during generic prompt: ${message.error}`));
     }
     // --- End: Reset prompt state on error ---
-    // REMOVED keepDisabled logic - rely on enable/disable messages
     // Server's wsErrorHelper should send enable_input if appropriate
-    this.enableInput();
+    // this.enableInput(); // REMOVED - Rely on server message
   }
 
   // --- NEW Input Control Handlers ---
   handleEnableInput() {
     console.log("Enabling input.");
     this.enableInput();
+    // Attempt to focus after enabling, unless a client-side prompt is now active
+    this.focusInput();
   }
 
   handleDisableInput() {
@@ -514,20 +525,21 @@ class Terminal {
 
   handlePrompt(message) {
     console.log("Received 'prompt' message:", message);
-    const { data: promptText, isPassword } = message;
+    // --- FIX: Use message.data for prompt text ---
+    const { data: promptText, isPassword, context } = message;
 
-    // Clear previous prompt state
-    this.clearPasswordPromptState(false);
-    this.clearGenericPromptState(false);
+    // Clear previous prompt state (important if server sends rapid prompts)
+    this.clearPasswordPromptState(false); // Don't enable input yet
+    this.clearGenericPromptState(false); // Don't enable input yet
 
     if (isPassword) {
-      this.promptForPassword(promptText)
-        .then(value => console.log("Password prompt resolved."))
-        .catch(err => console.log("Password prompt failed:", err.message));
+      this.promptForPassword(promptText, context) // Pass context
+        .then(value => console.log("Client password prompt resolved."))
+        .catch(err => console.log("Client password prompt failed:", err.message));
     } else {
-      this.promptForInput(promptText)
-        .then(value => console.log("Generic prompt resolved."))
-        .catch(err => console.log("Generic prompt failed:", err.message));
+      this.promptForInput(promptText, context) // Pass context
+        .then(value => console.log("Client generic prompt resolved."))
+        .catch(err => console.log("Client generic prompt failed:", err.message));
     }
   }
 
@@ -563,24 +575,27 @@ class Terminal {
     this.setStatus(message.connected ? 'connected' : 'disconnected');
     if (message.connected) {
         this.appendOutput('Connection established.');
-        this.enableInput();
+        // Server should send enable_input after successful connection setup
+        // this.enableInput(); // REMOVED - Rely on server message
     } else {
         this.appendOutput(`Connection lost. ${message.reason || ''}`);
         this.disableInput();
         this.setMode('command', '> '); // Reset mode to command
         // --- Start: Clear pending prompt on disconnect ---
-        if (this.pendingPromptResolve) {
-            console.log("Clearing pending client prompt due to disconnect.");
-            this.pendingPromptResolve = null;
-            if (this.pendingPromptReject) {
-                this.pendingPromptReject(new Error("WebSocket disconnected during prompt."));
-                this.pendingPromptReject = null;
-            }
-            if (this.promptTimeoutId) {
-                clearTimeout(this.promptTimeoutId);
-                this.promptTimeoutId = null;
-            }
-            this.isPasswordPrompt = false;
+        const wasPasswordPending = !!this.pendingPasswordResolve;
+        const wasGenericPending = !!this.pendingPromptResolve;
+
+        if (wasPasswordPending) {
+            console.log("Clearing pending client password prompt due to disconnect.");
+            const reject = this.pendingPasswordReject;
+            this.clearPasswordPromptState(true); // Reset mode and enable input locally
+            if (reject) reject(new Error("WebSocket disconnected during password prompt."));
+        }
+        if (wasGenericPending) {
+            console.log("Clearing pending client generic prompt due to disconnect.");
+            const reject = this.pendingPromptReject;
+            this.clearGenericPromptState(true); // Reset mode and enable input locally
+            if (reject) reject(new Error("WebSocket disconnected during generic prompt."));
         }
         // --- End: Clear pending prompt on disconnect ---
     }
@@ -589,7 +604,7 @@ class Terminal {
   handleSessionExpired() {
       console.log("Received 'session-expired' message"); // Add log
       this.appendOutput('Session expired due to inactivity. Please login again.');
-      this.setMode('command');
+      this.setMode('command', '> '); // Reset mode
       this.updateUserStatus('public');
       this.enableInput(); // Ensure input is re-enabled after session expiration
   }
@@ -626,22 +641,45 @@ class Terminal {
       // Research start should keep input disabled
   }
 
+  // --- ADDED: Handler for research result ready ---
+  handleResearchResultReady(message) {
+      console.log("Received 'research_result_ready' message:", message);
+      this.hideProgressBar(); // Ensure progress bar is hidden
+      this.appendOutput(`\n--- Research Summary ---`);
+      this.appendOutput(message.summary || 'Summary not available.');
+      this.appendOutput(`----------------------`);
+      // Trigger the client-side prompt for post-research action
+      // The server has set the context 'post_research_action'
+      this.promptForInput("Choose action: [Download] | [Upload] | [Keep]", 'post_research_action')
+          .then(value => console.log("Post-research action prompt resolved."))
+          .catch(err => console.log("Post-research action prompt failed:", err.message));
+      // Input remains disabled until the prompt is resolved/rejected and server sends enable/disable
+  }
+  // ---
+
   handleResearchComplete(message) {
+      // This might still be sent on error or if no prompt is needed (e.g., CLI mode)
       console.log("Received 'research_complete' message:", message); // Add log
       this.hideProgressBar();
-      this.appendOutput('Research complete.');
-      if (message.summary) {
-          this.appendOutput('--- Research Summary ---');
-          this.appendOutput(message.summary);
-          this.appendOutput('----------------------');
-      }
-      // Research finishes, ensure we are back in command mode with correct prompt
-      // Only change mode if not currently in a prompt state
-      if (!this.pendingPasswordResolve && !this.pendingPromptResolve) {
-          this.setMode('command', '> '); // Revert to command mode AND set prompt
-          // Server should send enable_input
+      if (message.error) {
+          this.appendOutput(`Research failed: ${message.error}`);
       } else {
-          console.warn("Research complete, but client prompt active. Mode/input state unchanged.");
+          // Only output completion message if result wasn't handled by 'research_result_ready'
+          if (!this.pendingPromptResolve && this.currentPromptContext !== 'post_research_action') {
+              this.appendOutput('Research complete.');
+              if (message.summary) {
+                  this.appendOutput('--- Research Summary ---');
+                  this.appendOutput(message.summary);
+                  this.appendOutput('----------------------');
+              }
+          }
+      }
+      // Ensure we are back in command mode if no prompt is active
+      if (!this.pendingPasswordResolve && !this.pendingPromptResolve) {
+          this.setMode('command', '> ');
+          // Server should send enable_input if appropriate
+      } else {
+          console.warn("Research complete message received, but client prompt active. Mode/input state unchanged.");
       }
   }
 
@@ -677,6 +715,33 @@ class Terminal {
       // Server should send enable_input
   }
 
+  handleDownloadFile(message) {
+      console.log("Received 'download_file' message:", message);
+      const { filename, content } = message;
+      if (!filename || content === undefined) {
+          this.appendOutput("Error: Download failed - missing filename or content."); // Use appendOutput
+          // Server should enable input after this action completes or fails
+          // this.enableInput(); // REMOVED - Rely on server message
+          return;
+      }
+      try {
+          const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(blob);
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(link.href);
+          this.appendOutput(`Download initiated for ${filename}.`);
+      } catch (error) {
+          this.appendOutput(`Error initiating download: ${error.message}`); // Use appendOutput
+      } finally {
+          // Server should enable input after this action completes or fails
+          // this.enableInput(); // REMOVED - Rely on server message
+      }
+  }
+
   /**
    * Handle generic WebSocket errors.
    * @param {Object} error - Error message.
@@ -692,14 +757,14 @@ class Terminal {
   /**
    * Prompts the user for a password.
    * @param {string} promptText - The text to display for the prompt.
+   * @param {string|null} context - Optional context identifier.
    * @returns {Promise<string>} A promise that resolves with the entered password.
    */
-  promptForPassword(promptText) {
-    console.log("Initiating client-side password prompt.");
+  promptForPassword(promptText, context = null) {
+    console.log(`Initiating client-side password prompt. Context: ${context}`);
     return new Promise((resolve, reject) => {
       if (this.pendingPasswordResolve || this.pendingPromptResolve) {
         console.warn("Attempted to start password prompt while another prompt was active.");
-        // Reject the new prompt immediately
         return reject(new Error("Another prompt is already active."));
       }
       this.appendOutput(promptText); // Show the prompt text
@@ -707,6 +772,7 @@ class Terminal {
       this.setPasswordMode(true);
       this.pendingPasswordResolve = resolve;
       this.pendingPasswordReject = reject;
+      this.currentPromptContext = context; // Store context
 
       // Clear any existing timeout
       clearTimeout(this.currentPromptTimeoutId);
@@ -714,10 +780,12 @@ class Terminal {
       // Add a timeout for the password prompt
       this.currentPromptTimeoutId = setTimeout(() => {
           console.log("Client-side password prompt timed out.");
-          if (this.pendingPasswordReject) { // Check if still pending
+          if (this.pendingPasswordReject === reject) { // Check if still pending
               this.appendOutput('\nPassword prompt timed out.');
               const rejectFn = this.pendingPasswordReject;
               this.clearPasswordPromptState(true); // Clear state and reset mode/input on timeout
+              // --- Send empty input on timeout? Or let server handle timeout? ---
+              // webcomm.sendInput("").catch(err => console.error("Error sending timeout input:", err));
               rejectFn(new Error("Password prompt timed out."));
           }
       }, 60000); // 60 second timeout
@@ -741,10 +809,11 @@ class Terminal {
   /**
    * Prompts the user for generic input.
    * @param {string} promptText - The text to display for the prompt.
+   * @param {string|null} context - Optional context identifier.
    * @returns {Promise<string>} A promise that resolves with the entered input.
    */
-  promptForInput(promptText) {
-      console.log("Initiating client-side generic prompt.");
+  promptForInput(promptText, context = null) {
+      console.log(`Initiating client-side generic prompt. Context: ${context}`);
       return new Promise((resolve, reject) => {
           if (this.pendingPasswordResolve || this.pendingPromptResolve) {
               console.warn("Attempted to start generic prompt while another prompt was active.");
@@ -755,6 +824,7 @@ class Terminal {
           this.setPasswordMode(false); // Ensure not in password mode
           this.pendingPromptResolve = resolve;
           this.pendingPromptReject = reject;
+          this.currentPromptContext = context; // Store context
 
           // Clear any existing timeout
           clearTimeout(this.currentPromptTimeoutId);
@@ -762,10 +832,12 @@ class Terminal {
           // Add a timeout for the generic prompt
           this.currentPromptTimeoutId = setTimeout(() => {
               console.log("Client-side generic prompt timed out.");
-              if (this.pendingPromptReject) { // Check if still pending
+              if (this.pendingPromptReject === reject) { // Check if still pending
                   this.appendOutput('\nPrompt timed out.');
                   const rejectFn = this.pendingPromptReject;
                   this.clearGenericPromptState(true); // Clear state and reset mode/input on timeout
+                  // --- Send empty input on timeout? ---
+                  // webcomm.sendInput("").catch(err => console.error("Error sending timeout input:", err));
                   rejectFn(new Error("Prompt timed out."));
               }
           }, 120000); // 120 second timeout
@@ -796,6 +868,7 @@ class Terminal {
       this.currentPromptTimeoutId = null;
       this.pendingPasswordResolve = null;
       this.pendingPasswordReject = null;
+      this.currentPromptContext = null; // Clear context
       this.setPasswordMode(false);
       if (this.input) this.input.value = ''; // Clear input field value regardless
 
@@ -808,24 +881,36 @@ class Terminal {
           this.enableInput(); // Always enable input after clearing prompt state this way
       } else {
           // If not resetting/enabling, ensure input is visually disabled
-          this.disableInput();
-          console.log("Cleared password prompt state without enabling input.");
+          // Don't disable here, let the server control the final state via enable/disable messages
+          // this.disableInput();
+          console.log("Cleared password prompt state without enabling input (server controls final state).");
       }
   }
 
   /** Clears state related to an active generic prompt. */
   clearGenericPromptState(resetModeAndEnableInput = true) {
-    if (this.pendingPromptResolve) {
+      const wasPending = !!this.pendingPromptResolve;
+      if (!wasPending) return;
+
+      console.log("Clearing generic prompt state. Reset mode/input:", resetModeAndEnableInput);
       clearTimeout(this.currentPromptTimeoutId);
       this.currentPromptTimeoutId = null;
       this.pendingPromptResolve = null;
       this.pendingPromptReject = null;
-      this.input.value = '';
+      this.currentPromptContext = null; // Clear context
+      if (this.input) this.input.value = '';
+
       if (resetModeAndEnableInput) {
-        this.setMode('command', '> ');
-        this.enableInput();
+          if (this.mode === 'prompt') {
+              console.log("Resetting mode to 'command' after clearing generic prompt.");
+              this.setMode('command', '> ');
+          }
+          this.enableInput();
+      } else {
+          // Don't disable here, let the server control the final state
+          // this.disableInput();
+          console.log("Cleared generic prompt state without enabling input (server controls final state).");
       }
-    }
   }
 
   /**
@@ -895,8 +980,13 @@ class Terminal {
               // Check again if input exists and is the active element
               if (this.input && document.activeElement !== this.input) {
                   try {
-                      console.log("Attempting to focus input field.");
-                      this.input.focus();
+                      // Check if the window/tab is focused before attempting to focus input
+                      if (document.hasFocus()) {
+                          console.log("Attempting to focus input field.");
+                          this.input.focus();
+                      } else {
+                          console.log("Focus skipped: Window/tab is not focused.");
+                      }
                   } catch (e) {
                       console.warn("Error focusing input:", e);
                   }

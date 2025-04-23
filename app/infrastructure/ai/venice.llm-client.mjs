@@ -66,6 +66,8 @@ export class LLMClient {
         this.model = model;
     }
 
+    this.outputFn = config.outputFn || console.log; // Add outputFn
+    this.errorFn = config.errorFn || console.error; // Add errorFn
 
     this.config = {
       ...defaultConfig,
@@ -122,7 +124,7 @@ export class LLMClient {
         }
 
         // Is retryable, log and wait
-        console.warn(`[LLMClient] Attempt ${attempt} failed with status ${response.status}. Retrying...`);
+        this.errorFn(`[LLMClient] Attempt ${attempt} failed with status ${response.status}. Retrying...`);
 
       } catch (error) {
         clearTimeout(timeoutId); // Clear timeout on any fetch error
@@ -141,7 +143,7 @@ export class LLMClient {
         }
 
         // Is retryable, log and wait
-        console.warn(`[LLMClient] Attempt ${attempt} failed with error: ${error.message}. Retrying...`);
+        this.errorFn(`[LLMClient] Attempt ${attempt} failed with error: ${error.message}. Retrying...`);
       }
 
       // Calculate delay for next retry
@@ -219,7 +221,7 @@ export class LLMClient {
 
       // Validate response structure
       if (!data.choices?.[0]?.message?.content) {
-        console.error("[LLMClient] Invalid response format from Venice API:", data);
+        this.errorFn("[LLMClient] Invalid response format from Venice API:", data);
         throw new LLMError('InvalidResponse', 'Invalid or empty response format from Venice API.', data);
       }
 
@@ -231,7 +233,7 @@ export class LLMClient {
       };
     } catch (error) {
         // Log the error before re-throwing or wrapping
-        console.error(`[LLMClient] Error during chat completion: ${error.message}`, error instanceof LLMError ? error.originalError || error : error);
+        this.errorFn(`[LLMClient] Error during chat completion: ${error.message}`, error instanceof LLMError ? error.originalError || error : error);
         // If it's not already an LLMError, wrap it
         if (!(error instanceof LLMError)) {
             throw new LLMError('OperationFailed', `Chat completion failed: ${error.message}`, error);

@@ -1,4 +1,13 @@
 import { userManager } from '../features/auth/user-manager.mjs';
+import { outputManager } from '../utils/research.output-manager.mjs'; // Use named import again
+
+/**
+ * Provides help text for the /status command.
+ * @returns {string} Help text.
+ */
+export function getStatusHelpText() {
+    return `/status - Display your current login status, role, and API key configuration status.`;
+}
 
 /**
  * CLI command to display current user status

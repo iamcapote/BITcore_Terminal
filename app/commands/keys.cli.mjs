@@ -5,6 +5,8 @@ import { output as outputManagerInstance } from '../utils/research.output-manage
 import crypto from 'crypto'; // Needed for safeSend if used
 import { safeSend } from '../utils/websocket.utils.mjs';
 import { handleCliError, ErrorTypes } from '../utils/cli-error-handler.mjs';
+import { LLMClient } from '../infrastructure/ai/venice.llm-client.mjs'; // Needed for testApiKeys
+import { Octokit } from '@octokit/rest'; // Needed for testApiKeys
 
 // Keep track of the active readline interface to avoid conflicts
 let activeRlInstance = null;
@@ -136,16 +138,35 @@ export async function executeKeys(options = {}) {
     // Combine remaining args for the key, allowing spaces if not quoted by client
     const key = positionalArgs.slice(2).join(' ');
 
-    effectiveOutput(`[CMD START] keys: Action='${action}', Service='${service}'`);
+    // effectiveOutput(`[CMD START] keys: Action='${action}', Service='${service}'`); // Moved logCommandStart below checks
 
-    // --- Authentication Check ---
+    // --- Public User Check ---
+    // Allow 'check'/'stat' and 'help' for public, but block 'set' and 'test'
+    if (currentUser && currentUser.role === 'public' && (action === 'set' || action === 'test')) {
+        effectiveError('Setting or testing API keys is not available for public users. Please /login.');
+        return { success: false, error: 'Permission denied for public user', handled: true, keepDisabled: false };
+    }
+    // Also block if not logged in at all for set/test
+    if (!currentUser || currentUser.role === 'public') {
+         if (action === 'set' || action === 'test') {
+             effectiveError('You must be logged in to set or test API keys.');
+             return { success: false, error: 'Authentication required', handled: true, keepDisabled: false };
+         }
+         // Allow check/stat/help even if public/not logged in (will show 'Not Configured')
+    }
+    // --- End Public User Check ---
+
+    // --- Authentication Check (Redundant if public handled above, but safe) ---
     const isAuthenticated = !!currentUser && currentUser.role !== 'public';
     const currentUsername = currentUser ? currentUser.username : 'public';
 
-    if (!isAuthenticated) {
+    if (!isAuthenticated && (action === 'set' || action === 'test')) {
         effectiveError('You must be logged in to manage API keys.');
         return { success: false, error: 'Authentication required', handled: true, keepDisabled: false };
     }
+    // --- End Authentication Check ---
+
+    logCommandStart('keys', { ...options, action, service }); // Log command start after initial checks
 
     try {
         // Password should be handled by handleCommandMessage and passed in options.password
@@ -173,21 +194,41 @@ export async function executeKeys(options = {}) {
 
         switch (action) {
             case 'set':
-                if (!service || !key) {
-                    effectiveError('Usage: /keys set <service> <key>');
-                    return { success: false, error: 'Missing arguments for set', handled: true, keepDisabled: false };
+                if (!service) {
+                    effectiveError('Usage: /keys set <service> <value...>');
+                    effectiveError('Services: brave, venice, github-token, github-owner, github-repo, github-branch');
+                    return { success: false, error: 'Missing service for set', handled: true, keepDisabled: false };
                 }
-                if (service !== 'brave' && service !== 'venice' && service !== 'github') { // Added github
-                    effectiveError('Invalid service. Supported services: brave, venice, github');
-                    return { success: false, error: 'Invalid service', handled: true, keepDisabled: false };
+                if (!key && service !== 'github-branch') { // Value is required for most
+                    effectiveError(`Usage: /keys set ${service} <value...>`);
+                    return { success: false, error: `Missing value for set ${service}`, handled: true, keepDisabled: false };
                 }
                 if (!userPassword) { // Should be caught above, but double-check
-                    effectiveError('Password is required to encrypt the API key.');
+                    effectiveError('Password is required to set keys or configuration.');
                     return { success: false, error: 'Password required', handled: true, keepDisabled: false };
                 }
-                // Pass username explicitly to setApiKey
-                await userManager.setApiKey(service, key, userPassword, currentUsername);
-                effectiveOutput(`API key for ${service} set successfully.`);
+
+                // Handle different services
+                if (service === 'brave' || service === 'venice') {
+                    await userManager.setApiKey(service, key, userPassword, currentUsername);
+                    effectiveOutput(`API key for ${service} set successfully.`);
+                } else if (service === 'github-token') {
+                    await userManager.setGitHubConfig(currentUsername, userPassword, { token: key });
+                    effectiveOutput(`GitHub token set successfully.`);
+                } else if (service === 'github-owner') {
+                    await userManager.setGitHubConfig(currentUsername, userPassword, { owner: key });
+                    effectiveOutput(`GitHub owner set to: ${key}`);
+                } else if (service === 'github-repo') {
+                    await userManager.setGitHubConfig(currentUsername, userPassword, { repo: key });
+                    effectiveOutput(`GitHub repository set to: ${key}`);
+                } else if (service === 'github-branch') {
+                    const branchName = key || 'main'; // Default to 'main' if no value provided
+                    await userManager.setGitHubConfig(currentUsername, userPassword, { branch: branchName });
+                    effectiveOutput(`GitHub branch set to: ${branchName}`);
+                } else {
+                    effectiveError('Invalid service. Supported: brave, venice, github-token, github-owner, github-repo, github-branch');
+                    return { success: false, error: 'Invalid service', handled: true, keepDisabled: false };
+                }
                 effectiveOutput(`[CMD SUCCESS] keys set: Completed successfully.`);
                 return { success: true, keepDisabled: false };
 
@@ -195,10 +236,10 @@ export async function executeKeys(options = {}) {
             case 'stat': // Alias for check
                 // Call the new checkApiKeys method
                 const keysStatus = await userManager.checkApiKeys(currentUsername);
-                effectiveOutput('--- API Key Status ---');
+                effectiveOutput('--- API Key & GitHub Status ---');
                 effectiveOutput(`Brave API Key: ${keysStatus.brave ? 'Configured' : 'Not Configured'}`);
                 effectiveOutput(`Venice API Key: ${keysStatus.venice ? 'Configured' : 'Not Configured'}`);
-                effectiveOutput(`GitHub API Key: ${keysStatus.github ? 'Configured' : 'Not Configured'}`); // Added github
+                effectiveOutput(`GitHub Config: ${keysStatus.github ? 'Configured' : 'Not Configured'}`); // Check combined config
                 effectiveOutput(`[CMD SUCCESS] keys ${action}: Completed successfully.`);
                 return { success: true, keepDisabled: false };
 
@@ -210,32 +251,24 @@ export async function executeKeys(options = {}) {
 
                 effectiveOutput('Testing API keys...');
                 // Call the new testApiKeys method, passing username explicitly
-                const testResults = await userManager.testApiKeys(userPassword, currentUsername);
+                const testResults = await userManager.testApiKeys(userPassword, currentUsername); // Use userManager method
 
-                effectiveOutput(`Brave API Key Test: ${testResults.brave.success ? 'OK' : `Failed (${testResults.brave.error})`}`);
-                effectiveOutput(`Venice API Key Test: ${testResults.venice.success ? 'OK' : `Failed (${testResults.venice.error})`}`);
-                effectiveOutput(`GitHub API Key Test: ${testResults.github.success ? 'OK' : `Failed (${testResults.github.error})`}`); // Added github
+                effectiveOutput(`Brave API Key Test: ${testResults.brave.success === true ? 'OK' : (testResults.brave.success === false ? `Failed (${testResults.brave.error})` : 'Not Configured')}`);
+                effectiveOutput(`Venice API Key Test: ${testResults.venice.success === true ? 'OK' : (testResults.venice.success === false ? `Failed (${testResults.venice.error})` : 'Not Configured')}`);
+                effectiveOutput(`GitHub Token Test: ${testResults.github.success === true ? 'OK' : (testResults.github.success === false ? `Failed (${testResults.github.error})` : 'Not Configured')}`);
 
-                // Check if *all* configured keys passed
-                let allTestsPassed = true;
-                let testsFailed = false;
-                if (keysStatus.brave && !testResults.brave.success) allTestsPassed = false;
-                if (keysStatus.venice && !testResults.venice.success) allTestsPassed = false;
-                if (keysStatus.github && !testResults.github.success) allTestsPassed = false;
-                if (!testResults.brave.success || !testResults.venice.success || !testResults.github.success) testsFailed = true;
+                // Check if *any* configured key/token failed
+                let anyTestFailed = false;
+                if (testResults.brave.success === false) anyTestFailed = true;
+                if (testResults.venice.success === false) anyTestFailed = true;
+                if (testResults.github.success === false) anyTestFailed = true;
 
-
-                if (allTestsPassed) {
-                    effectiveOutput(`[CMD SUCCESS] keys test: All configured keys tested successfully.`);
+                if (!anyTestFailed) {
+                    effectiveOutput(`[CMD SUCCESS] keys test: All configured keys/tokens tested successfully or were not configured.`);
                     return { success: true, keepDisabled: false };
-                } else if (testsFailed) {
-                    // Error message handled by testApiKeys outputting failures
-                    // effectiveError('One or more API key tests failed.');
-                     effectiveOutput(`[CMD WARNING] keys test: One or more API key tests failed.`);
-                    return { success: false, error: 'One or more API key tests failed.', handled: true, keepDisabled: false };
                 } else {
-                     effectiveOutput(`[CMD SUCCESS] keys test: No keys configured to test.`);
-                     return { success: true, keepDisabled: false }; // Not a failure if no keys are set
+                     effectiveOutput(`[CMD WARNING] keys test: One or more API key/token tests failed.`);
+                    return { success: false, error: 'One or more API key/token tests failed.', handled: true, keepDisabled: false };
                 }
 
 
@@ -251,10 +284,19 @@ export async function executeKeys(options = {}) {
     }
 }
 
+// Removed testApiKeys helper as it's now part of UserManager
+
 export function getKeysHelpText() {
-    return `API Key Management Commands:
-  /keys set <service> <key>   Set API key (brave, venice, github). Requires password.
-  /keys check | stat          Check if API keys are configured.
-  /keys test                  Test configured API keys. Requires password.
-  /keys help                  Show this help message.`;
+    return `API Key & GitHub Configuration Commands:
+  /keys set <service> <value...>  Set API key or GitHub config. Requires password.
+      Services: brave, venice, github-token, github-owner, github-repo, github-branch
+      Examples:
+          /keys set brave YOUR_BRAVE_KEY
+          /keys set github-token YOUR_GITHUB_PAT
+          /keys set github-owner your_username
+          /keys set github-repo your_repository_name
+          /keys set github-branch main (or leave value empty for 'main')
+  /keys check | stat              Check if API keys & GitHub config are set.
+  /keys test                      Test configured API keys & GitHub token. Requires password.
+  /keys help                      Show this help message.`;
 }
