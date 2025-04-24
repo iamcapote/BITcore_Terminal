@@ -37,6 +37,15 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// --- NEW: Research Page Route ---
+app.get('/research/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'research', 'index.html'));
+});
+// Also handle requests without the trailing slash
+app.get('/research', (req, res) => {
+  res.redirect('/research/');
+});
+
 // --- Error Handling Middleware (Basic) ---
 app.use((err, req, res, next) => {
   console.error("Unhandled Error:", err.stack || err);
