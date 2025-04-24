@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 import { output as outputManagerInstance } from '../utils/research.output-manager.mjs'; // Import singleton for defaults
 import crypto from 'crypto'; // Needed for safeSend if used
 import { safeSend } from '../utils/websocket.utils.mjs';
-import { handleCliError, ErrorTypes } from '../utils/cli-error-handler.mjs';
+import { handleCliError, ErrorTypes, logCommandStart } from '../utils/cli-error-handler.mjs'; // Added logCommandStart here
 import { LLMClient } from '../infrastructure/ai/venice.llm-client.mjs'; // Needed for testApiKeys
 import { Octokit } from '@octokit/rest'; // Needed for testApiKeys
 
