@@ -30,7 +30,14 @@ app.use(express.static(path.join(__dirname, 'public'))); // Serve static files
 setupAuthRoutes(app);     // Setup auth API routes (/api/auth)
 
 // --- WebSocket Setup ---
+// Ensure the server object is correctly passed
+console.log('[WebSocket] Initializing WebSocketServer...');
 const wss = new WebSocketServer({ server, path: WEBSOCKET_PATH });
+console.log(`[WebSocket] WebSocketServer created. Listening on path: ${WEBSOCKET_PATH}`);
+
+wss.on('error', (error) => {
+    console.error('[WebSocket] Server Error:', error);
+});
 
 // --- Root Route ---
 app.get('/', (req, res) => {
@@ -61,15 +68,15 @@ async function startServer() {
   console.log('Web-CLI mode active. Access via browser.');
   // Use the HTTP server instance directly for listening
   server.listen(PORT, async () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`WebSocket endpoint: ws://localhost:${PORT}${WEBSOCKET_PATH}`);
+    console.log(`[Server] Express server running on http://localhost:${PORT}`);
+    console.log(`[Server] Attempting to listen for WebSocket connections on path: ${WEBSOCKET_PATH}`);
     try {
       await userManager.loadUsers(); // Load users for Web-CLI mode (needed for lookups)
       console.log('[Web] Users loaded successfully.');
-      // REMOVED: await userManager.initialize(); - Do not initialize CLI session state for web server
     } catch (error) {
       console.error('[Web] Failed to start:', error);
       server.close(); // Close the server on initialization error
+      process.exit(1); // Exit if user loading fails critical setup
     }
   });
 
@@ -82,16 +89,41 @@ async function startServer() {
       }
   });
 
-  // Handle WebSocket connections
+  // --- SIMPLIFIED WebSocket Connection Handler for Debugging ---
   wss.on('connection', (ws, req) => {
-    console.log('[WebSocket] Handling upgrade request for path:', req.url);
-    if (req.url === '/api/research/ws') {
-         handleWebSocketConnection(ws, req);
-    } else {
-        console.log(`[WebSocket] Connection attempt to unknown path: ${req.url}. Closing.`);
-        ws.close(1008, 'Invalid path');
-    }
+    const clientIp = req.socket.remoteAddress || req.headers['x-forwarded-for']; // Get client IP
+    console.log(`[WebSocket] Connection established from ${clientIp} on path: ${req.url}`);
+
+    // Simple echo functionality for testing
+    ws.on('message', (message) => {
+        try {
+            const messageString = message.toString(); // Ensure it's a string
+            console.log(`[WebSocket] Received from ${clientIp}: ${messageString}`);
+            ws.send(JSON.stringify({ type: 'output', data: `Server received: ${messageString}` }));
+        } catch (e) {
+            console.error('[WebSocket] Error processing message:', e);
+            ws.send(JSON.stringify({ type: 'error', error: 'Failed to process message on server.' }));
+        }
+    });
+
+    ws.on('close', (code, reason) => {
+        const reasonString = reason.toString();
+        console.log(`[WebSocket] Connection from ${clientIp} closed. Code: ${code}, Reason: ${reasonString}`);
+    });
+
+    ws.on('error', (error) => {
+        console.error(`[WebSocket] Error from client ${clientIp}:`, error);
+    });
+
+    // Send a welcome message
+    ws.send(JSON.stringify({ type: 'system-message', message: 'Welcome! WebSocket connection successful (Debug Mode).' }));
+    // Send enable input message (assuming terminal.js handles this)
+    ws.send(JSON.stringify({ type: 'enable_input' }));
+
+    // --- Temporarily bypass the original handler ---
+    // handleWebSocketConnection(ws, req);
   });
+  // --- END SIMPLIFIED HANDLER ---
 }
 
 /**
