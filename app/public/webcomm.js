@@ -37,15 +37,18 @@ class WebComm {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         // Use the page's host for the WebSocket connection
         const wsHost = window.location.host;
-        // Construct the WebSocket URL (assuming the WebSocket server runs on the same host and root path or a specific path like /ws)
-        // If your WebSocket server is on a different path, adjust it here (e.g., `${wsProtocol}//${wsHost}/websocket-path`)
-        const wsUrl = `${wsProtocol}//${wsHost}`;
+        // --- MODIFIED LINE ---
+        // Define the specific path for the WebSocket endpoint
+        const wsPath = '/api/research/ws';
+        // Construct the WebSocket URL including the correct path
+        const wsUrl = `${wsProtocol}//${wsHost}${wsPath}`;
+        // --- END MODIFICATION ---
 
-        console.log(`Attempting to connect to WebSocket: ${wsUrl}`);
+        console.log(`Attempting to connect to WebSocket: ${wsUrl}`); // Log the correct URL
         this.triggerHandler('connection', { connected: false, reason: 'Connecting...' }); // Notify UI
 
         try {
-            this.ws = new WebSocket(wsUrl);
+            this.ws = new WebSocket(wsUrl); // Use the corrected URL
         } catch (error) {
             console.error("WebSocket constructor failed:", error);
             this.isConnecting = false;
