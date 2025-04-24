@@ -89,41 +89,13 @@ async function startServer() {
       }
   });
 
-  // --- SIMPLIFIED WebSocket Connection Handler for Debugging ---
+  // --- RESTORE Original WebSocket Connection Handler ---
   wss.on('connection', (ws, req) => {
-    const clientIp = req.socket.remoteAddress || req.headers['x-forwarded-for']; // Get client IP
-    console.log(`[WebSocket] Connection established from ${clientIp} on path: ${req.url}`);
-
-    // Simple echo functionality for testing
-    ws.on('message', (message) => {
-        try {
-            const messageString = message.toString(); // Ensure it's a string
-            console.log(`[WebSocket] Received from ${clientIp}: ${messageString}`);
-            ws.send(JSON.stringify({ type: 'output', data: `Server received: ${messageString}` }));
-        } catch (e) {
-            console.error('[WebSocket] Error processing message:', e);
-            ws.send(JSON.stringify({ type: 'error', error: 'Failed to process message on server.' }));
-        }
-    });
-
-    ws.on('close', (code, reason) => {
-        const reasonString = reason.toString();
-        console.log(`[WebSocket] Connection from ${clientIp} closed. Code: ${code}, Reason: ${reasonString}`);
-    });
-
-    ws.on('error', (error) => {
-        console.error(`[WebSocket] Error from client ${clientIp}:`, error);
-    });
-
-    // Send a welcome message
-    ws.send(JSON.stringify({ type: 'system-message', message: 'Welcome! WebSocket connection successful (Debug Mode).' }));
-    // Send enable input message (assuming terminal.js handles this)
-    ws.send(JSON.stringify({ type: 'enable_input' }));
-
-    // --- Temporarily bypass the original handler ---
-    // handleWebSocketConnection(ws, req);
+      // Use the original handler you imported
+      console.log(`[WebSocket] Passing connection to handleWebSocketConnection for path: ${req.url}`); // Add log
+      handleWebSocketConnection(ws, req);
   });
-  // --- END SIMPLIFIED HANDLER ---
+  // --- END RESTORED HANDLER ---
 }
 
 /**
