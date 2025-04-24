@@ -33,12 +33,19 @@ class WebComm {
             this.rejectConnectionPromise = reject;
         });
 
+        // Determine the WebSocket protocol based on the page's protocol
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        // Use the page's host for the WebSocket connection
+        const wsHost = window.location.host;
+        // Construct the WebSocket URL (assuming the WebSocket server runs on the same host and root path or a specific path like /ws)
+        // If your WebSocket server is on a different path, adjust it here (e.g., `${wsProtocol}//${wsHost}/websocket-path`)
+        const wsUrl = `${wsProtocol}//${wsHost}`;
 
-        console.log(`Attempting to connect to WebSocket: ${this.url}`);
+        console.log(`Attempting to connect to WebSocket: ${wsUrl}`);
         this.triggerHandler('connection', { connected: false, reason: 'Connecting...' }); // Notify UI
 
         try {
-            this.ws = new WebSocket(this.url);
+            this.ws = new WebSocket(wsUrl);
         } catch (error) {
             console.error("WebSocket constructor failed:", error);
             this.isConnecting = false;
@@ -47,7 +54,6 @@ class WebComm {
             this.scheduleReconnect();
             return this.connectionPromise; // Return the pending promise which will be rejected
         }
-
 
         this.ws.onopen = () => {
             console.log("WebSocket connection established.");
@@ -111,7 +117,6 @@ class WebComm {
         }
     }
 
-
     scheduleReconnect() {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.error("Max WebSocket reconnect attempts reached. Giving up.");
@@ -174,7 +179,6 @@ class WebComm {
         };
         return this.send(JSON.stringify(message));
     }
-
 
     /**
      * Send a JSON message to the WebSocket server.
