@@ -120,7 +120,7 @@ export async function executeResearch(options = {}) {
         }
         // --- End FIX ---
 
-        // --- FIX: Public User Check - Moved to the top ---
+        // --- Public User Check - Moved to the top ---
         if (currentUser && currentUser.role === 'public') {
             effectiveError('Research command is not available for public users. Please /login to use this feature.');
             return { success: false, error: 'Permission denied for public user', handled: true, keepDisabled: false }; // Enable input after error

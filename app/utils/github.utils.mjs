@@ -21,75 +21,65 @@ import { Buffer } from 'buffer';
  * @throws {Error} If upload fails.
  */
 export async function uploadToGitHub(config, repoPath, content, commitMessage, outputFn = console.log, errorFn = console.error) {
+    // --- FIX: Pass output/error functions to subsequent calls ---
+    const log = (...args) => outputFn('[GitHub Upload]', ...args);
+    const errLog = (...args) => errorFn('[GitHub Upload]', ...args);
+    // --- END FIX ---
+
     if (!config || !config.token || !config.owner || !config.repo || !config.branch) {
-        errorFn("[GitHub Upload] GitHub configuration (token, owner, repo, branch) is incomplete.");
+        errLog("GitHub configuration (token, owner, repo, branch) is incomplete.");
         throw new Error("GitHub configuration (token, owner, repo, branch) is incomplete.");
     }
     if (!repoPath || content === undefined || !commitMessage) {
-        errorFn("[GitHub Upload] Missing parameters for GitHub upload (repoPath, content, commitMessage).");
+        errLog("Missing parameters for GitHub upload (repoPath, content, commitMessage).");
         throw new Error("Missing parameters for GitHub upload (repoPath, content, commitMessage).");
     }
 
     // --- Log token length for verification, DO NOT log the token itself ---
-    outputFn(`[GitHub Upload] Using token (length: ${config.token.length}) for ${config.owner}/${config.repo}`);
+    log(`Using token (length: ${config.token.length}) for ${config.owner}/${config.repo}`);
     // ---
 
-    const octokit = new Octokit({ auth: config.token });
-
-    const cleanRepoPath = repoPath.startsWith('/') ? repoPath.substring(1) : repoPath; // Ensure no leading slash
-
-    let sha;
-    try {
-        // Check if the file already exists to get its SHA (needed for update)
-        outputFn(`[GitHub Upload] Checking for existing file at path: ${cleanRepoPath} on branch ${config.branch}`);
-        const { data: existingFile } = await octokit.rest.repos.getContent({ // Use octokit.rest
-            owner: config.owner,
-            repo: config.repo,
-            path: cleanRepoPath,
-            ref: config.branch,
-        });
-        if (existingFile && existingFile.sha) {
-            sha = existingFile.sha;
-            outputFn(`[GitHub Upload] Found existing file with SHA: ${sha}`);
-        }
-    } catch (error) {
-        if (error.status === 404) {
-            // 404 means the file doesn't exist, which is fine for creation.
-            outputFn(`[GitHub Upload] File does not exist at path: ${cleanRepoPath}. Creating new file.`);
-        } else {
-            errorFn("[GitHub Upload] Error checking existing file:", error.response?.data || error.message);
-            const credentialHint = (error.status === 401 || error.message?.includes('Bad credentials'))
-                ? ' Check if your GitHub token is valid and has `repo` scope.'
-                : '';
-            const statusHint = error.status ? ` (Status: ${error.status})` : '';
-            throw new Error(`Failed to check existing file on GitHub: ${error.message || 'Unknown error'}${statusHint}.${credentialHint}`);
-        }
-    }
+    const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${repoPath}`;
+    const headers = {
+        Authorization: `Bearer ${config.token}`,
+        'Content-Type': 'application/json',
+    };
 
     try {
-        outputFn(`[GitHub Upload] Creating/updating file at path: ${cleanRepoPath}`);
-        const { data: commitData } = await octokit.rest.repos.createOrUpdateFileContents({ // Use octokit.rest
-            owner: config.owner,
-            repo: config.repo,
-            path: cleanRepoPath,
+        // Check if the file already exists
+        const existingFileResponse = await fetch(`${url}?ref=${config.branch}`, { headers });
+        let sha = null;
+
+        if (existingFileResponse.ok) {
+            const existingFile = await existingFileResponse.json();
+            sha = existingFile.sha; // Use the SHA for updating the file
+        }
+
+        // Prepare the payload
+        const payload = {
             message: commitMessage,
             content: Buffer.from(content).toString('base64'),
             branch: config.branch,
-            sha: sha, // Include SHA if updating an existing file
-        });
-        outputFn(`[GitHub Upload] File uploaded successfully. Commit: ${commitData.commit.sha}`);
-
-        return {
-            commitUrl: commitData.commit.html_url,
-            fileUrl: commitData.content.html_url,
-            sha: commitData.commit.sha, // Return sha as well
+            ...(sha && { sha }), // Include SHA if updating an existing file
         };
+
+        // Upload or update the file
+        const response = await fetch(url, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+            const errorDetails = await response.json();
+            throw new Error(`Failed to upload file to GitHub: ${errorDetails.message} (Status: ${response.status})`);
+        }
+
+        const result = await response.json();
+        outputFn(`File uploaded successfully: ${result.content.html_url}`);
+        return result;
     } catch (error) {
-        errorFn("[GitHub Upload] GitHub Upload Error Details:", error.response?.data || error.message);
-        const credentialHint = (error.status === 401 || error.message?.includes('Bad credentials'))
-            ? ' Check if your GitHub token is valid and has `repo` scope.'
-            : '';
-        const statusHint = error.status ? ` (Status: ${error.status})` : '';
-        throw new Error(`Failed to upload file to GitHub: ${error.message || 'Unknown error'}${statusHint}.${credentialHint}`);
+        errorFn(`Error performing action 'upload': ${error.message}`);
+        throw error;
     }
 }

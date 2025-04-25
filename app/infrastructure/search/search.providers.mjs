@@ -25,8 +25,8 @@ export class BraveSearchProvider {
 
     console.log(`[BraveSearchProvider] Initialized using ${options.apiKey ? 'User-Provided' : 'Global Environment'} API Key.`);
 
-    this.rateLimiter = new RateLimiter(5000); // 5 seconds base delay
-    this.retryDelay = 2000; // Start with 2 seconds for retries
+    this.rateLimiter = new RateLimiter(10000); // 10 seconds base delay
+    this.retryDelay = 5000; // Start with 5 seconds for retries
     this.maxRetries = 3;
     this.outputFn = options.outputFn || console.log; // Add outputFn
     this.errorFn = options.errorFn || console.error; // Add errorFn

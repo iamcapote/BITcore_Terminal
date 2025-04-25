@@ -363,18 +363,40 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
  */
 export async function generateSummary({ apiKey, query, learnings = [], metadata = null, outputFn = console.log, errorFn = console.error }) {
   if (!apiKey) throw new Error('API key is required for generateSummary.');
-  if (!learnings || learnings.length === 0) {
-    errorFn("[generateSummary] No learnings provided to generate summary.");
-    return `No summary could be generated for "${query}" as no key learnings were extracted during the research process.`;
+
+  // Filter out potential error messages before checking length
+  // Assumes error messages consistently start with "Error processing" or similar patterns added in ResearchPath
+  const validLearnings = learnings.filter(l =>
+      typeof l === 'string' &&
+      !l.toLowerCase().startsWith('error processing') &&
+      !l.toLowerCase().startsWith('error generating') &&
+      !l.toLowerCase().startsWith('error during research path')
+  );
+
+  if (validLearnings.length === 0) {
+    errorFn(`[generateSummary] No valid learnings provided to generate summary for "${query}". Original learnings array (may contain errors):`, learnings);
+    // Provide a more informative fallback message including any errors found
+    let fallbackMessage = `No valid summary could be generated for "${query}" as no key learnings were extracted or processed successfully during the research process.`;
+    const errorLearnings = learnings.filter(l => typeof l === 'string' && !validLearnings.includes(l)); // Get the items filtered out
+    if (errorLearnings.length > 0) {
+        fallbackMessage += "\n\nIssues encountered during research:\n" + errorLearnings.map(e => `- ${e}`).join('\n');
+    } else if (learnings.length === 0) {
+        // This case means the learnings array was truly empty, which indicates a deeper issue upstream.
+        fallbackMessage += "\n\nReason: The research process returned no information or errors.";
+    }
+    return fallbackMessage;
   }
 
+  // Proceed with summary generation using only valid learnings
   let prompt = `Write a comprehensive narrative summary about "${query}" based *only* on the following key learnings:\n\n`;
 
   if (metadata) {
-    prompt += `Original Query Context:\n${metadata}\n\nUse this context to help structure the summary around the core topic.\n\n`;
+    // Ensure metadata is stringified if it's an object
+    const metadataString = typeof metadata === 'object' ? JSON.stringify(metadata, null, 2) : String(metadata);
+    prompt += `Original Query Context:\n${metadataString}\n\nUse this context to help structure the summary around the core topic.\n\n`;
   }
 
-  prompt += `Key Learnings:\n${learnings.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\n`;
+  prompt += `Key Learnings:\n${validLearnings.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\n`;
   prompt += `Synthesize these learnings into a well-structured, coherent report. Ensure technical accuracy based *only* on the provided points. Format the output as Markdown.`;
 
   const result = await generateOutput({
@@ -392,9 +414,9 @@ export async function generateSummary({ apiKey, query, learnings = [], metadata 
     return result.data.reportMarkdown;
   }
 
-  errorFn(`[generateSummary] Failed to generate summary via LLM. Error: ${result.error}. Returning basic list.`);
-  // Fallback: return the learnings list if summary fails
-  return `Failed to generate a narrative summary. Key Learnings:\n${learnings.map(l => `- ${l}`).join('\n')}`;
+  errorFn(`[generateSummary] Failed to generate summary via LLM. Error: ${result.error}. Returning basic list of valid learnings.`);
+  // Fallback: return the valid learnings list if summary fails
+  return `Failed to generate a narrative summary via LLM. Key Learnings Found:\n${validLearnings.map(l => `- ${l}`).join('\n')}`;
 }
 
 /**

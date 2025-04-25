@@ -95,7 +95,12 @@ export class OutputManager {
              try {
                 // Ensure logHandler is called with appropriate context if needed,
                 // but the main issue is calling _logInternal itself.
-                this.logHandler(level, message);
+                // Special handling for debug messages based on environment variable
+                if (level === 'debug' && process.env.DEBUG_MODE !== 'true') {
+                    // Do nothing if debug mode is off
+                } else {
+                    this.logHandler(level, message);
+                }
              } catch (handlerError) {
                  console.error("Error in custom log handler:", handlerError);
                  // Fallback to console.error if handler fails
@@ -103,21 +108,26 @@ export class OutputManager {
              }
         } else {
             // Fallback if no handler is set (shouldn't happen with default)
-            console.log(`[${level.toUpperCase()}] ${message}`);
+            // Apply debug mode check here too for fallback
+            if (level !== 'debug' || process.env.DEBUG_MODE === 'true') {
+                console.log(`[${level.toUpperCase()}] ${message}`);
+            }
         }
 
         // Broadcast to WebSocket clients regardless of the console logHandler
-        // Check if there are clients before broadcasting
-        if (this.webSocketClients.size > 0) {
+        // Check if there are clients and if the level should be broadcast
+        if (this.webSocketClients.size > 0 && (level !== 'debug' || process.env.DEBUG_MODE === 'true')) {
             const messageType = level === 'error' ? 'error' : 'output'; // Basic mapping
             const payload = { type: messageType };
+
+            // Add prefix for non-error messages for clarity in UI
+            const prefix = level !== 'info' ? `[${level.toUpperCase()}] ` : '';
+
             if (level === 'error') {
-                payload.error = message;
+                payload.error = message; // Send errors under 'error' key
             } else {
-                payload.data = message; // Assuming 'output' type uses 'data'
+                payload.data = `${prefix}${message}`; // Send other levels under 'data' key with prefix
             }
-            // Add level info for non-error messages if desired
-            // if (level !== 'error') payload.level = level;
 
             this.broadcast(payload);
         }
@@ -160,5 +170,7 @@ export class OutputManager {
 // Export a singleton instance
 export const output = new OutputManager();
 
-// Ensure outputManager is exported
-export const outputManager = new OutputManager();
+// Ensure outputManager is exported - REMOVE DUPLICATE EXPORT
+// export const outputManager = new OutputManager();
+// Use the singleton 'output' instance everywhere instead.
+export { output as outputManager };

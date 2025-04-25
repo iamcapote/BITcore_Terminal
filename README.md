@@ -230,19 +230,28 @@ README.md                          # This file
 
 ## API Key Management
 1. **Key Setup**
-   - `/keys set --venice=<key> --brave=<key>`: Sets Brave Search and Venice LLM API keys.
-   - `/keys set --github-token=<pat> --github-owner=<user_or_org> --github-repo=<repo_name> --github-branch=<branch>`: Sets GitHub configuration for uploading research results and persisting memory. The token requires `repo` scope.
+   - Use the `/keys set <service> [options]` command after logging in.
+   - **Brave/Venice:**
+     - `/keys set brave <your_brave_api_key>`
+     - `/keys set venice <your_venice_api_key>`
+     - To clear: `/keys set brave ""` or `/keys set venice ""`
+   - **GitHub:** Requires flags. Owner, Repo, and Token are mandatory for persistence features.
+     - `/keys set github --github-owner=<user_or_org> --github-repo=<repo_name> --github-token=<your_github_pat> [--github-branch=<branch_name>]`
+     - Example (minimum required):
+       `/keys set github --github-owner=bitwikiorg --github-repo=BITCORE_MEMORY --github-token=ghp_YourTokenHere`
+     - Example (with specific branch):
+       `/keys set github --github-owner=bitwikiorg --github-repo=BITCORE_MEMORY --github-token=ghp_YourTokenHere --github-branch=dev`
+     - The GitHub token needs `repo` scope. Branch defaults to `main` if not specified.
    - Keys are stored encrypted per user (`app/features/auth/user-manager.mjs`).
    - Environment variables (`BRAVE_API_KEY`, `VENICE_API_KEY`, `GITHUB_TOKEN`, etc.) used as fallback *only if user keys are not set or cannot be decrypted*.
 
 2. **Key Checks**
-   - `/keys check`: Lists available keys (masked) and GitHub configuration status.
+   - `/keys check` or `/keys stat`: Lists configuration status for Brave, Venice, and GitHub.
    - `/keys test`: Attempts to use keys/token to validate them against the respective APIs.
-   - Both require password in Web-CLI (`wsPrompt`) or CLI.
 
 3. **Encryption**
    - AES-256-GCM with salts per user (`app/features/auth/encryption.mjs`).
-   - Requires user password to decrypt keys/token for use (`app/features/auth/user-manager.mjs`, prompted via `wsPrompt` or CLI).
+   - Requires user password internally to decrypt keys/token for use (`app/features/auth/user-manager.mjs`).
 
 ---
 
@@ -417,4 +426,13 @@ The chat system enables interactive conversations with an AI, featuring context 
 ---
 
 ## Validation & Accuracy Check
-This README aims to accurately reflect the application state based on the provided file structure and seed content as of April 23, 2025. Key aspects verified include dual-mode operation, Web-CLI parity, server-driven interaction modes, research pipeline flow, token classification integration, authentication/encryption mechanisms, chat/memory system features, post-research actions, and file structure. **Testing the Web-CLI interaction flows, especially prompt handling and mode transitions, remains crucial.**
+This README aims to accurately reflect the application state based on the provided file structure and seed content as of April 25, 2025. Key aspects verified include dual-mode operation, Web-CLI parity, server-driven interaction modes, research pipeline flow, token classification integration, authentication/encryption mechanisms, chat/memory system features, post-research actions, and file structure. **Testing the Web-CLI interaction flows, especially prompt handling and mode transitions, remains crucial.**
+
+
+---
+
+do not delete (we need this to restart app)
+
+
+> `git pull origin main`
+> `pm2 restart mcp-backend`

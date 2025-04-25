@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { ResearchEngine } from '../../infrastructure/research/research.engine.mjs';
 import { cleanQuery } from '../../utils/research.clean-query.mjs';
 // --- FIX: Remove unused displayHelp import ---
-import { commands as commandFunctions } from '../../commands/index.mjs';
+import { commands, parseCommandArgs, getHelpText } from '../../commands/index.mjs';
 import { output } from '../../utils/research.output-manager.mjs';
 import { userManager } from '../auth/user-manager.mjs';
 import { MemoryManager } from '../../infrastructure/memory/memory.manager.mjs';
@@ -19,6 +19,7 @@ import { executeResearch } from '../../commands/research.cli.mjs';
 // --- FIX: Removed incorrect import ---
 // import { wsPrompt } from './ws-prompt.util.mjs'; // wsPrompt is defined in this file
 import { uploadToGitHub } from '../../utils/github.utils.mjs'; // Import the new utility
+import { outputManager } from '../../utils/research.output-manager.mjs'; // Use outputManager for logging
 
 const router = express.Router();
 
@@ -410,478 +411,456 @@ function wsErrorHelper(ws, error, enableInputAfterError = true) {
  * Handles 'command' type messages from the WebSocket client.
  * Executes the command and manages client input state.
  * @param {WebSocket} ws - The WebSocket client connection.
- * @param {object} message - The parsed message object { type: 'command', command, args, password? }.
+ * @param {object} message - The parsed message object { type: 'command', command, args, password? }. NOTE: This structure might be deprecated if parsing happens earlier.
  * @param {object} session - The session data object.
  * @returns {Promise<boolean>} - True if input should be enabled after processing, false otherwise.
  */
 async function handleCommandMessage(ws, message, session) {
-  // --- FIX: Prevent top-level commands during active chat ---
-  if (session.isChatActive && message.command !== 'help') { // Allow /help in chat
-      console.warn(`[WebSocket] Attempted to run top-level command '/${message.command}' while chat is active (Session ${session.sessionId}).`);
-      wsErrorHelper(ws, `Cannot run top-level commands while in chat mode. Use chat messages or in-chat commands (e.g., /exit).`, true); // Ensure input enabled after error
-      return false; // wsErrorHelper handles enabling input by default handler (wsErrorHelper handles it)
-  }
-  // --- End FIX ---
+    // --- Refactored Start: Use parseCommandArgs ---
+    // Construct the full command string from the message payload for parsing
+    // Assuming message = { type: 'command', command: 'keys', args: ['set', 'github', '--flag=value'] }
+    const fullCommandString = `/${message.command} ${message.args.join(' ')}`;
+    const { commandName, positionalArgs, flags } = parseCommandArgs(fullCommandString);
+    const passwordFromPayload = message.password; // Get password if sent in payload
 
-  const { command, args = [], password: passwordFromPayload } = message;
-  let enableInputAfter = true; // Default to enabling input after command finishes
-  const commandString = `/${command} ${args.join(' ')}`; // For logging
-  let isInteractiveResearch = false; // Flag for interactive flow
+    outputManager.debug(`[handleCommandMessage] Parsed: name='${commandName}', args=${JSON.stringify(positionalArgs)}, flags=${JSON.stringify(flags)}`);
 
-  // --- Argument Parsing & Options Setup ---
-  const options = {
-      positionalArgs: [], // Initialize positionalArgs
-      // Add other default flags if necessary
-      depth: 2, // Default research depth
-      breadth: 3, // Default research breadth
-      classify: false, // Default research classification
-      verbose: false, // Default verbosity
-      memory: false, // Default chat memory
-      // --- Initialize output/error to null initially ---
-      output: null,
-      error: null,
-  };
+    if (!commandName) {
+        wsErrorHelper(ws, 'Invalid command format.', true);
+        return false; // wsErrorHelper handles enabling
+    }
+    // --- End Refactored Start ---
 
-  try {
-    // Simple flag/option parsing (assumes --key=value or --flag)
-    for (const arg of args) {
-      if (arg.startsWith('--')) {
-        const [key, value] = arg.substring(2).split('=');
-        if (value !== undefined) {
-          // Handle flags with values (e.g., --depth=3)
-          options[key] = !isNaN(parseInt(value)) ? parseInt(value) : value;
+    // --- FIX: Prevent top-level commands during active chat ---
+    if (session.isChatActive && commandName !== 'help') { // Allow /help in chat
+        console.warn(`[WebSocket] Attempted to run top-level command '/${commandName}' while chat is active (Session ${session.sessionId}).`);
+        wsErrorHelper(ws, `Cannot run top-level commands while in chat mode. Use chat messages or in-chat commands (e.g., /exit).`, true); // Ensure input enabled after error
+        return false; // wsErrorHelper handles enabling input by default handler (wsErrorHelper handles it)
+    }
+    // --- End FIX ---
+
+    let enableInputAfter = true; // Default to enabling input after command finishes
+    let isInteractiveResearch = false; // Flag for interactive flow
+
+    // --- Options Setup ---
+    // Use parsed values directly
+    const options = {
+        positionalArgs: positionalArgs,
+        flags: flags,
+        // Add other default flags if necessary
+        depth: flags.depth || 2, // Default research depth from flags or default
+        breadth: flags.breadth || 3, // Default research breadth from flags or default
+        classify: flags.classify || false, // Default research classification
+        verbose: flags.verbose || false, // Default verbosity
+        memory: flags.memory || false, // Default chat memory
+        // --- Initialize output/error to null initially ---
+        output: null,
+        error: null,
+        // Query is now derived later if needed, or comes from positionalArgs
+    };
+    // --- End Options Setup ---
+
+
+    // --- Define output/error handlers ---
+    const commandOutput = (data) => {
+        // Send structured messages directly or use helper
+        if (typeof data === 'object' && data !== null && data.type) {
+            safeSend(ws, data); // Send structured message as-is
         } else {
-          // Handle boolean flags (e.g., --memory)
-          options[key] = true;
+            wsOutputHelper(ws, data); // Use helper for standard output
         }
-      } else {
-        // Collect positional arguments
-        options.positionalArgs.push(arg);
-      }
+        // Don't modify enableInputAfter here based on output data
+    };
+    const commandError = (data) => {
+        // Errors should generally re-enable input
+        console.error(`[commandError] Received error:`, data); // Log the actual error data
+        wsErrorHelper(ws, data, true); // Use helper to send error and enable input
+        enableInputAfter = false; // Signal that wsErrorHelper handled the input state
+    };
+    // --- FIX: Define debug handler based on verbose flag ---
+    const commandDebug = (data) => {
+        // Only send debug messages if verbose flag is set OR DEBUG_MODE is true
+        if (options.verbose || process.env.DEBUG_MODE === 'true') {
+            // Prefix debug messages for clarity in UI
+            wsOutputHelper(ws, `[DEBUG] ${data}`);
+        }
+        // Also log to server console if DEBUG_MODE is true
+        if (process.env.DEBUG_MODE === 'true') {
+            console.log(`[WS DEBUG][${session.sessionId}] ${data}`);
+        }
+    };
+
+
+    // --- Inject WebSocket context AND output/error/debug handlers into options ---
+    options.webSocketClient = ws;
+    options.isWebSocket = true;
+    options.session = session;
+    options.wsPrompt = wsPrompt;
+    options.output = commandOutput; // Assign defined handler
+    options.error = commandError;   // Assign defined handler
+    options.debug = commandDebug;   // Assign defined handler
+    // --- End Inject ---
+
+    // --- Special Handling for /login in WebSocket ---
+    // Use commandName and already parsed positionalArgs
+    if (commandName === 'login') {
+        const username = options.positionalArgs[0];
+        let providedPassword = options.positionalArgs[1] || passwordFromPayload; // Password from args or payload
+
+        if (!username) {
+            commandOutput(`Current user: ${session.username} (${session.role})`);
+            return true; // Input enabled
+        }
+
+        if (session.username === username && session.role !== 'public') {
+            commandOutput(`Already logged in as ${username}`);
+            return true; // Input enabled
+        }
+
+        try {
+            // Prompt for password if not provided
+            if (!providedPassword) {
+                // Input remains disabled while prompting
+                enableInputAfter = false;
+                // Prompt without context
+                providedPassword = await wsPrompt(ws, session, `Enter password for ${username}: `, PROMPT_TIMEOUT_MS, true, null);
+                // Input remains disabled, wsPrompt resolution doesn't re-enable it.
+                // The rest of the login logic will determine the final state.
+            }
+
+            // Authenticate user using userManager (does not modify global state)
+            const userData = await userManager.authenticateUser(username, providedPassword);
+            const prevUsername = session.username;
+            session.username = userData.username;
+            session.role = userData.role;
+            session.password = providedPassword; // Cache the successful password
+            // --- FIX: Cache user data in session ---
+            session.currentUser = await userManager.getUserData(session.username); // Cache full user data
+            console.log(`[WebSocket] Session ${session.sessionId} updated after login. User: ${prevUsername} -> ${session.username}, Role: ${session.role}`);
+
+            // Send success message and update client state
+            safeSend(ws, {
+                type: 'login_success',
+                username: session.username,
+                role: session.role,
+                message: `Logged in as ${session.username} (${session.role})`
+            });
+            safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
+            enableInputAfter = true; // Enable input after successful login
+        } catch (error) {
+            console.error(`[WebSocket] Login failed for ${username} (Session ${session.sessionId}): ${error.message}`);
+            session.password = null; // Clear cached password on failure
+            session.currentUser = null; // Clear cached user data on failure
+            commandError(`Login failed: ${error.message}`); // commandError sets enableInputAfter = false
+            enableInputAfter = false; // Explicitly ensure it's false
+        }
+
+        console.log(`[WebSocket] Returning from handleCommandMessage (/login). Final enableInputAfter: ${enableInputAfter}`);
+        return enableInputAfter; // Return final decision
     }
-    // Extract query from positional args for direct command call (e.g., /research topic here)
-    options.query = options.positionalArgs.join(' ');
-  } catch (parseError) {
-    console.error(`[WebSocket] Error parsing arguments for ${commandString}:`, parseError);
-    // --- FIX: Use wsErrorHelper directly if options.error isn't set yet ---
-    wsErrorHelper(ws, `Error parsing arguments: ${parseError.message}`, true);
-    return false; // wsErrorHelper handled enabling input
-  }
+    // --- End Special Handling for /login ---
 
-  // --- Define output/error handlers ---
-  const commandOutput = (data) => {
-    // Send structured messages directly or use helper
-    if (typeof data === 'object' && data !== null && data.type) {
-      safeSend(ws, data); // Send structured message as-is
-    } else {
-      wsOutputHelper(ws, data); // Use helper for standard output
-    }
-    // Don't modify enableInputAfter here based on output data
-  };
-  const commandError = (data) => {
-    // Errors should generally re-enable input
-    console.error(`[commandError] Received error:`, data); // Log the actual error data
-    wsErrorHelper(ws, data, true); // Use helper to send error and enable input
-    enableInputAfter = false; // Signal that wsErrorHelper handled the input state
-  };
-
-  // --- FIX: Inject WebSocket context AND output/error handlers into options ---
-  options.webSocketClient = ws;
-  options.isWebSocket = true;
-  options.session = session;
-  options.wsPrompt = wsPrompt;
-  options.output = commandOutput; // Assign defined handler
-  options.error = commandError;   // Assign defined handler
-  // --- End FIX ---
-
-  // --- Special Handling for /login in WebSocket ---
-  if (command === 'login') {
-    // Use positionalArgs for username and password
-    const username = options.positionalArgs[0];
-    let providedPassword = options.positionalArgs[1] || passwordFromPayload; // Password from args or payload
-
-    if (!username) {
-      commandOutput(`Current user: ${session.username} (${session.role})`);
-      return true; // Input enabled
-    }
-
-    if (session.username === username && session.role !== 'public') {
-        commandOutput(`Already logged in as ${username}`);
-        return true; // Input enabled
-    }
-
+    // --- Fetch currentUser data BEFORE specific command logic ---
     try {
-        // Prompt for password if not provided
-        if (!providedPassword) {
-           // Input remains disabled while prompting
-           enableInputAfter = false;
-           // Prompt without context
-           providedPassword = await wsPrompt(ws, session, `Enter password for ${username}: `, PROMPT_TIMEOUT_MS, true, null);
-           // Input remains disabled, wsPrompt resolution doesn't re-enable it.
-           // The rest of the login logic will determine the final state.
+        // --- FIX: Use cached user data if available ---
+        if (session.currentUser && session.currentUser.username === session.username) {
+            options.currentUser = session.currentUser;
+            console.log(`[WebSocket] Using cached user data for command execution.`);
+        } else if (session.username !== 'public') {
+            options.currentUser = await userManager.getUserData(session.username);
+            if (!options.currentUser) {
+                commandError(`Error: Could not load user data for ${session.username}.`);
+                return false; // commandError handled enabling input
+            }
+            session.currentUser = options.currentUser; // Cache fetched data
+        } else {
+            options.currentUser = await userManager.getUserData('public'); // Get public user data
+            session.currentUser = options.currentUser; // Cache public user data
         }
-
-        // Authenticate user using userManager (does not modify global state)
-        const userData = await userManager.authenticateUser(username, providedPassword);
-        const prevUsername = session.username;
-        session.username = userData.username;
-        session.role = userData.role;
-        session.password = providedPassword; // Cache the successful password
-        // --- FIX: Cache user data in session ---
-        session.currentUser = await userManager.getUserData(session.username); // Cache full user data
-        console.log(`[WebSocket] Session ${session.sessionId} updated after login. User: ${prevUsername} -> ${session.username}, Role: ${session.role}`);
-
-        // Send success message and update client state
-        safeSend(ws, {
-            type: 'login_success',
-            username: session.username,
-            role: session.role,
-            message: `Logged in as ${session.username} (${session.role})`
-        });
-        safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
-        enableInputAfter = true; // Enable input after successful login
-    } catch (error) {
-        console.error(`[WebSocket] Login failed for ${username} (Session ${session.sessionId}): ${error.message}`);
-        session.password = null; // Clear cached password on failure
-        session.currentUser = null; // Clear cached user data on failure
-        commandError(`Login failed: ${error.message}`); // commandError sets enableInputAfter = false
-        enableInputAfter = false; // Explicitly ensure it's false
+        // *** FIX: Assign fetched user data to requestingUser as expected by executeUsers ***
+        options.requestingUser = options.currentUser;
+        console.log(`[WebSocket] Fetched/used user data for command execution (assigned to currentUser and requestingUser): ${options.requestingUser?.username} (${options.requestingUser?.role})`);
+    } catch (userError) {
+        commandError(`Error fetching user data: ${userError.message}`);
+        return false; // commandError handled enabling input
     }
+    // --- End Fetch currentUser ---
 
-    console.log(`[WebSocket] Returning from handleCommandMessage (/login). Final enableInputAfter: ${enableInputAfter}`);
-    return enableInputAfter; // Return final decision
-  }
-  // --- End Special Handling for /login ---
+    // --- Interactive Research Flow ---
+    // Use commandName and check positionalArgs length for query
+    if (commandName === 'research' && options.positionalArgs.length === 0 && Object.keys(options.flags).length === 0) { // Trigger interactive if no args/flags
+        isInteractiveResearch = true;
+        options.output('Starting interactive research setup...');
+        enableInputAfter = false; // Disable input while prompting
+        try {
+            // Prompt for query - NO CONTEXT NEEDED HERE
+            const queryInput = await wsPrompt(ws, session, 'Please enter your research query: ', PROMPT_TIMEOUT_MS, false, null);
+            if (!queryInput) throw new Error('Research query cannot be empty.');
+            // Add query to positionalArgs for consistency? Or keep separate? Let's keep separate for now.
+            options.query = queryInput;
 
-  // --- Fetch currentUser data BEFORE specific command logic ---
-  try {
-      // --- FIX: Use cached user data if available ---
-      if (session.currentUser && session.currentUser.username === session.username) {
-          options.currentUser = session.currentUser;
-          console.log(`[WebSocket] Using cached user data for command execution.`);
-      } else if (session.username !== 'public') {
-          options.currentUser = await userManager.getUserData(session.username);
-          if (!options.currentUser) {
-              commandError(`Error: Could not load user data for ${session.username}.`);
-              return false; // commandError handled enabling input
-          }
-          session.currentUser = options.currentUser; // Cache fetched data
-      } else {
-          options.currentUser = await userManager.getUserData('public'); // Get public user data
-          session.currentUser = options.currentUser; // Cache public user data
-      }
-      // *** FIX: Assign fetched user data to requestingUser as expected by executeUsers ***
-      options.requestingUser = options.currentUser;
-      console.log(`[WebSocket] Fetched/used user data for command execution (assigned to currentUser and requestingUser): ${options.requestingUser?.username} (${options.requestingUser?.role})`);
-  } catch (userError) {
-      commandError(`Error fetching user data: ${userError.message}`);
-      return false; // commandError handled enabling input
-  }
-  // --- End Fetch currentUser ---
+            // Prompt for breadth - NO CONTEXT NEEDED HERE
+            const breadthInput = await wsPrompt(ws, session, `Enter research breadth (queries per level) [${options.breadth}]: `, PROMPT_TIMEOUT_MS, false, null);
+            if (breadthInput && !isNaN(parseInt(breadthInput))) {
+                options.breadth = parseInt(breadthInput);
+            }
 
-  // --- Interactive Research Flow ---
-  if (command === 'research' && !options.query) {
-      isInteractiveResearch = true;
-      // --- FIX: Use options.output ---
-      options.output('Starting interactive research setup...');
-      enableInputAfter = false; // Disable input while prompting
-      try {
-          // Prompt for query - NO CONTEXT NEEDED HERE
-          const queryInput = await wsPrompt(ws, session, 'Please enter your research query: ', PROMPT_TIMEOUT_MS, false, null);
-          if (!queryInput) throw new Error('Research query cannot be empty.');
-          options.query = queryInput; // Add query to options
+            // Prompt for depth - NO CONTEXT NEEDED HERE
+            const depthInput = await wsPrompt(ws, session, `Enter research depth (levels) [${options.depth}]: `, PROMPT_TIMEOUT_MS, false, null);
+            if (depthInput && !isNaN(parseInt(depthInput))) {
+                options.depth = parseInt(depthInput);
+            }
 
-          // Prompt for breadth - NO CONTEXT NEEDED HERE
-          const breadthInput = await wsPrompt(ws, session, `Enter research breadth (queries per level) [${options.breadth}]: `, PROMPT_TIMEOUT_MS, false, null);
-          if (breadthInput && !isNaN(parseInt(breadthInput))) {
-              options.breadth = parseInt(breadthInput);
-          }
+            // Prompt for classification - NO CONTEXT NEEDED HERE
+            const classifyInput = await wsPrompt(ws, session, 'Use token classification? (y/n) [n]: ', PROMPT_TIMEOUT_MS, false, null);
+            options.classify = classifyInput.toLowerCase() === 'y';
 
-          // Prompt for depth - NO CONTEXT NEEDED HERE
-          const depthInput = await wsPrompt(ws, session, `Enter research depth (levels) [${options.depth}]: `, PROMPT_TIMEOUT_MS, false, null);
-          if (depthInput && !isNaN(parseInt(depthInput))) {
-              options.depth = parseInt(depthInput);
-          }
+            // Confirm parameters before proceeding
+            // --- FIX: Use options.output ---
+            options.output(`Research parameters set: Query="${options.query}", Breadth=${options.breadth}, Depth=${options.depth}, Classify=${options.classify}`);
+            // Input remains disabled until research command finishes
+        } catch (promptError) {
+            // --- FIX: Use options.error ---
+            options.error(`Interactive setup failed: ${promptError.message}`);
+            // --- FIX: wsPrompt error handler enables input, so return false ---
+            return false; // Keep input disabled (error handler enables)
+        }
+    } else if (commandName === 'research') {
+        // If not interactive, derive query from positionalArgs
+        options.query = options.positionalArgs.join(' ');
+    }
+    // --- End Interactive Flow ---
 
-          // Prompt for classification - NO CONTEXT NEEDED HERE
-          const classifyInput = await wsPrompt(ws, session, 'Use token classification? (y/n) [n]: ', PROMPT_TIMEOUT_MS, false, null);
-          options.classify = classifyInput.toLowerCase() === 'y';
+    // --- Command Lookup ---
+    // Use the normalized commandName from parseCommandArgs
+    const commandFunction = commands[commandName];
+    // --- End Command Lookup ---
 
-          // Confirm parameters before proceeding
-          // --- FIX: Use options.output ---
-          options.output(`Research parameters set: Query="${options.query}", Breadth=${options.breadth}, Depth=${options.depth}, Classify=${options.classify}`);
-          // Input remains disabled until research command finishes
-      } catch (promptError) {
-          // --- FIX: Use options.error ---
-          options.error(`Interactive setup failed: ${promptError.message}`);
-          // --- FIX: wsPrompt error handler enables input, so return false ---
-          return false; // Keep input disabled (error handler enables)
-      }
-  }
-  // --- End Interactive Flow ---
-
-  // --- FIX: Check commandDefinition existence *after* interactive flow might set command to 'research' ---
-  // Also check if the execute function exists on the definition
-  const commandDefinition = commandFunctions[command];
-  // --- End FIX ---
-
-  // --- FIX: Allow /research even if not directly in commandFunctions map (already handled) ---
-  // The check below handles this.
-  if (!commandDefinition || typeof commandDefinition.execute !== 'function') {
-    // Special case: /research is handled differently (not directly in commandFunctions map)
-    if (command !== 'research') {
-        commandError(`Unknown command: /${command}. Type /help for available commands.`);
+    // --- Check if command exists ---
+    if (!commandFunction) {
+        // Handle unknown command (help is handled by its own entry in the commands map now)
+        commandError(`Unknown command: /${commandName}. Type /help for available commands.`);
         return false; // commandError handled state
     }
-    // If it IS research, proceed to the research-specific logic below
-  }
-  // --- End FIX ---
+    // --- End Check ---
 
-  // --- Password Handling (for commands other than login) ---
-  let finalPassword = passwordFromPayload; // Password might come directly in the command payload
-  // Check session cache if not in payload
-  if (!finalPassword && session.password) {
-      console.log(`[WebSocket] Using cached password for session ${session.sessionId}`);
-      finalPassword = session.password;
-  }
 
-  // Determine if the command *requires* a password check server-side
-  // Refined list based on command logic needing keys/admin rights
-  // --- FIX: Added 'upload' to needsPasswordCheckCommands for GitHub token ---
-  // 'upload' command doesn't exist, it's an action within handleInputMessage
-  // --- FIX: Use helper function ---
-  const requiresPasswordCheck = commandRequiresPassword(command);
-  // --- End FIX ---
-
-  let needsPasswordPrompt = false;
-  // When does the SERVER need to prompt?
-  // - If the command requires a password check AND
-  // - We don't have a password yet (not in payload, not in cache) AND
-  // - The specific command action necessitates it (refined check)
-  if (requiresPasswordCheck && !finalPassword) {
-      // Check if user is logged in (public users cannot trigger password prompts for these)
-      if (session.role === 'public') {
-          // Allow /chat and /research to proceed without password if public (they will fail later if keys are needed)
-          // But block other sensitive commands.
-          // --- FIX: Public users should not be able to run /chat or /research that require keys ---
-          // The checks within executeChat/executeResearch handle public users now.
-          // Block other sensitive commands for public users here.
-          if (command !== 'chat' && command !== 'research') {
-              commandError(`You must be logged in to use the /${command} command.`);
-              return false; // commandError handles input state
-          }
-      } else {
-          // Refine conditions based on command and args (using options.positionalArgs)
-          const actionArg = options.positionalArgs[0]?.toLowerCase(); // Common pattern for action
-          if (command === 'keys' && (actionArg === 'set' || actionArg === 'test')) {
-              needsPasswordPrompt = true;
-          } else if (command === 'password-change') {
-              needsPasswordPrompt = true; // Always needs current password
-          } else if (command === 'chat') {
-              // Chat needs password if API key isn't already decrypted/available
-              // Check if key exists first, prompt only if needed for retrieval
-              const hasKey = await userManager.hasApiKey('venice', session.username);
-              if (hasKey) needsPasswordPrompt = true; // Prompt if key exists but we don't have password
-          } else if (command === 'research') {
-              // ** Always prompt for research if password isn't available, as keys are required **
-              const hasBraveKey = await userManager.hasApiKey('brave', session.username);
-              const hasVeniceKey = await userManager.hasApiKey('venice', session.username);
-              // Prompt if *either* key exists and we don't have a password
-              if (hasBraveKey || hasVeniceKey) {
-                  needsPasswordPrompt = true;
-                  console.log(`[WebSocket] Research needs password prompt: BraveKey=${hasBraveKey}, VeniceKey=${hasVeniceKey}, PasswordAvailable=${!!finalPassword}`);
-              } else {
-                  // If no keys are set at all, research will fail later, but no need to prompt now.
-                  console.log(`[WebSocket] Research command: No API keys found for user ${session.username}. No password prompt needed.`);
-              }
-          } else if (command === 'diagnose') {
-              // Diagnose might need keys depending on checks performed
-              needsPasswordPrompt = true; // Assume needs password for key checks
-          } else if (command === 'users' && (actionArg === 'create' || actionArg === 'delete')) {
-              // Admin actions might require password confirmation in future, but not just for key decryption
-              // For now, admin role check is primary gate. No password prompt needed here based on current logic.
-          } // If a prompt was initiated by executeResearch, keepDisabled should be true.
-          // Note: 'keys check/stat' and 'users list' don't require password prompt here
-      }
-  }
-
-  // If a prompt is needed server-side
-  if (needsPasswordPrompt) {
-    let passwordPromptText = "Enter password: ";
-    if (command === 'keys' || command === 'chat' || command === 'research' || command === 'diagnose') {
-      passwordPromptText = "Enter password to decrypt API keys: ";
-    } else if (command === 'password-change') {
-      passwordPromptText = "Enter current password: ";
-    } // Add other specific prompts if needed
-
-    try {
-      console.log(`[WebSocket] Server needs password for command ${command}. Prompting client (Session ${session.sessionId})`);
-      enableInputAfter = false; // Keep disabled while prompting and executing command
-      // Use wsPrompt to ask the client and wait for the 'input' message - no context needed here
-      const promptedPassword = await wsPrompt(ws, session, passwordPromptText, PROMPT_TIMEOUT_MS, true, null);
-      // *** Assign the prompted password to finalPassword ***
-      finalPassword = promptedPassword;
-      // Input remains disabled, wsPrompt resolution doesn't re-enable it.
-      console.log(`[WebSocket] Password received via server-side prompt for command ${command} (Session ${session.sessionId})`);
-      console.log(`[WebSocket] finalPassword after prompt: ${finalPassword ? '******' : 'null or empty'}`);
-      // --- Cache password in session after successful prompt ---
-      if (finalPassword) {
-          session.password = finalPassword;
-          console.log(`[WebSocket] Cached password in session ${session.sessionId} after prompt.`);
-      } else {
-          // If prompt returned empty/null (e.g., cancelled), throw error
-          throw new Error("Password entry cancelled or failed.");
-      }
-      // --- End Cache ---
-    } catch (promptError) {
-      console.error(`[WebSocket] Password prompt failed or timed out for command ${command} (Session ${session.sessionId}): ${promptError.message}`);
-      // wsPrompt's error/timeout handler (wsErrorHelper) should have sent an error and re-enabled input.
-      return false; // Stop processing the command, input state handled by wsPrompt error path.
+    // --- Password Handling (for commands other than login) ---
+    let finalPassword = passwordFromPayload; // Password might come directly in the command payload
+    // Check session cache if not in payload
+    if (!finalPassword && session.password) {
+        console.log(`[WebSocket] Using cached password for session ${session.sessionId}`);
+        finalPassword = session.password;
     }
-  }
 
-  // Add the final password (if obtained) to options for the command function
-  if (finalPassword) {
-    console.log(`[WebSocket] Adding password to options for command /${command}`);
-    options.password = finalPassword;
-  } else if (requiresPasswordCheck && session.role !== 'public') {
-      // If password was required (due to keys existing) but we still don't have one (e.g., prompt failed/cancelled implicitly, or wasn't needed but keys exist)
-      // Let the command function handle the missing password error, but log it here.
-      console.warn(`[WebSocket] Proceeding with command /${command} without a password, although it might be required.`);
-  }
+    // Determine if the command *requires* a password check server-side
+    // Refined list based on command logic needing keys/admin rights
+    // --- FIX: Added 'upload' to needsPasswordCheckCommands for GitHub token ---
+    // 'upload' command doesn't exist, it's an action within handleInputMessage
+    // --- FIX: Use helper function ---
+    const requiresPasswordCheck = commandRequiresPassword(commandName);
+    // --- End FIX ---
 
-  // --- Command Execution ---
-  try {
-    // *** Crucially, check if the command is research and if a query exists NOW ***
-    if (command === 'research') {
-        // Ensure query exists after potential interactive flow
-        if (!options.query) {
-            commandError('Research query is missing. Please provide a query or use interactive mode.');
-            return false; // commandError enables input
-        }
-        console.log(`[WebSocket] Executing research command for user ${session.username}`);
-        // --- FIX: Pass progress handler to executeResearch ---
-        options.progressHandler = (progressData) => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                safeSend(ws, { type: 'progress', data: progressData });
+    let needsPasswordPrompt = false;
+    // When does the SERVER need to prompt?
+    // - If the command requires a password check AND
+    // - We don't have a password yet (not in payload, not in cache) AND
+    // - The specific command action necessitates it (refined check)
+    if (requiresPasswordCheck && !finalPassword) {
+        // Check if user is logged in (public users cannot trigger password prompts for these)
+        if (session.role === 'public') {
+            // Allow /chat and /research to proceed without password if public (they will fail later if keys are needed)
+            // But block other sensitive commands.
+            // --- FIX: Public users should not be able to run /chat or /research that require keys ---
+            // The checks within executeChat/executeResearch handle public users now.
+            // Block other sensitive commands for public users here.
+            if (commandName !== 'chat' && commandName !== 'research') {
+                commandError(`You must be logged in to use the /${commandName} command.`);
+                return false; // commandError handles input state
             }
-        };
-        console.log(`[WebSocket] Options passed to executeResearch:`, JSON.stringify({ ...options, webSocketClient: '[WebSocket Object]', session: { ...session, webSocketClient: '[WebSocket Object]', currentUser: '[User Object]' }, progressHandler: '[Function]', wsPrompt: '[Function]', output: '[Function]', error: '[Function]' }).substring(0, 500)); // Log options, masking sensitive parts if needed
-        // Call executeResearch and await its result
-        const researchResult = await executeResearch(options);
-        // --- Start: Log after executeResearch completes ---
-        console.log(`[WebSocket] executeResearch completed. Success: ${researchResult?.success}, KeepDisabled: ${researchResult?.keepDisabled}, Result:`, researchResult ? JSON.stringify(researchResult).substring(0, 200) : 'undefined');
-        // --- End: Log after executeResearch completes ---
-
-        // Determine final input state based on researchResult
-        // If researchResult.keepDisabled is explicitly false, allow enabling.
-        // If it's true or undefined, keep disabled (or let error handler decide).
-        enableInputAfter = researchResult?.keepDisabled === false;
-        // --- FIX: Check researchResult.success ---
-        if (researchResult.success && options.isWebSocket) {
-            // Research succeeded. The result was stored in session and
-            // research_result_ready was sent by executeResearch.
-            // Input state (enableInputAfter) is already set based on researchResult.keepDisabled.
-            // No further action needed here, handleInputMessage will process the prompt response.
-            console.log(`[WebSocket] Research succeeded, prompt initiated by executeResearch. enableInputAfter=${enableInputAfter}`);
-        } else if (!researchResult.success) {
-            // Research explicitly failed, error should have been sent by commandError
-            // commandError sets enableInputAfter = false, and wsErrorHelper enables it.
-            enableInputAfter = false;
         } else {
-            // Research succeeded but not WebSocket? (CLI case handled in executeResearch)
-            // Or result structure issue?
-            console.warn(`[WebSocket] Research succeeded but unexpected state. enableInputAfter=${enableInputAfter}`);
+            // Refine conditions based on command and args (using options.positionalArgs)
+            const actionArg = options.positionalArgs[0]?.toLowerCase(); // Common pattern for action
+            if (commandName === 'keys' && (actionArg === 'set' || actionArg === 'test')) {
+                needsPasswordPrompt = true;
+            } else if (commandName === 'password-change') {
+                needsPasswordPrompt = true; // Always needs current password
+            } else if (commandName === 'chat') {
+                // Chat needs password if API key isn't already decrypted/available
+                // Check if key exists first, prompt only if needed for retrieval
+                const hasKey = await userManager.hasApiKey('venice', session.username);
+                if (hasKey) needsPasswordPrompt = true; // Prompt if key exists but we don't have password
+            } else if (commandName === 'research') {
+                // ** Always prompt for research if password isn't available, as keys are required **
+                const hasBraveKey = await userManager.hasApiKey('brave', session.username);
+                const hasVeniceKey = await userManager.hasApiKey('venice', session.username);
+                // Prompt if *either* key exists and we don't have a password
+                if (hasBraveKey || hasVeniceKey) {
+                    needsPasswordPrompt = true;
+                    console.log(`[WebSocket] Research needs password prompt: BraveKey=${hasBraveKey}, VeniceKey=${hasVeniceKey}, PasswordAvailable=${!!finalPassword}`);
+                } else {
+                    // If no keys are set at all, research will fail later, but no need to prompt now.
+                    console.log(`[WebSocket] Research command: No API keys found for user ${session.username}. No password prompt needed.`);
+                }
+            } else if (commandName === 'diagnose') {
+                // Diagnose might need keys depending on checks performed
+                needsPasswordPrompt = true; // Assume needs password for key checks
+            } else if (commandName === 'users' && (actionArg === 'create' || actionArg === 'delete')) {
+                // Admin actions might require password confirmation in future, but not just for key decryption
+                // For now, admin role check is primary gate. No password prompt needed here based on current logic.
+            } // If a prompt was initiated by executeResearch, keepDisabled should be true.
+            // Note: 'keys check/stat' and 'users list' don't require password prompt here
         }
-    } else if (commandDefinition && typeof commandDefinition.execute === 'function') {
-      // --- Execute other commands ---
-      const commandFn = commandDefinition.execute; // Get the execute function
-      console.log(`[WebSocket] Executing command /${command} for user ${session.username}`);
-      // Add specific logging for chat command options
-      if (command === 'chat') {
-          console.log('[WebSocket] Options passed to executeChat:', JSON.stringify(options, (key, value) => (key === 'webSocketClient' || key === 'session' || key === 'currentUser' || key === 'requestingUser' || key === 'wsPrompt' || key === 'output' || key === 'error') ? `[Object ${key}]` : value, 2));
-      }
-      const result = await commandFn(options); // Pass options including handlers
-
-      // --- Determine input state based on command result ---
-      // Default: enable input unless command indicates otherwise
-      enableInputAfter = true;
-      if (typeof result === 'object' && result !== null) {
-        if (result.keepDisabled === true) {
-          enableInputAfter = false;
-        }
-        // Handle specific command results if needed (e.g., mode changes)
-        if (result.modeChange) {
-          safeSend(ws, { type: 'mode_change', mode: result.modeChange.mode, prompt: result.modeChange.prompt });
-        }
-        if (result.message) {
-          commandOutput(result.message); // Use commandOutput for consistency
-        }
-      } else if (result === false) {
-        // Some commands might return false explicitly to keep input disabled
-        enableInputAfter = false;
-      }
-
-      // Special case: /logout should always enable input after success message
-      if (command === 'logout') {
-          session.username = 'public';
-          session.role = 'public';
-          session.password = null; // Clear cached password
-          session.currentUser = null; // Clear cached user data
-          session.currentResearchResult = null; // Clear last research result
-          session.currentResearchFilename = null;
-          console.log(`[WebSocket] Session ${session.sessionId} logged out. User: ${session.username}`);
-          safeSend(ws, { type: 'logout_success', message: 'Logged out successfully.' });
-          safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
-          enableInputAfter = true; // Ensure input is enabled after logout message
-      }
-
-      // Special case: /chat command transitions state
-      if (command === 'chat') {
-          // If executeChat succeeded
-          if (result?.success) {
-              // executeChat now handles session state updates (isChatActive, memoryManager, etc.)
-              // and sends chat-ready message.
-              // We just need to respect the keepDisabled flag from the result.
-              enableInputAfter = !(result?.keepDisabled === true);
-              console.log(`[WebSocket] /chat command succeeded. enableInputAfter=${enableInputAfter}`);
-          } else {
-              // Chat command failed (e.g., password incorrect, public user notice)
-              // executeChat should have sent an error via commandError.
-              // commandError sets enableInputAfter = false, and wsErrorHelper enables it.
-              enableInputAfter = false;
-              console.log(`[WebSocket] /chat command failed or handled (e.g., public notice). enableInputAfter=${enableInputAfter}`);
-          }
-      }
-    } else {
-        // This case should not be reached due to the check above, but handle defensively.
-        commandError(`Internal Error: Command definition not found for /${command}.`);
-        enableInputAfter = false; // Keep disabled after internal error
     }
 
-    // Final check: If an error occurred *during* execution (not caught by commandError),
-    // ensure input is enabled unless explicitly kept disabled.
-    // This path shouldn't be hit often if commandError is used correctly.
-    if (enableInputAfter === undefined) {
-        console.warn(`[WebSocket] enableInputAfter was undefined after command /${command}. Defaulting to true.`);
+    // If a prompt is needed server-side
+    if (needsPasswordPrompt) {
+        let passwordPromptText = "Enter password: ";
+        if (commandName === 'keys' || commandName === 'chat' || commandName === 'research' || commandName === 'diagnose') {
+            passwordPromptText = "Enter password to decrypt API keys: ";
+        } else if (commandName === 'password-change') {
+            passwordPromptText = "Enter current password: ";
+        } // Add other specific prompts if needed
+
+        try {
+            console.log(`[WebSocket] Server needs password for command ${commandName}. Prompting client (Session ${session.sessionId})`);
+            enableInputAfter = false; // Keep disabled while prompting and executing command
+            // Use wsPrompt to ask the client and wait for the 'input' message - no context needed here
+            const promptedPassword = await wsPrompt(ws, session, passwordPromptText, PROMPT_TIMEOUT_MS, true, null);
+            // *** Assign the prompted password to finalPassword ***
+            finalPassword = promptedPassword;
+            // Input remains disabled, wsPrompt resolution doesn't re-enable it.
+            console.log(`[WebSocket] Password received via server-side prompt for command ${commandName} (Session ${session.sessionId})`);
+            console.log(`[WebSocket] finalPassword after prompt: ${finalPassword ? '******' : 'null or empty'}`);
+            // --- Cache password in session after successful prompt ---
+            if (finalPassword) {
+                session.password = finalPassword;
+                console.log(`[WebSocket] Cached password in session ${session.sessionId} after prompt.`);
+            } else {
+                // If prompt returned empty/null (e.g., cancelled), throw error
+                throw new Error("Password entry cancelled or failed.");
+            }
+            // --- End Cache ---
+        } catch (promptError) {
+            console.error(`[WebSocket] Password prompt failed or timed out for command ${commandName} (Session ${session.sessionId}): ${promptError.message}`);
+            // wsPrompt's error/timeout handler (wsErrorHelper) should have sent an error and re-enabled input.
+            return false; // Stop processing the command, input state handled by wsPrompt error path.
+        }
+    }
+
+    // Add the final password (if obtained) to options for the command function
+    if (finalPassword) {
+        console.log(`[WebSocket] Adding password to options for command /${commandName}`);
+        options.password = finalPassword;
+    } else if (requiresPasswordCheck && session.role !== 'public') {
+        // If password was required (due to keys existing) but we still don't have one (e.g., prompt failed/cancelled implicitly, or wasn't needed but keys exist)
+        // Let the command function handle the missing password error, but log it here.
+        console.warn(`[WebSocket] Proceeding with command /${commandName} without a password, although it might be required.`);
+    }
+
+    // --- Command Execution ---
+    try {
+        // *** Use commandFunction directly ***
+        console.log(`[WebSocket] Executing command /${commandName} for user ${session.username}`);
+        outputManager.debug(`[Command Execution] Options for /${commandName}: ${JSON.stringify(options, (key, value) => (key === 'webSocketClient' || key === 'session' || key === 'currentUser' || key === 'requestingUser' || key === 'wsPrompt' || key === 'output' || key === 'error' || key === 'debug' || key === 'password') ? `[${typeof value}]` : value, 2)}`);
+
+
+        // Add specific logging for chat command options
+        if (commandName === 'chat') {
+            console.log('[WebSocket] Options passed to executeChat:', JSON.stringify(options, (key, value) => (key === 'webSocketClient' || key === 'session' || key === 'currentUser' || key === 'requestingUser' || key === 'wsPrompt' || key === 'output' || key === 'error') ? `[Object ${key}]` : value, 2));
+        }
+        // Add progress handler specifically for research
+        if (commandName === 'research') {
+            if (!options.query) { // Ensure query exists after potential interactive flow
+                commandError('Research query is missing. Please provide a query or use interactive mode.');
+                return false; // commandError enables input
+            }
+            options.progressHandler = (progressData) => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    safeSend(ws, { type: 'progress', data: progressData });
+                }
+            };
+            // --- FIX: Ensure debug handler is passed correctly ---
+            // The debug handler is already assigned to options.debug above
+            // executeResearch should use options.debug
+        }
+
+        // Execute the command function
+        const result = await commandFunction(options); // Pass options including handlers
+
+        // --- Determine input state based on command result ---
+        // Default: enable input unless command indicates otherwise
         enableInputAfter = true;
-    }
+        if (typeof result === 'object' && result !== null) {
+            if (result.keepDisabled === true) {
+                enableInputAfter = false;
+            }
+            // Handle specific command results if needed (e.g., mode changes)
+            if (result.modeChange) {
+                safeSend(ws, { type: 'mode_change', mode: result.modeChange.mode, prompt: result.modeChange.prompt });
+            }
+            if (result.message) {
+                commandOutput(result.message); // Use commandOutput for consistency
+            }
+        } else if (result === false) {
+            // Some commands might return false explicitly to keep input disabled
+            enableInputAfter = false;
+        }
 
-    console.log(`[WebSocket] Returning from handleCommandMessage. Final enableInputAfter: ${enableInputAfter}`);
-    return enableInputAfter; // Return the final decision
-  } catch (error) {
-    // Catch errors during command execution itself (not argument parsing or prompting)
-    console.error(`[WebSocket] Error executing command ${commandString} (Session ${session.sessionId}):`, error.message, error.stack);
-    // Use commandError to send the error and enable input
-    commandError(`Internal error executing command /${command}: ${error.message}`);
-    return false; // commandError handled enabling input
-  }
+        // Special case: /logout should always enable input after success message
+        if (commandName === 'logout') {
+            session.username = 'public';
+            session.role = 'public';
+            session.password = null; // Clear cached password
+            session.currentUser = null; // Clear cached user data
+            session.currentResearchResult = null; // Clear last research result
+            session.currentResearchFilename = null;
+            console.log(`[WebSocket] Session ${session.sessionId} logged out. User: ${session.username}`);
+            safeSend(ws, { type: 'logout_success', message: 'Logged out successfully.' });
+            safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
+            enableInputAfter = true; // Ensure input is enabled after logout message
+        }
+
+        // Special case: /chat command transitions state
+        if (commandName === 'chat') {
+            // If executeChat succeeded
+            if (result?.success) {
+                // executeChat now handles session state updates (isChatActive, memoryManager, etc.)
+                // and sends chat-ready message.
+                // We just need to respect the keepDisabled flag from the result.
+                enableInputAfter = !(result?.keepDisabled === true);
+                console.log(`[WebSocket] /chat command succeeded. enableInputAfter=${enableInputAfter}`);
+            } else {
+                // Chat command failed (e.g., password incorrect, public user notice)
+                // executeChat should have sent an error via commandError.
+                // commandError sets enableInputAfter = false, and wsErrorHelper enables it.
+                enableInputAfter = false;
+                console.log(`[WebSocket] /chat command failed or handled (e.g., public notice). enableInputAfter=${enableInputAfter}`);
+            }
+        }
+
+        // Final check: If an error occurred *during* execution (not caught by commandError),
+        // ensure input is enabled unless explicitly kept disabled.
+        if (enableInputAfter === undefined) {
+            console.warn(`[WebSocket] enableInputAfter was undefined after command /${commandName}. Defaulting to true.`);
+            enableInputAfter = true;
+        }
+
+        console.log(`[WebSocket] Returning from handleCommandMessage. Final enableInputAfter: ${enableInputAfter}`);
+        return enableInputAfter; // Return the final decision
+    } catch (error) {
+        // Catch errors during command execution itself
+        console.error(`[WebSocket] Error executing command /${commandName} (Session ${session.sessionId}):`, error.message, error.stack);
+        commandError(`Internal error executing command /${commandName}: ${error.message}`);
+        return false; // commandError handled enabling input
+    }
 }
 
 // Helper function to check if a command needs a password (add commands as needed)
-function commandRequiresPassword(command) {
-    const commands = ['keys', 'password-change', 'research', 'chat', 'exitmemory', 'exitresearch', 'diagnose', 'users']; // Added users
-    return commands.includes(command);
+// Use commandName here
+function commandRequiresPassword(commandName) {
+    const commandsList = ['keys', 'password-change', 'research', 'chat', 'exitmemory', 'exitresearch', 'diagnose', 'users']; // Added users
+    return commandsList.includes(commandName);
 }
 
 /**
@@ -1007,7 +986,7 @@ async function handleChatMessage(ws, message, session) {
 
                 case 'exitresearch':
                     // Already blocked for public users above
-                     commandOptions.progressHandler = (progressData) => {
+                    commandOptions.progressHandler = (progressData) => {
                         if (ws && ws.readyState === WebSocket.OPEN) {
                             safeSend(ws, { type: 'progress', data: progressData });
                         }
@@ -1230,22 +1209,47 @@ async function handleInputMessage(ws, message, session) {
                         // Proceed with upload attempt
                         wsOutputHelper(ws, "Attempting to upload to GitHub...");
                         enableInputAfter = false; // Disable input during upload
+                        // --- FIX: Call getDecryptedGitHubConfig and handle potential null return ---
                         // Get GitHub config (requires password if token needs decryption)
-                        const githubConfig = await userManager.getGitHubConfig(session.username, userPassword);
-                        if (!githubConfig || !githubConfig.token || !githubConfig.owner || !githubConfig.repo) {
-                            throw new Error("GitHub is not configured for this user or token decryption failed. Use /keys set github...");
+                        const githubConfig = await userManager.getDecryptedGitHubConfig(session.username, userPassword);
+                        // Check if config is incomplete or token is missing (if required)
+                        if (!githubConfig || !githubConfig.owner || !githubConfig.repo) {
+                            // More specific error based on what's missing
+                            let errorDetail = "Unknown reason";
+                            if (!githubConfig) errorDetail = "Config object is null/undefined (check user data or password)";
+                            else if (!githubConfig.owner) errorDetail = "GitHub owner not configured";
+                            else if (!githubConfig.repo) errorDetail = "GitHub repo not configured";
+                            // Token check is implicit below if needed, but owner/repo are essential
+                            console.error(`[WebSocket] GitHub Upload Check Failed: ${errorDetail}`);
+                            throw new Error(`GitHub owner/repo not configured. Use /keys set github... (${errorDetail})`);
                         }
+                        // Token might be null if not set, but uploadToGitHub checks this
+                        if (!githubConfig.token) {
+                            // This case might occur if the token exists but decryption failed (handled by getDecryptedGitHubConfig throwing error)
+                            // OR if the token was never set. uploadToGitHub will throw an error.
+                            console.warn(`[WebSocket] GitHub token is missing in the retrieved config for user ${session.username}. Upload will likely fail.`);
+                            // Optionally throw here, or let uploadToGitHub handle it:
+                            // throw new Error("GitHub token is missing or could not be decrypted. Use /keys set github...");
+                        }
+                        // --- END FIX ---
+
                         // Define repo path (e.g., research/query-timestamp.md)
                         // Use the suggested filename directly as the repo path
                         const repoPath = suggestedFilename;
                         const commitMessage = `Research results for query: ${session.currentResearchQuery || 'Unknown Query'}`; // Use stored query if available
+
+                        // --- FIX: Pass output/error handlers to uploadToGitHub ---
                         // Perform upload using the utility function
                         const uploadResult = await uploadToGitHub(
                             githubConfig, // Contains token, owner, repo, branch
                             repoPath,
                             markdownContent,
-                            commitMessage
+                            commitMessage,
+                            wsOutputHelper.bind(null, ws), // Pass bound output helper
+                            wsErrorHelper.bind(null, ws)   // Pass bound error helper
                         );
+                        // --- END FIX ---
+
                         wsOutputHelper(ws, `Upload successful!`);
                         wsOutputHelper(ws, `Commit: ${uploadResult.commitUrl}`);
                         wsOutputHelper(ws, `File: ${uploadResult.fileUrl}`);
@@ -1270,8 +1274,10 @@ async function handleInputMessage(ws, message, session) {
                 }
             } catch (actionError) {
                 console.error(`[WebSocket] Error during post-research action '${action}': ${actionError.message}`, actionError.stack);
+                // --- FIX: Use wsErrorHelper which handles enabling input ---
                 wsErrorHelper(ws, `Error performing action '${action}': ${actionError.message}`, true);
                 enableInputAfter = false; // wsErrorHelper enables input
+                // --- End FIX ---
                 // Clear password cache if upload failed due to password error
                 if (action === 'upload' && actionError.message.toLowerCase().includes('password')) {
                     session.password = null;
@@ -1443,3 +1449,91 @@ export function cleanupInactiveSessions() { // --- FIX: Added export ---
 setInterval(cleanupInactiveSessions, 5 * 60 * 1000);
 
 export default router;
+
+// WebSocket message handler
+async function handleWebSocketMessage(ws, message) {
+    // ... existing code ...
+
+    try {
+        // ... existing message parsing ...
+
+        if (parsedMessage.type === 'command') {
+            outputManager.debug(`[WS][${ws.id}] Received command message: ${parsedMessage.command}`); // Log raw command
+            ws.isProcessing = true; // Mark as processing
+            wsSend(ws, { type: 'disable_input' }); // Disable input during processing
+
+            const { commandName, positionalArgs, flags } = parseCommandArgs(parsedMessage.command);
+            outputManager.debug(`[WS][${ws.id}] Parsed command: name='${commandName}', args=${JSON.stringify(positionalArgs)}, flags=${JSON.stringify(flags)}`); // Log parsed parts
+
+            // Ensure commandName is valid before proceeding
+            if (!commandName) {
+                 wsErrorHelper(ws, 'Invalid command format.');
+                 wsSend(ws, { type: 'enable_input' });
+                 ws.isProcessing = false;
+                 return;
+            }
+
+            // --- Updated Command Execution ---
+            // Find the command function in the imported map
+            const commandFunction = commands[commandName];
+
+            if (commandFunction) {
+                // Prepare options for the command function
+                const commandOptions = {
+                    positionalArgs,
+                    flags,
+                    isWebSocket: true,
+                    session: ws, // Pass WebSocket session object
+                    output: (msg) => wsSend(ws, { type: 'output', message: msg }),
+                    error: (errMsg) => wsErrorHelper(ws, errMsg), // Use helper for errors
+                    currentUser: ws.currentUser, // Pass authenticated user data
+                    password: ws.currentPassword // Pass cached password if available
+                };
+
+                // Execute the specific command function
+                const result = await commandFunction(commandOptions);
+
+                // Handle command result (optional: specific actions based on result)
+                outputManager.debug(`[WS][${ws.id}] Command '${commandName}' execution result:`, result);
+
+                // Re-enable input unless command explicitly requests otherwise
+                if (!result?.keepDisabled) {
+                    wsSend(ws, { type: 'enable_input' });
+                }
+            } else if (commandName === 'help') {
+                // Handle /help specifically if not in the map or as a fallback
+                wsSend(ws, { type: 'output', message: getHelpText() });
+                wsSend(ws, { type: 'enable_input' });
+            } else {
+                wsErrorHelper(ws, `Unknown command: /${commandName}. Type /help for available commands.`);
+                wsSend(ws, { type: 'enable_input' });
+            }
+            // --- End Updated Command Execution ---
+
+            ws.isProcessing = false; // Mark processing finished
+
+        } else if (parsedMessage.type === 'chat-message') {
+            // ... existing chat message handling ...
+        } else if (parsedMessage.type === 'prompt_response') {
+            // ... existing prompt response handling ...
+        } else if (parsedMessage.type === 'input') {
+             // Handle generic input when in specific modes (like chat)
+             // ... existing input handling ...
+        } else {
+            outputManager.warn(`[WS][${ws.id}] Received unknown message type: ${parsedMessage.type}`);
+            wsErrorHelper(ws, `Unknown message type: ${parsedMessage.type}`);
+        }
+
+    } catch (error) {
+        // ... existing error handling ...
+        wsErrorHelper(ws, `Internal server error processing message: ${error.message}`);
+        if (!ws.isProcessing) { // Ensure input is re-enabled if error happens before processing flag is set
+             wsSend(ws, { type: 'enable_input' });
+        } else {
+             ws.isProcessing = false; // Reset flag on error
+             wsSend(ws, { type: 'enable_input' }); // Attempt to re-enable input
+        }
+    }
+}
+
+// ... rest of the file ...

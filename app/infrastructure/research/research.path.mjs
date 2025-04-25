@@ -184,33 +184,34 @@ export class ResearchPath {
 
             // --- FIX: Recursive calls for follow-up queries ---
             if (depth > 0 && followUpQueries.length > 0) {
-                this.updateProgress({ currentAction: `Processing ${followUpQueries.length} sub-paths (Depth ${depth - 1})...` });
-                const followUpPromises = followUpQueries.map(async (followUpQueryObj) => {
-                    // Create a new path instance for the sub-query
-                    // Pass the *current* config (this.config), which includes the shared searchProvider
-                    // Pass the *same* progressData object for shared updates
-                    // --- Ensure this.config is passed, as it contains the searchProvider ---
-                    const subPath = new ResearchPath(this.config, this.progressData);
-                    // Recursively call research with decremented depth
-                    return subPath.research({ query: followUpQueryObj, depth: depth - 1, breadth: breadth });
-                });
+                this.updateProgress({ currentAction: `Sequentially processing ${followUpQueries.length} sub-paths (Depth ${depth - 1})...` });
 
-                const followUpResults = await Promise.allSettled(followUpPromises);
+                // --- CHANGE: Process follow-up queries sequentially ---
+                for (const followUpQueryObj of followUpQueries) {
+                    const subQueryString = getQueryString(followUpQueryObj);
+                    this.debug(`[ResearchPath D:${depth}] Starting sub-path for: "${subQueryString}"`);
+                    try {
+                        // Create a new path instance for the sub-query
+                        // Pass the *current* config (this.config), which includes the shared searchProvider
+                        // Pass the *same* progressData object for shared updates
+                        const subPath = new ResearchPath(this.config, this.progressData);
+                        // Recursively call research with decremented depth
+                        const subResult = await subPath.research({ query: followUpQueryObj, depth: depth - 1, breadth: breadth });
 
-                followUpResults.forEach((settledResult, index) => {
-                    if (settledResult.status === 'fulfilled') {
-                        const subResult = settledResult.value;
                         // Aggregate learnings and sources
                         pathResult.learnings.push(...subResult.learnings);
                         pathResult.sources.push(...subResult.sources);
                         // Note: We don't typically aggregate follow-up queries from sub-paths
-                    } else {
-                        const subQueryString = getQueryString(followUpQueries[index]);
-                        this.error(`[ResearchPath D:${depth}] Sub-path failed for query "${subQueryString}": ${settledResult.reason?.message || settledResult.reason}`);
+
+                    } catch (subError) { // Catch errors from the awaited subPath.research call
+                        this.error(`[ResearchPath D:${depth}] Sub-path failed for query "${subQueryString}": ${subError?.message || subError}`);
                         // Optionally add an error learning
                         pathResult.learnings.push(`Error processing sub-query: ${subQueryString}`);
                     }
-                });
+                    this.debug(`[ResearchPath D:${depth}] Finished sub-path for: "${subQueryString}"`);
+                }
+                // --- END CHANGE ---
+
                  // Deduplicate learnings and sources after aggregation
                 pathResult.learnings = [...new Set(pathResult.learnings)];
                 pathResult.sources = [...new Set(pathResult.sources)];
