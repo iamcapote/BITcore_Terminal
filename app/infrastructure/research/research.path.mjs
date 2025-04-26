@@ -89,14 +89,6 @@ export class ResearchPath {
             // For the first level (or if no sub-queries generated yet), use the main query.
             // In subsequent levels, this method is called with generated follow-up queries.
             this.updateProgress({ currentAction: `Searching web for: ${queryString.substring(0, 50)}...` });
-            // --- Use the SHARED searchProvider instance ---
-            // const searchProvider = suggestSearchProvider({ // REMOVE THIS
-            //     type: 'web',
-            //     user: this.user,
-            //     apiKey: this.braveApiKey, // Pass the key
-            //     outputFn: this.debug,      // Pass handlers
-            //     errorFn: this.error
-            // });
             const searchProvider = this.searchProvider; // Use the instance passed in constructor
 
             // 2. Execute Search
@@ -106,23 +98,35 @@ export class ResearchPath {
             if (truncatedQuery !== queryString) {
                 this.debug(`[ResearchPath D:${depth}] Query truncated to ${truncatedQuery.length} chars for search provider.`);
             }
-            // --- Use the shared provider's search method ---
-            const searchResults = await searchProvider.search(truncatedQuery); // Use truncated query
-            this.debug(`[ResearchPath D:${depth}] Received ${searchResults?.length || 0} search results.`);
+            const searchResults = await searchProvider.search(truncatedQuery);
+
+            // --- ADD DEBUG LOGGING BEFORE FILTERING ---
+            this.debug(`[ResearchPath D:${depth}] Raw search results received (${searchResults?.length || 0}):`, searchResults);
+            // --- END ADD DEBUG LOGGING ---
+
             this.updateProgress({ currentAction: `Found ${searchResults?.length || 0} web results for: ${queryString.substring(0, 50)}...` });
 
             // Filter out visited URLs and limit results processed per query
             const MAX_RESULTS_PER_QUERY = 5; // Limit processing to avoid excessive cost/time
-            const newResults = searchResults.filter(result => result.url && !this.visitedUrls.has(result.url)).slice(0, MAX_RESULTS_PER_QUERY);
+            // --- FIX: Ensure result.url exists before checking visitedUrls ---
+            const newResults = (searchResults || []) // Handle null/undefined searchResults
+                                .filter(result => result && result.url && !this.visitedUrls.has(result.url))
+                                .slice(0, MAX_RESULTS_PER_QUERY);
+            // --- END FIX ---
             const newContent = newResults.map(r => r.content || ''); // Extract content
             newResults.forEach(result => this.visitedUrls.add(result.url)); // Add new URLs to visited set
             this.debug(`[ResearchPath D:${depth}] Processing ${newResults.length} new results after filtering visited URLs.`);
 
             let currentLearnings = [];
-            let currentSources = newResults.map(r => r.url); // Get sources from the new results
+            // --- FIX: Ensure result.url exists before adding to sources ---
+            let currentSources = newResults.map(r => r.url).filter(Boolean); // Get sources from the new results, filter out null/empty URLs
+            // --- END FIX ---
 
             if (newResults.length === 0) {
-                this.output(`[ResearchPath D:${depth}] No new relevant search results found for "${queryString}".`);
+                // --- ADD REASON TO LOG ---
+                const reason = (searchResults?.length || 0) > 0 ? "All results were already visited or invalid." : "Search provider returned no results.";
+                this.output(`[ResearchPath D:${depth}] No new relevant search results found for "${queryString}". Reason: ${reason}`);
+                // --- END ADD REASON ---
                 this.updateProgress({ completedQueries: (this.progressData.completedQueries || 0) + 1 }); // Increment completed count
             } else {
                 // 3. Process Results (Extract Learnings)

@@ -187,6 +187,13 @@ export class ResearchEngine {
         result = await pathInstance.research({ query: contextQuery, depth: currentDepth, breadth: currentBreadth });
       }
 
+      // --- ADD: Deduplicate learnings and sources after main research completes ---
+      const uniqueLearnings = [...new Set(result.learnings || [])];
+      const uniqueSources = [...new Set(result.sources || [])];
+      this.debug(`[ResearchEngine] Deduplicated results: ${uniqueLearnings.length} learnings, ${uniqueSources.length} sources.`);
+      // --- END ADD ---
+
+
       // Generate summary using the results
       this.output('[ResearchEngine] Generating summary...');
       progressData.status = 'Generating Summary';
@@ -195,7 +202,9 @@ export class ResearchEngine {
 
       const summary = await generateSummary({
         query: contextQuery.original, // Use original context query text
-        learnings: result.learnings,
+        // --- FIX: Use uniqueLearnings ---
+        learnings: uniqueLearnings,
+        // --- END FIX ---
         metadata: contextQuery.metadata || null, // Pass metadata if available
         apiKey: this.veniceApiKey, // Use engine's key
         outputFn: this.debug,
@@ -211,8 +220,10 @@ export class ResearchEngine {
 
       const resultData = await this.generateMarkdownResult(
         contextQuery.original, // Save using the original context query
-        result.learnings,
-        result.sources,
+        // --- FIX: Use uniqueLearnings and uniqueSources ---
+        uniqueLearnings,
+        uniqueSources,
+        // --- END FIX ---
         summary
       );
       if (!resultData) throw new Error('Failed to generate markdown result content.');
@@ -221,15 +232,16 @@ export class ResearchEngine {
       progressData.currentAction = 'Research complete.';
       progressFn(progressData);
 
-      // --- FIX: Include summary and markdownContent in the final result ---
-      // The 'result' object from pathInstance.research() contains learnings, sources, followUpQueries
-      // We add summary and markdownContent to it.
+      // --- FIX: Include unique learnings/sources in the final result ---
       this.output(`[ResearchEngine] Research complete. Suggested Filename: ${resultData.suggestedFilename}`);
       return {
-          ...result, // learnings, sources, followUpQueries
+          learnings: uniqueLearnings, // Return unique
+          sources: uniqueSources,     // Return unique
+          followUpQueries: result.followUpQueries, // Follow-ups are usually not deduplicated across levels
           summary,
           markdownContent: resultData.markdownContent,
           suggestedFilename: resultData.suggestedFilename };
+      // --- END FIX ---
 
     } catch (error) {
       this.error(`[ResearchEngine] Error during research: ${error.message}`);

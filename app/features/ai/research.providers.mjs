@@ -18,29 +18,46 @@ function processQueryResponse(rawText) {
 
 function processLearningResponse(rawText) {
   console.log('[processLearningResponse] Raw text received:\n---START---\n', rawText, '\n---END---'); // DEBUG LOG
-  const learningsMatch = rawText.match(/Key Learnings:\s*([\s\S]*?)\n\n/);
-  const questionsMatch = rawText.match(/Follow-up Questions:\s*([\s\S]*)/);
 
-  console.log('[processLearningResponse] Learnings Match:', learningsMatch ? learningsMatch[1].trim() : 'null'); // DEBUG LOG
-  console.log('[processLearningResponse] Questions Match:', questionsMatch ? questionsMatch[1].trim() : 'null'); // DEBUG LOG
+  // More robust regex: Find headers, capture content until next known header or end of string
+  // Use non-greedy matching ([\s\S]*?)
+  const learningsMatch = rawText.match(/Key Learnings:([\s\S]*?)(Follow-up Questions:|$)/i);
+  const questionsMatch = rawText.match(/Follow-up Questions:([\s\S]*)/i);
 
-  const learnings = learningsMatch ? 
-    learningsMatch[1].split('\n').map(l => l.trim().replace(/^-|^\d+\.?\s*/, '').trim()).filter(Boolean) : []; // Clean up list markers
-  const followUpQuestions = questionsMatch ? 
-    questionsMatch[1].split('\n').map(l => l.trim().replace(/^-|^\d+\.?\s*/, '').trim()).filter(Boolean) : []; // Clean up list markers
+  console.log('[processLearningResponse] Learnings Match Group 1:', learningsMatch ? learningsMatch[1].trim() : 'null'); // DEBUG LOG
+  console.log('[processLearningResponse] Questions Match Group 1:', questionsMatch ? questionsMatch[1].trim() : 'null'); // DEBUG LOG
+
+  const parseSection = (sectionText) => {
+    if (!sectionText) return [];
+    return sectionText
+      .split('\n')
+      .map(l => l.trim().replace(/^-|^\*|^\d+\.?\s*/, '').trim()) // More robust list marker removal
+      .filter(Boolean);
+  };
+
+  const learnings = parseSection(learningsMatch ? learningsMatch[1] : null);
+  const followUpQuestions = parseSection(questionsMatch ? questionsMatch[1] : null);
 
   console.log('[processLearningResponse] Parsed Learnings:', learnings); // DEBUG LOG
   console.log('[processLearningResponse] Parsed Follow-up Questions:', followUpQuestions); // DEBUG LOG
 
-  if (learnings.length || followUpQuestions.length) {
+  if (learnings.length > 0 || followUpQuestions.length > 0) { // Require at least one learning OR question
     return { success: true, learnings, followUpQuestions };
   }
-  // Provide more specific error if matches were found but resulted in empty arrays after processing
-  if (learningsMatch || questionsMatch) {
-      console.warn('[processLearningResponse] Matches found but resulted in empty arrays after cleaning.');
-      return { success: false, error: 'Found learning/question sections but content was empty or invalid after cleaning.' };
+
+  // Log specific reasons for failure
+  if (!learningsMatch && !questionsMatch) {
+    console.error('[processLearningResponse] Failed to find "Key Learnings:" or "Follow-up Questions:" headers.');
+    return { success: false, error: 'Could not find required sections (Key Learnings/Follow-up Questions) in the response.' };
+  } else if (learnings.length === 0 && followUpQuestions.length === 0) {
+     console.warn('[processLearningResponse] Found headers but content was empty or invalid after cleaning.');
+     // Return success: false but indicate it was a parsing/content issue, not header issue
+     return { success: false, error: 'Found learning/question sections but content was empty or invalid after cleaning.' };
+  } else {
+      // Should not be reached with current logic, but as a fallback
+      console.error('[processLearningResponse] Unknown parsing failure state.');
+      return { success: false, error: 'Unknown error parsing learnings and questions.' };
   }
-  return { success: false, error: 'No valid "Key Learnings:" or "Follow-up Questions:" sections found.' };
 }
 
 function processReportResponse(rawText) {
@@ -81,14 +98,13 @@ export async function generateOutput({ apiKey, type, system, prompt, temperature
   // Ensure API key is provided
   if (!apiKey) {
       errorFn("[generateOutput] Error: API key is missing.");
-      return { success: false, error: 'API key is required for generateOutput.' };
+      // Indicate API-level issue if possible, though this is a config error
+      return { success: false, error: 'API key is required for generateOutput.', isApiError: true };
   }
   // Instantiate client with the provided key
   const client = new LLMClient({ apiKey, outputFn, errorFn });
   try {
     outputFn(`[generateOutput] Calling LLM for type: ${type}. Max Tokens: ${maxTokens}, Temp: ${temperature}`); // DEBUG LOG
-    // outputFn(`[generateOutput] System Prompt:\n${system}`); // Optional: Log system prompt if needed
-    // outputFn(`[generateOutput] User Prompt:\n${prompt}`); // Optional: Log full prompt if needed (can be long)
 
     const response = await client.complete({
       system,
@@ -97,37 +113,27 @@ export async function generateOutput({ apiKey, type, system, prompt, temperature
       maxTokens
     });
 
-    outputFn(`[generateOutput] LLM Raw Response (type: ${type}):\n---START---\n`, response.content, `\n---END---`); // DEBUG LOG
+    const rawContent = response.content; // Store raw content
+    outputFn(`[generateOutput] LLM Raw Response (type: ${type}):\n---START---\n`, rawContent, `\n---END---`); // DEBUG LOG
 
-    let parsed = processResponse(type, response.content);
+    let parsed = processResponse(type, rawContent);
     if (parsed.success) {
       outputFn(`[generateOutput] Initial parsing successful for type ${type}.`); // DEBUG LOG
       return { success: true, data: parsed };
     }
 
-    // Fallback attempt (optional, consider if needed)
-    errorFn(`[generateOutput] Initial parsing failed for type ${type}. Error: ${parsed.error}. Retrying with simpler prompt.`);
-    const fallbackResponse = await client.complete({
-      system,
-      prompt: `${prompt}\n\nPlease ensure your response is structured clearly according to the expected format for type "${type}".`,
-      temperature: 0.5, // Lower temperature for fallback
-      maxTokens
-    });
-    outputFn(`[generateOutput] LLM Fallback Raw Response (type: ${type}):\n---START---\n`, fallbackResponse.content, `\n---END---`); // DEBUG LOG
-    parsed = processResponse(type, fallbackResponse.content);
-    if (parsed.success) {
-      errorFn(`[generateOutput] Fallback parsing successful for type ${type}.`);
-      return { success: true, data: parsed };
-    }
-
-    errorFn(`[generateOutput] Fallback parsing also failed for type ${type}. Error: ${parsed.error}`);
-    return { success: false, error: parsed.error || 'Failed to parse LLM response after fallback.' };
+    // --- ADJUSTMENT: Return raw content on parsing failure ---
+    // Parsing failed, return success: false, the error, and the raw content
+    errorFn(`[generateOutput] Initial parsing failed for type ${type}. Error: ${parsed.error}.`);
+    // Removed internal fallback/retry logic
+    return { success: false, error: parsed.error || 'Failed to parse LLM response.', rawContent: rawContent }; // Return raw content
 
   } catch (error) {
     errorFn(`[generateOutput] LLM API call failed: ${error.message}`, error);
     // Check if it's an LLMError and provide more details if possible
     const errorMessage = error instanceof LLMError ? `${error.name}: ${error.message}` : error.message;
-    return { success: false, error: `LLM API Error: ${errorMessage}` };
+    // --- ADJUSTMENT: Indicate it's an API error clearly ---
+    return { success: false, error: `LLM API Error: ${errorMessage}`, isApiError: true }; // Add flag
   }
 }
 
@@ -281,15 +287,17 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
   // ** Add explicit checks for required parameters **
   if (!apiKey) {
       errorFn("[processResults] Error: API key is missing.");
-      throw new Error('API key is required for processResults.');
+      throw new Error('API key is required for processResults.'); // Keep throwing for fatal config issues
   }
   if (!Array.isArray(content) || content.length === 0) {
       errorFn(`[processResults] Error: Invalid content provided for query "${query}". Must be a non-empty array.`);
-      // Return empty results instead of throwing? Or throw? Let's throw for now.
-      throw new Error('Invalid content: must be a non-empty array of strings.');
+      // If no content, we can't extract anything. Return empty results.
+      return { learnings: [], followUpQuestions: [] };
   }
+  // --- FIX: Use || instead of or ---
   if (isNaN(numLearnings) || numLearnings < 0) numLearnings = 3;
   if (isNaN(numFollowUpQuestions) || numFollowUpQuestions < 0) numFollowUpQuestions = 3;
+  // --- END FIX ---
 
   // Build a prompt that better incorporates metadata if available
   let analysisPrompt = `Analyze the following content related to "${query}":\n\n`;
@@ -298,7 +306,6 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
   if (metadata) {
     const metadataString = typeof metadata === 'object' ? JSON.stringify(metadata) : String(metadata);
     analysisPrompt += `Context from query analysis:\n${metadataString}\n\nUse this context to better interpret the query "${query}" and extract the most relevant information from the content below.\n\n`;
-    // analysisPrompt += `Character context: archon-01v\n\n`; // Character context might be less relevant here
   }
 
   // Combine content, ensuring it doesn't exceed limits (simple trim for now)
@@ -308,16 +315,13 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
   if (combinedContent.length > maxContentLength) {
       errorFn(`[processResults] Content truncated to ${maxContentLength} characters for analysis.`);
   }
-  // --- Start: Log combined content length ---
   outputFn(`[processResults] Combined content length for analysis: ${trimmedContent.length} characters.`);
-  // --- End: Log combined content length ---
 
   analysisPrompt += `Content:\n${trimmedContent}\n\n`;
-  analysisPrompt += `Based *only* on the content provided above, extract:\n1. Key Learnings (at least ${numLearnings}):\n   - Focus on specific facts, data points, or summaries found in the text.\n   - Each learning should be a concise statement.\n2. Follow-up Questions (at least ${numFollowUpQuestions}):\n   - Generate questions that arise *directly* from the provided content and would require further research.\n   - Must start with What, How, Why, When, Where, or Which.\n\nFormat the output strictly as:\nKey Learnings:\n1. [Learning 1]\n2. [Learning 2]\n...\n\nFollow-up Questions:\n1. [Question 1]\n2. [Question 2]\n...`;
+  // Updated prompt format example
+  analysisPrompt += `Based *only* on the content provided above, extract:\n1. Key Learnings (at least ${numLearnings}):\n   - Focus on specific facts, data points, or summaries found in the text.\n   - Each learning should be a concise statement.\n2. Follow-up Questions (at least ${numFollowUpQuestions}):\n   - Generate questions that arise *directly* from the provided content and would require further research.\n   - Must start with What, How, Why, When, Where, or Which.\n\nFormat the output strictly as:\nKey Learnings:\n- [Learning 1]\n- [Learning 2]\n...\n\nFollow-up Questions:\n- [Question 1]\n- [Question 2]\n...`;
 
-  // --- Start: Log the final prompt being sent ---
   outputFn(`[processResults] Final prompt for learning extraction (query: "${query}"):\n---START---\n`, analysisPrompt, `\n---END---`);
-  // --- End: Log the final prompt ---
 
   const result = await generateOutput({
     apiKey, // Pass key
@@ -330,9 +334,7 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
     errorFn
   });
 
-  // --- Start: Enhanced Logging ---
   outputFn(`[processResults] LLM result for learning extraction (query: "${query}"):`, JSON.stringify(result));
-  // --- End: Enhanced Logging ---
 
   if (result.success && result.data) { // Check result.data exists
     // Ensure arrays exist even if empty
@@ -343,11 +345,48 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
     const finalLearnings = extractedLearnings.slice(0, numLearnings);
     const finalFollowUpQuestions = extractedFollowUpQuestions.slice(0, numFollowUpQuestions);
     return { learnings: finalLearnings, followUpQuestions: finalFollowUpQuestions };
-  }
+  } else {
+    // --- ADJUSTED ERROR HANDLING WITH FALLBACK ---
+    if (result.isApiError) {
+        // If the API call itself failed (network, key, etc.), re-throw the error.
+        errorFn(`[processResults] CRITICAL: LLM API call failed for query "${query}". Error: ${result.error}`);
+        throw new Error(`LLM API call failed during learning extraction: ${result.error}`);
+    } else {
+        // If it was a parsing failure (LLM response received but not parsable),
+        // log the error and attempt fallback extraction from raw content.
+        errorFn(`[processResults] WARNING: Failed to parse LLM response structure for learning extraction (query: "${query}"). Error: ${result.error || 'Unknown parsing error'}. Attempting fallback extraction.`);
 
-  // Throw error if processing failed
-  errorFn(`[processResults] Failed to process results via LLM for query "${query}". Error: ${result.error || 'Unknown error'}`); // DEBUG LOG
-  throw new Error(`Failed to process results via LLM: ${result.error || 'Unknown error'}`);
+        if (result.rawContent) {
+            // Simple Fallback: Split by lines, remove common list markers, filter empty lines and potential headers/instructions.
+            const lines = result.rawContent.split('\n');
+            const potentialLearnings = lines
+                .map(line => line.trim().replace(/^[\*\-\d\.]+\s*/, '').trim()) // Remove list markers
+                .filter(line => line.length > 10 && // Filter very short lines (adjust threshold as needed)
+                               !line.toLowerCase().startsWith('key learnings:') &&
+                               !line.toLowerCase().startsWith('follow-up questions:') &&
+                               !line.toLowerCase().startsWith('based only on the content') && // Filter out parts of the prompt
+                               !line.toLowerCase().startsWith('analyze the following content') &&
+                               !line.toLowerCase().startsWith('content:') &&
+                               !line.toLowerCase().startsWith('---') && // Filter separators
+                               !line.match(/^[\d\.\s]*$/) // Filter lines with only numbers/dots/spaces
+                       );
+
+            if (potentialLearnings.length > 0) {
+                errorFn(`[processResults] Fallback extraction yielded ${potentialLearnings.length} potential learnings.`);
+                // Return the first few potential learnings as fallback, ensure no follow-up questions from fallback
+                return { learnings: potentialLearnings.slice(0, numLearnings), followUpQuestions: [] };
+            } else {
+                errorFn(`[processResults] Fallback extraction failed to find usable lines in raw content.`);
+                return { learnings: [], followUpQuestions: [] }; // Fallback failed, return empty
+            }
+        } else {
+            // Raw content wasn't available for some reason (shouldn't happen with generateOutput changes)
+            errorFn(`[processResults] Raw content not available for fallback extraction.`);
+            return { learnings: [], followUpQuestions: [] }; // Cannot perform fallback, return empty
+        }
+    }
+    // --- END ADJUSTED ERROR HANDLING ---
+  }
 }
 
 /**
@@ -368,24 +407,28 @@ export async function generateSummary({ apiKey, query, learnings = [], metadata 
   // Assumes error messages consistently start with "Error processing" or similar patterns added in ResearchPath
   const validLearnings = learnings.filter(l =>
       typeof l === 'string' &&
+      l.trim() && // Ensure learning is not just whitespace
       !l.toLowerCase().startsWith('error processing') &&
       !l.toLowerCase().startsWith('error generating') &&
       !l.toLowerCase().startsWith('error during research path')
   );
 
+  // --- ADJUSTED: Check for empty validLearnings ---
   if (validLearnings.length === 0) {
-    errorFn(`[generateSummary] No valid learnings provided to generate summary for "${query}". Original learnings array (may contain errors):`, learnings);
-    // Provide a more informative fallback message including any errors found
-    let fallbackMessage = `No valid summary could be generated for "${query}" as no key learnings were extracted or processed successfully during the research process.`;
-    const errorLearnings = learnings.filter(l => typeof l === 'string' && !validLearnings.includes(l)); // Get the items filtered out
+    errorFn(`[generateSummary] No valid learnings provided to generate summary for "${query}". Original learnings array (may contain errors or be empty):`, learnings);
+    // Provide a more informative fallback message
+    let fallbackMessage = `## Summary\n\nNo valid summary could be generated for "${query}" as no key learnings were successfully extracted during the research process.`;
+    // Check if the original array had items that were filtered out (likely errors)
+    const errorLearnings = learnings.filter(l => typeof l === 'string' && !validLearnings.includes(l));
     if (errorLearnings.length > 0) {
-        fallbackMessage += "\n\nIssues encountered during research:\n" + errorLearnings.map(e => `- ${e}`).join('\n');
+        fallbackMessage += "\n\nPotential issues encountered during research (these were filtered out):\n" + errorLearnings.map(e => `- ${e}`).join('\n');
     } else if (learnings.length === 0) {
-        // This case means the learnings array was truly empty, which indicates a deeper issue upstream.
-        fallbackMessage += "\n\nReason: The research process returned no information or errors.";
+        fallbackMessage += "\n\nReason: The research process returned no information.";
     }
-    return fallbackMessage;
+    return fallbackMessage; // Return the informative fallback message
   }
+  // --- END ADJUSTED ---
+
 
   // Proceed with summary generation using only valid learnings
   let prompt = `Write a comprehensive narrative summary about "${query}" based *only* on the following key learnings:\n\n`;
@@ -397,7 +440,7 @@ export async function generateSummary({ apiKey, query, learnings = [], metadata 
   }
 
   prompt += `Key Learnings:\n${validLearnings.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\n`;
-  prompt += `Synthesize these learnings into a well-structured, coherent report. Ensure technical accuracy based *only* on the provided points. Format the output as Markdown.`;
+  prompt += `Synthesize these learnings into a well-structured, coherent report. Ensure technical accuracy based *only* on the provided points. Format the output as Markdown. Start directly with the summary content, do not include a "Summary:" header yourself.`; // Added instruction to omit header
 
   const result = await generateOutput({
     apiKey, // Pass key
@@ -411,12 +454,13 @@ export async function generateSummary({ apiKey, query, learnings = [], metadata 
   });
 
   if (result.success && result.data.reportMarkdown) {
-    return result.data.reportMarkdown;
+    // Prepend the header here for consistency
+    return `## Summary\n\n${result.data.reportMarkdown}`;
   }
 
-  errorFn(`[generateSummary] Failed to generate summary via LLM. Error: ${result.error}. Returning basic list of valid learnings.`);
+  errorFn(`[generateSummary] Failed to generate summary via LLM. Error: ${result.error}. Returning basic list of valid learnings as fallback.`);
   // Fallback: return the valid learnings list if summary fails
-  return `Failed to generate a narrative summary via LLM. Key Learnings Found:\n${validLearnings.map(l => `- ${l}`).join('\n')}`;
+  return `## Summary\n\nFailed to generate a narrative summary via LLM. Key Learnings Found:\n${validLearnings.map(l => `- ${l}`).join('\n')}`;
 }
 
 /**
