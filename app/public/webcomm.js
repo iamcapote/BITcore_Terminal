@@ -15,6 +15,16 @@ class WebComm {
         this.connectionPromise = null;
         this.resolveConnectionPromise = null;
         this.rejectConnectionPromise = null;
+        this.pingIntervalId = null;
+        this.pongTimeoutId = null;
+        this.pingIntervalDuration = 30000; // 30 seconds
+        this.pongTimeoutDuration = 10000; // 10 seconds
+
+        // Ping/Pong settings
+        this.pingIntervalMs = 30000; // Send a ping every 30 seconds
+        this.pongTimeoutMs = 10000; // Expect a pong within 10 seconds
+        this.pingIntervalId = null;
+        this.pongTimeoutId = null;
     }
 
     connect() {
@@ -64,13 +74,19 @@ class WebComm {
             this.reconnectAttempts = 0; // Reset reconnect attempts on successful connection
             this.triggerHandler('connection', { connected: true });
             if (this.resolveConnectionPromise) this.resolveConnectionPromise();
+            this.startPing(); // Start pinging
+            this.startPinging(); // Start pinging once connected
         };
 
         this.ws.onmessage = (event) => {
             // console.log("WebSocket message received:", event.data); // Can be noisy
             try {
                 const message = JSON.parse(event.data);
-                this.triggerHandler(message.type, message);
+                if (message.type === 'pong') {
+                    this.handlePong();
+                } else {
+                    this.triggerHandler(message.type, message);
+                }
             } catch (error) {
                 console.error("Failed to parse WebSocket message:", error);
                 this.triggerHandler('error', { error: 'Received invalid message format from server.' });
@@ -82,14 +98,23 @@ class WebComm {
             console.error("WebSocket error observed:", event);
             // Don't trigger connection handler here, onclose will handle it
             // Don't reject connection promise here, let onclose handle it
+            // No need to call this.stopPinging() here, onclose will handle it.
         };
 
         this.ws.onclose = (event) => {
             console.log(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason || 'N/A'}, Clean: ${event.wasClean}`);
             this.isConnecting = false;
             const reason = this.getCloseReason(event.code, event.reason);
+            this.stopPing(); // Stop pinging
+            this.stopPinging(); // Stop pinging when connection closes
             this.handleClose(event, reason); // Pass event and reason
             if (this.rejectConnectionPromise) this.rejectConnectionPromise(new Error(`WebSocket closed: ${reason}`));
+            if (this.rejectConnectionPromise) {
+                this.rejectConnectionPromise(new Error(`WebSocket closed: ${reason}`));
+                // Nullify to prevent multiple rejections if connect is called again before promise resolves/rejects
+                this.rejectConnectionPromise = null;
+                this.resolveConnectionPromise = null;
+            }
             this.scheduleReconnect();
         };
 
@@ -124,11 +149,15 @@ class WebComm {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.error("Max WebSocket reconnect attempts reached. Giving up.");
             this.triggerHandler('connection', { connected: false, reason: 'Max reconnect attempts reached.' });
+            this.stopPing(); // Stop pinging
+            this.stopPinging(); // Stop pinging if giving up
             return;
         }
         this.reconnectAttempts++;
         const delay = this.reconnectInterval * Math.pow(2, Math.min(this.reconnectAttempts - 1, 4)); // Exponential backoff capped
         console.log(`Scheduling WebSocket reconnect attempt ${this.reconnectAttempts} in ${delay / 1000} seconds...`);
+        this.stopPing(); // Stop pinging
+        this.stopPinging(); // Stop current pinging before scheduling a new connect attempt
         setTimeout(() => {
             this.connect();
         }, delay);
@@ -181,6 +210,42 @@ class WebComm {
             value: inputValue
         };
         return this.send(JSON.stringify(message));
+    }
+
+    startPing() {
+        this.stopPing(); // Clear any existing timers
+        this.pingIntervalId = setInterval(() => {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                console.log("Sending ping");
+                this.send(JSON.stringify({ type: 'ping' })).catch(err => {
+                    console.warn("Failed to send ping:", err);
+                    // If send fails, connection might be bad.
+                    // The pong timeout or ws.onclose/onerror should handle actual disconnection.
+                });
+                this.pongTimeoutId = setTimeout(() => {
+                    console.warn("Pong not received in time. Closing WebSocket.");
+                    if (this.ws) {
+                        // Use a code that indicates an abnormal closure, e.g., 1006
+                        this.ws.close(1006, "Pong timeout");
+                    }
+                }, this.pongTimeoutDuration);
+            } else {
+                console.log("WebSocket not open, skipping ping. Stopping ping interval.");
+                this.stopPing(); 
+            }
+        }, this.pingIntervalDuration);
+    }
+
+    handlePong() {
+        console.log("Received pong");
+        clearTimeout(this.pongTimeoutId);
+    }
+
+    stopPing() {
+        clearInterval(this.pingIntervalId);
+        clearTimeout(this.pongTimeoutId);
+        this.pingIntervalId = null;
+        this.pongTimeoutId = null;
     }
 
     /**
@@ -246,9 +311,48 @@ class WebComm {
     close() {
         if (this.ws) {
             console.log("Closing WebSocket connection explicitly.");
+            this.stopPing(); // Stop pinging
+            this.stopPinging(); // Stop pinging on explicit close
             // Prevent automatic reconnection when closed explicitly
             this.reconnectAttempts = this.maxReconnectAttempts;
             this.ws.close(1000, "Client initiated disconnect");
         }
     }
+
+    // --- Ping/Pong Methods ---
+    startPinging() {
+        this.stopPinging(); // Clear any existing interval
+        this.pingIntervalId = setInterval(() => {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                // console.log("[WebComm] Sending ping");
+                this.send(JSON.stringify({ type: 'ping' })).catch(err => {
+                    console.error("[WebComm] Error sending ping:", err);
+                    // If ping fails to send, connection might be bad, trigger a close to attempt reconnect
+                    this.ws.close(1006, "Ping send failed");
+                });
+                // Set a timeout to expect a pong
+                this.pongTimeoutId = setTimeout(() => {
+                    console.warn("[WebComm] Pong not received in time. Closing connection.");
+                    this.ws.close(1006, "Pong timeout"); // 1006: Abnormal Closure
+                }, this.pongTimeoutMs);
+            } else {
+                // console.warn("[WebComm] WebSocket not open, cannot send ping. Clearing ping interval.");
+                this.stopPinging(); // Stop if ws is not open
+            }
+        }, this.pingIntervalMs);
+    }
+
+    handlePong() {
+        // console.log("[WebComm] Pong received");
+        clearTimeout(this.pongTimeoutId); // Clear the pong timeout
+    }
+
+    stopPinging() {
+        // console.log("[WebComm] Stopping ping/pong timers.");
+        clearInterval(this.pingIntervalId);
+        clearTimeout(this.pongTimeoutId);
+        this.pingIntervalId = null;
+        this.pongTimeoutId = null;
+    }
+    // --- End Ping/Pong Methods ---
 }

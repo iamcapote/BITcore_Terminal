@@ -187,7 +187,12 @@ export function handleWebSocketConnection(ws, req) {
       if (logPayload.type === 'input' && logPayload.value && currentSession.pendingPromptResolve && currentSession.promptIsPassword) {
           logPayload.value = '******'; // Mask input value if it's for a pending password prompt
       }
-      console.log(`[WebSocket] Received message (Session ${currentSessionId}, User: ${currentSession.username}):`, JSON.stringify(logPayload).substring(0, 250));
+      // --- ADDED: Log ping/pong separately if desired, or just let it flow if not too noisy ---
+      if (message.type !== 'ping') { // Avoid logging pings if too frequent
+        console.log(`[WebSocket] Received message (Session ${currentSessionId}, User: ${currentSession.username}):`, JSON.stringify(logPayload).substring(0, 250));
+      } else {
+        // console.log(`[WebSocket] Received ping (Session ${currentSessionId})`); // Optional: log pings
+      }
 
 
       if (!message.type) {
@@ -226,9 +231,10 @@ export function handleWebSocketConnection(ws, req) {
           enableInputAfterProcessing = await handleInputMessage(ws, message, currentSession);
           // enableInputAfterProcessing = false; // Input state decided by the command that initiated the prompt
       } else if (message.type === 'ping') {
-          console.log("[WebSocket] Handling ping.");
+          // console.log("[WebSocket] Handling ping."); // Already logged above if chosen
+          currentSession.lastActivity = Date.now(); // Update activity on ping
           safeSend(ws, { type: 'pong' });
-          enableInputAfterProcessing = true; // Re-enable after simple ping/pong
+          enableInputAfterProcessing = true; // Re-enable after simple ping/pong (or rather, don't disable)
       } else {
           // Handle unexpected message types
           console.warn(`[WebSocket] Unexpected message type '${message.type}' received (Session ${currentSessionId}).`);
@@ -276,6 +282,8 @@ export function handleWebSocketConnection(ws, req) {
     const reasonString = reason ? reason.toString() : 'N/A';
     console.log(`[WebSocket] Connection closed (Session ${closedSessionId}, Code: ${code}, Reason: ${reasonString})`);
     output.removeWebSocketClient(ws);
+    // --- ADD: Clear ping/pong timers associated with the session if any (though client manages its own) ---
+    // No server-side ping interval per session in this design, client initiates.
 
     if (closedSessionId && activeChatSessions.has(closedSessionId)) {
       const session = activeChatSessions.get(closedSessionId);
@@ -314,6 +322,8 @@ export function handleWebSocketConnection(ws, req) {
     // --- Start: Enhanced Error Logging ---
     console.error(`[WebSocket] Connection error (Session ${errorSessionId || 'N/A'}):`, error.message, error.stack);
     // --- End: Enhanced Error Logging ---
+    // --- ADD: Clear ping/pong timers associated with the session if any ---
+    // No server-side ping interval per session in this design.
 
     // Attempt to inform the client about the error
     wsErrorHelper(ws, `WebSocket connection error: ${error.message}`, false); // false = don't enable, connection is likely dead
@@ -1123,6 +1133,7 @@ async function handleInputMessage(ws, message, session) {
     // --- FIX: Use message.value ---
     const inputValue = message.value;
     let enableInputAfter = false; // Default: Keep disabled, let the resumed operation decide
+    session.lastActivity = Date.now(); // Update activity
 
     // --- FIX: Add logging for received input message ---
     console.log(`[WebSocket] Processing input response (Session ${session.sessionId}): ${session.promptIsPassword ? '******' : inputValue}`);
@@ -1162,133 +1173,125 @@ async function handleInputMessage(ws, message, session) {
         const markdownContent = session.currentResearchResult;
         // Use suggested filename from promptData if available, otherwise from session
         const suggestedFilename = promptData?.suggestedFilename || session.currentResearchFilename || 'research-result.md';
-        let userPassword = session.password; // Get cached password
 
-        wsOutputHelper(ws, `Selected action: ${action}`);
-        enableInputAfter = true; // Default to enabling input after action
+        try {
+            switch (action) {
+                case 'download':
+                    wsOutputHelper(ws, "Preparing download...");
+                    safeSend(ws, {
+                        type: 'download_file',
+                        filename: suggestedFilename,
+                        content: markdownContent
+                    });
+                    // Input enabled by default
+                    break;
 
-        if (!markdownContent) {
-            wsErrorHelper(ws, "Error: Research content not found in session.");
-        } else {
-            try {
-                switch (action) {
-                    case 'download':
-                        wsOutputHelper(ws, "Preparing download...");
-                        safeSend(ws, {
-                            type: 'download_file',
-                            filename: suggestedFilename,
-                            content: markdownContent
-                        });
-                        // Input enabled by default
-                        break;
-
-                    case 'upload':
-                        if (!session.currentUser || session.currentUser.role === 'public') {
-                            throw new Error("Login required to upload results.");
+                case 'upload':
+                    if (!session.currentUser || session.currentUser.role === 'public') {
+                        throw new Error("Login required to upload results.");
+                    }
+                    // Check if password is required (if token exists but password not cached)
+                    const needsUploadPassword = await userManager.hasGitHubConfig(session.username) && !userPassword; // Check config, not just token
+                    if (needsUploadPassword) {
+                        wsOutputHelper(ws, "Password needed for GitHub token.");
+                        enableInputAfter = false; // Keep disabled for nested prompt
+                        try {
+                            // Prompt for password - use context 'github_token_password'
+                            userPassword = await wsPrompt(ws, session, "Enter password to decrypt GitHub token: ", PROMPT_TIMEOUT_MS, true, 'github_token_password');
+                            if (!userPassword) throw new Error("Password required for upload.");
+                            session.password = userPassword; // Cache password on success
+                            // Input remains disabled, continue with upload logic below
+                        } catch (promptError) {
+                            // If the nested prompt fails, handle the error and ensure input state is managed
+                            wsErrorHelper(ws, `Password prompt failed: ${promptError.message}`, true);
+                            // Clear result from session as action failed
+                            session.currentResearchResult = null;
+                            session.currentResearchFilename = null;
+                            return false; // Stop processing, wsErrorHelper enabled input
                         }
-                        // Check if password is required (if token exists but password not cached)
-                        const needsUploadPassword = await userManager.hasGitHubConfig(session.username) && !userPassword; // Check config, not just token
-                        if (needsUploadPassword) {
-                            wsOutputHelper(ws, "Password needed for GitHub token.");
-                            enableInputAfter = false; // Keep disabled for nested prompt
-                            try {
-                                // Prompt for password - use context 'github_token_password'
-                                userPassword = await wsPrompt(ws, session, "Enter password to decrypt GitHub token: ", PROMPT_TIMEOUT_MS, true, 'github_token_password');
-                                if (!userPassword) throw new Error("Password required for upload.");
-                                session.password = userPassword; // Cache password on success
-                                // Input remains disabled, continue with upload logic below
-                            } catch (promptError) {
-                                // If the nested prompt fails, handle the error and ensure input state is managed
-                                wsErrorHelper(ws, `Password prompt failed: ${promptError.message}`, true);
-                                // Clear result from session as action failed
-                                session.currentResearchResult = null;
-                                session.currentResearchFilename = null;
-                                return false; // Stop processing, wsErrorHelper enabled input
-                            }
-                        }
-                        // Proceed with upload attempt
-                        wsOutputHelper(ws, "Attempting to upload to GitHub...");
-                        enableInputAfter = false; // Disable input during upload
-                        // --- FIX: Call getDecryptedGitHubConfig and handle potential null return ---
-                        // Get GitHub config (requires password if token needs decryption)
-                        const githubConfig = await userManager.getDecryptedGitHubConfig(session.username, userPassword);
-                        // Check if config is incomplete or token is missing (if required)
-                        if (!githubConfig || !githubConfig.owner || !githubConfig.repo) {
-                            // More specific error based on what's missing
-                            let errorDetail = "Unknown reason";
-                            if (!githubConfig) errorDetail = "Config object is null/undefined (check user data or password)";
-                            else if (!githubConfig.owner) errorDetail = "GitHub owner not configured";
-                            else if (!githubConfig.repo) errorDetail = "GitHub repo not configured";
-                            // Token check is implicit below if needed, but owner/repo are essential
-                            console.error(`[WebSocket] GitHub Upload Check Failed: ${errorDetail}`);
-                            throw new Error(`GitHub owner/repo not configured. Use /keys set github... (${errorDetail})`);
-                        }
-                        // Token might be null if not set, but uploadToGitHub checks this
-                        if (!githubConfig.token) {
-                            // This case might occur if the token exists but decryption failed (handled by getDecryptedGitHubConfig throwing error)
-                            // OR if the token was never set. uploadToGitHub will throw an error.
-                            console.warn(`[WebSocket] GitHub token is missing in the retrieved config for user ${session.username}. Upload will likely fail.`);
-                            // Optionally throw here, or let uploadToGitHub handle it:
-                            // throw new Error("GitHub token is missing or could not be decrypted. Use /keys set github...");
-                        }
-                        // --- END FIX ---
+                    }
+                    // Proceed with upload attempt
+                    wsOutputHelper(ws, "Attempting to upload to GitHub...");
+                    enableInputAfter = false; // Disable input during upload
+                    // --- FIX: Call getDecryptedGitHubConfig and handle potential null return ---
+                    // Get GitHub config (requires password if token needs decryption)
+                    const githubConfig = await userManager.getDecryptedGitHubConfig(session.username, userPassword);
+                    // Check if config is incomplete or token is missing (if required)
+                    if (!githubConfig || !githubConfig.owner || !githubConfig.repo) {
+                        // More specific error based on what's missing
+                        let errorDetail = "Unknown reason";
+                        if (!githubConfig) errorDetail = "Config object is null/undefined (check user data or password)";
+                        else if (!githubConfig.owner) errorDetail = "GitHub owner not configured";
+                        else if (!githubConfig.repo) errorDetail = "GitHub repo not configured";
+                        // Token check is implicit below if needed, but owner/repo are essential
+                        console.error(`[WebSocket] GitHub Upload Check Failed: ${errorDetail}`);
+                        throw new Error(`GitHub owner/repo not configured. Use /keys set github... (${errorDetail})`);
+                    }
+                    // Token might be null if not set, but uploadToGitHub checks this
+                    if (!githubConfig.token) {
+                        // This case might occur if the token exists but decryption failed (handled by getDecryptedGitHubConfig throwing error)
+                        // OR if the token was never set. uploadToGitHub will throw an error.
+                        console.warn(`[WebSocket] GitHub token is missing in the retrieved config for user ${session.username}. Upload will likely fail.`);
+                        // Optionally throw here, or let uploadToGitHub handle it:
+                        // throw new Error("GitHub token is missing or could not be decrypted. Use /keys set github...");
+                    }
+                    // --- END FIX ---
 
-                        // Define repo path (e.g., research/query-timestamp.md)
-                        // Use the suggested filename directly as the repo path
-                        const repoPath = suggestedFilename;
-                        const commitMessage = `Research results for query: ${session.currentResearchQuery || 'Unknown Query'}`; // Use stored query if available
+                    // Define repo path (e.g., research/query-timestamp.md)
+                    // Use the suggested filename directly as the repo path
+                    const repoPath = suggestedFilename;
+                    const commitMessage = `Research results for query: ${session.currentResearchQuery || 'Unknown Query'}`; // Use stored query if available
 
-                        // --- FIX: Pass output/error handlers to uploadToGitHub ---
-                        // Perform upload using the utility function
-                        const uploadResult = await uploadToGitHub(
-                            githubConfig, // Contains token, owner, repo, branch
-                            repoPath,
-                            markdownContent,
-                            commitMessage,
-                            wsOutputHelper.bind(null, ws), // Pass bound output helper
-                            wsErrorHelper.bind(null, ws)   // Pass bound error helper
-                        );
-                        // --- END FIX ---
+                    // --- FIX: Pass output/error handlers to uploadToGitHub ---
+                    // Perform upload using the utility function
+                    const uploadResult = await uploadToGitHub(
+                        githubConfig, // Contains token, owner, repo, branch
+                        repoPath,
+                        markdownContent,
+                        commitMessage,
+                        wsOutputHelper.bind(null, ws), // Pass bound output helper
+                        wsErrorHelper.bind(null, ws)   // Pass bound error helper
+                    );
+                    // --- END FIX ---
 
-                        wsOutputHelper(ws, `Upload successful!`);
-                        wsOutputHelper(ws, `Commit: ${uploadResult.commitUrl}`);
-                        wsOutputHelper(ws, `File: ${uploadResult.fileUrl}`);
-                        enableInputAfter = true; // Enable after successful upload
-                        break;
+                    wsOutputHelper(ws, `Upload successful!`);
+                    wsOutputHelper(ws, `Commit: ${uploadResult.commitUrl}`);
+                    wsOutputHelper(ws, `File: ${uploadResult.fileUrl}`);
+                    enableInputAfter = true; // Enable after successful upload
+                    break;
 
-                    case 'keep':
-                        wsOutputHelper(ws, "Research result kept in session (will be lost on disconnect/logout).");
-                        // Input enabled by default
-                        break;
+                case 'keep':
+                    wsOutputHelper(ws, "Research result kept in session (will be lost on disconnect/logout).");
+                    // Input enabled by default
+                    break;
 
-                    case 'discard': // Added discard action
-                        wsOutputHelper(ws, "Research result discarded.");
-                        // Input enabled by default
-                        break;
+                case 'discard': // Added discard action
+                    wsOutputHelper(ws, "Research result discarded.");
+                    // Input enabled by default
+                    break;
 
-                    default:
-                        wsOutputHelper(ws, `Invalid action: '${action}'. Please choose Download, Upload, Keep, or Discard.`);
-                        // Keep result in session if action is invalid
-                        // Input enabled by default
-                        break;
-                }
-            } catch (actionError) {
-                console.error(`[WebSocket] Error during post-research action '${action}': ${actionError.message}`, actionError.stack);
-                // --- FIX: Use wsErrorHelper which handles enabling input ---
-                wsErrorHelper(ws, `Error performing action '${action}': ${actionError.message}`, true);
-                enableInputAfter = false; // wsErrorHelper enables input
-                // --- End FIX ---
-                // Clear password cache if upload failed due to password error
-                if (action === 'upload' && actionError.message.toLowerCase().includes('password')) {
-                    session.password = null;
-                }
-            } finally {
-                // Clear research result from session unless action was 'keep' or invalid
-                if (action === 'download' || action === 'upload' || action === 'discard') { // 'discard' case added for completeness
-                    session.currentResearchResult = null;
-                    session.currentResearchFilename = null;
-                    delete session.currentResearchQuery; // Clear query context too
-                }
+                default:
+                    wsOutputHelper(ws, `Invalid action: '${action}'. Please choose Download, Upload, Keep, or Discard.`);
+                    // Keep result in session if action is invalid
+                    // Input enabled by default
+                    break;
+            }
+        } catch (actionError) {
+            console.error(`[WebSocket] Error during post-research action '${action}': ${actionError.message}`, actionError.stack);
+            // --- FIX: Use wsErrorHelper which handles enabling input ---
+            wsErrorHelper(ws, `Error performing action '${action}': ${actionError.message}`, true);
+            enableInputAfter = false; // wsErrorHelper enables input
+            // --- End FIX ---
+            // Clear password cache if upload failed due to password error
+            if (action === 'upload' && actionError.message.toLowerCase().includes('password')) {
+                session.password = null;
+            }
+        } finally {
+            // Clear research result from session unless action was 'keep' or invalid
+            if (action === 'download' || action === 'upload' || action === 'discard') { // 'discard' case added for completeness
+                session.currentResearchResult = null;
+                session.currentResearchFilename = null;
+                delete session.currentResearchQuery; // Clear query context too
             }
         }
     } else if (context === 'github_token_password') {
