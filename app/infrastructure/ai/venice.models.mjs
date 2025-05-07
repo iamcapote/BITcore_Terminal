@@ -64,3 +64,19 @@ export const VENICE_MODELS = {
 export function isValidModel(model) {
   return Object.prototype.hasOwnProperty.call(VENICE_MODELS, model);
 }
+
+export function getDefaultModelId() {
+  return 'llama-3.3-70b'; // General default
+}
+
+export function getDefaultChatModelId() {
+  return 'llama-3.3-70b'; // Default for chat
+}
+
+export function getDefaultResearchModelId() {
+  return 'llama-3.1-405b'; // Default for research
+}
+
+export function getDefaultTokenClassifierModelId() {
+  return 'llama-3.3-70b'; // Default for token classification
+}
