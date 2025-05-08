@@ -211,12 +211,23 @@ Hello! How can I assist you today?`;
 
         const userInput = line.trim();
 
-        if (userInput.toLowerCase() === '/exit') {
-          outputFn('Exiting chat session...'); // Use passed outputFn
-          chatEnded = true; // Set flag
-          rl.close(); // This triggers the 'close' event below
+        // --- NEW: Intercept in-chat commands starting with '/' ---
+        if (userInput.startsWith('/')) {
+          const [cmd, ...args] = userInput.slice(1).split(/\s+/);
+          const command = cmd.toLowerCase();
+
+          if (command === 'exit') {
+            outputFn('Exiting chat session...'); // Use passed outputFn
+            chatEnded = true; // Set flag
+            rl.close(); // This triggers the 'close' event below
+            return;
+          }
+          // Optionally handle other in-chat commands here (e.g., /exitmemory, /help, etc.)
+          outputFn(`Unknown in-chat command: /${command}`);
+          rl.prompt();
           return;
         }
+        // --- END NEW ---
 
         // Ignore empty lines
         if (!userInput) {
@@ -534,7 +545,7 @@ export async function startResearchFromChat(options = {}) { // Removed chatHisto
 }
 
 /**
- * Exits the chat session and starts a research task using the entire chat history as the query.
+ * Exits the chat session and starts a research task using the entire chat history or last message as the query.
  * Called by handleChatMessage when /exitresearch is detected.
  * @param {Object} options - Command options.
  * @param {object} options.session - The WebSocket session object.
@@ -549,15 +560,10 @@ export async function startResearchFromChat(options = {}) { // Removed chatHisto
  */
 export async function executeExitResearch(options = {}) {
     const { session, output: outputFn, error: errorFn, currentUser, password: providedPassword, isWebSocket, webSocketClient } = options;
-    // --- FIX: Define PROMPT_TIMEOUT_MS locally or import ---
-    const PROMPT_TIMEOUT_MS = 2 * 60 * 1000; // Define timeout here
-    // --- FIX: Need access to wsPrompt function ---
-    // This is tricky as wsPrompt is defined in routes.mjs.
-    // Best approach: Pass wsPrompt function itself in the options from handleChatMessage.
-    const wsPrompt = options.wsPrompt; // *** Retrieve wsPrompt from options ***
+    const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
+    const wsPrompt = options.wsPrompt;
     if (isWebSocket && !wsPrompt) {
         errorFn('Internal Error: wsPrompt function not provided for executeExitResearch.');
-        // Clean up session state before returning
         if (session) {
             session.isChatActive = false;
             session.chatHistory = [];
@@ -567,84 +573,103 @@ export async function executeExitResearch(options = {}) {
             safeSend(webSocketClient, { type: 'chat-exit' });
             safeSend(webSocketClient, { type: 'mode_change', mode: 'command', prompt: '> ' });
         }
-        return { success: false, keepDisabled: false }; // Enable input after error
+        return { success: false, keepDisabled: false };
     }
-    // --- End FIX ---
 
     const effectiveOutput = typeof outputFn === 'function' ? outputFn : outputManagerInstance.log;
     const effectiveError = typeof errorFn === 'function' ? errorFn : outputManagerInstance.error;
 
-    // --- FIX: Check isChatActive *before* proceeding ---
     if (!session || !session.isChatActive) {
         effectiveError('Not currently in an active chat session.');
-        return { success: false, keepDisabled: false }; // Enable input after error
+        return { success: false, keepDisabled: false };
     }
-    // --- End FIX ---
-
     const chatHistory = session.chatHistory || [];
     if (chatHistory.length === 0) {
         effectiveError('Chat history is empty. Cannot start research.');
-        // Exit chat mode even if history is empty
         session.isChatActive = false;
-        session.memoryManager = null; // Clear memory manager too
+        session.memoryManager = null;
         session.chatHistory = [];
         if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'chat-exit' });
             safeSend(webSocketClient, { type: 'mode_change', mode: 'command', prompt: '> ' });
         }
-        return { success: false, keepDisabled: false }; // Enable input
+        return { success: false, keepDisabled: false };
     }
 
-    effectiveOutput('Exiting chat and starting research based on conversation history...');
-    // --- FIX: Send research_start message ---
+    effectiveOutput('Exiting chat and starting research based on chat history...');
     if (isWebSocket && webSocketClient) {
         safeSend(webSocketClient, { type: 'research_start' });
     }
-    // --- End FIX ---
 
-    // Format chat history into a query string (used for context, not direct search)
-    const researchContextString = chatHistory
-        .map(msg => `${msg.role}: ${msg.content}`)
-        .join('\n---\n'); // Use a separator
+    // --- NEW: Prompt user for scope: last message or entire chat ---
+    let researchQueryString = '';
+    try {
+        let useLastMessage = false;
+        if (isWebSocket && webSocketClient && wsPrompt) {
+            const choice = await wsPrompt(
+                webSocketClient,
+                session,
+                "Use (1) last message or (2) entire chat history for research? [1/2]: ",
+                PROMPT_TIMEOUT_MS,
+                false,
+                'exitresearch_scope'
+            );
+            if (choice && choice.trim().startsWith('1')) {
+                useLastMessage = true;
+            }
+        } else {
+            // CLI fallback: default to entire chat
+            useLastMessage = false;
+        }
+        if (useLastMessage) {
+            // Find last user message
+            const lastUserMsg = [...chatHistory].reverse().find(msg => msg.role === 'user');
+            researchQueryString = lastUserMsg ? lastUserMsg.content : '';
+            if (!researchQueryString) {
+                effectiveError('No user message found in chat history.');
+                return { success: false, keepDisabled: false };
+            }
+            effectiveOutput('Using last user message as research query.');
+        } else {
+            // Use all user and assistant messages as context
+            researchQueryString = chatHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n---\n');
+            effectiveOutput('Using entire chat history as research query.');
+        }
+    } catch (promptError) {
+        effectiveError(`Scope prompt failed: ${promptError.message}`);
+        return { success: false, keepDisabled: false };
+    }
 
+    // --- Continue with research as before, but using researchQueryString as the context ---
     let researchResult = { success: false, error: 'Research initialization failed' };
-    let userPassword = providedPassword || session.password; // Use provided, then cached
-    let researchBreadth = 3; // Default for query generation
-    let researchDepth = 2; // Default for research execution
+    let userPassword = providedPassword || session.password;
+    let researchBreadth = 3;
+    let researchDepth = 2;
     let useClassification = false;
     let classificationMetadata = null;
-    let generatedQueries = []; // To store generated queries
+    let generatedQueries = [];
 
     try {
-        // --- Password/Key Check ---
         if (!userPassword) {
             try {
-                // Prompt for password if WebSocket and not provided/cached
-                if (isWebSocket && webSocketClient && wsPrompt) { // Check wsPrompt exists
+                if (isWebSocket && webSocketClient && wsPrompt) {
                     effectiveOutput('Password required for research API keys.');
-                    // Input is already disabled by the calling handler (handleChatMessage)
                     userPassword = await wsPrompt(webSocketClient, session, "Password needed for research API key: ", PROMPT_TIMEOUT_MS, true);
-                    if (!userPassword) throw new Error("Password prompt cancelled or failed."); // Check if password was actually provided
-                    session.password = userPassword; // Cache password
-                    // Input remains disabled after prompt resolution
+                    if (!userPassword) throw new Error("Password prompt cancelled or failed.");
+                    session.password = userPassword;
                 } else if (!isWebSocket) {
-                    // Handle CLI password prompt if needed (though this command is likely WS only)
                     effectiveError("Password required for API keys. Cannot prompt in this context.");
                     throw new Error("Password required and cannot prompt.");
                 } else {
-                    // Should not happen if wsPrompt check passed
                     throw new Error("Password required but prompting mechanism unavailable.");
                 }
             } catch (promptError) {
-                // wsPrompt error handler should enable input, but we catch here too
-                throw new Error(`Password prompt failed: ${promptError.message}`); // Propagate error
+                throw new Error(`Password prompt failed: ${promptError.message}`);
             }
         }
 
-        // --- Interactive Prompts for Research Parameters (WebSocket only) ---
         if (isWebSocket && webSocketClient && wsPrompt) {
             try {
-                // Prompt for Breadth (used for query generation count)
                 const breadthInput = await wsPrompt(webSocketClient, session, `Enter query generation breadth [1-5, default: ${researchBreadth}]: `, PROMPT_TIMEOUT_MS);
                 const parsedBreadth = parseInt(breadthInput, 10);
                 if (!isNaN(parsedBreadth) && parsedBreadth >= 1 && parsedBreadth <= 5) {
@@ -652,8 +677,6 @@ export async function executeExitResearch(options = {}) {
                 } else if (breadthInput.trim() !== '') {
                     effectiveOutput(`Invalid breadth input. Using default: ${researchBreadth}`);
                 }
-
-                // Prompt for Depth (used for research execution)
                 const depthInput = await wsPrompt(webSocketClient, session, `Enter research depth [1-3, default: ${researchDepth}]: `, PROMPT_TIMEOUT_MS);
                 const parsedDepth = parseInt(depthInput, 10);
                 if (!isNaN(parsedDepth) && parsedDepth >= 1 && parsedDepth <= 3) {
@@ -661,59 +684,49 @@ export async function executeExitResearch(options = {}) {
                 } else if (depthInput.trim() !== '') {
                     effectiveOutput(`Invalid depth input. Using default: ${researchDepth}`);
                 }
-
-                // Prompt for Token Classification
                 const classifyInput = await wsPrompt(webSocketClient, session, `Use token classification? [y/n, default: n]: `, PROMPT_TIMEOUT_MS);
                 if (classifyInput.trim().toLowerCase() === 'y') {
                     useClassification = true;
                     effectiveOutput('Token classification enabled.');
                 }
             } catch (promptError) {
-                // Handle prompt errors (e.g., timeout, cancellation)
                 effectiveError(`Research parameter prompt failed: ${promptError.message}. Using defaults.`);
-                // Continue with default parameters
             }
         } else if (!isWebSocket) {
-            // Handle CLI parameter input if needed, or just use defaults
             effectiveOutput(`Using default research parameters: Query Breadth=${researchBreadth}, Depth=${researchDepth}, Classification=${useClassification}`);
         }
 
-        // --- Get Venice Key (needed for classification and query generation) ---
         let veniceKey;
         try {
             if (!userPassword) throw new Error("Password required for Venice API key.");
-            veniceKey = await userManager.getApiKey({ username: session.username, password: userPassword, service: 'venice' }); // Use options object
+            veniceKey = await userManager.getApiKey({ username: session.username, password: userPassword, service: 'venice' });
             if (!veniceKey) throw new Error("Failed to get/decrypt Venice API key.");
         } catch (keyError) {
             throw new Error(`Venice API key retrieval failed: ${keyError.message}`);
         }
 
-        // --- Token Classification (if enabled) ---
         if (useClassification) {
             try {
-                effectiveOutput('Performing token classification on chat history...');
-                classificationMetadata = await callVeniceWithTokenClassifier(researchContextString, veniceKey);
+                effectiveOutput('Performing token classification on research query...');
+                classificationMetadata = await callVeniceWithTokenClassifier(researchQueryString, veniceKey);
                 if (!classificationMetadata) {
                     effectiveOutput('Token classification returned no metadata.');
                 } else {
-                     effectiveOutput('Token classification successful.');
-                     // Log metadata for debugging
-                     effectiveOutput(`Metadata: ${JSON.stringify(classificationMetadata).substring(0, 200)}...`);
+                    effectiveOutput('Token classification successful.');
+                    effectiveOutput(`Metadata: ${JSON.stringify(classificationMetadata).substring(0, 200)}...`);
                 }
             } catch (classifyError) {
                 effectiveError(`Token classification failed: ${classifyError.message}. Proceeding without classification.`);
-                classificationMetadata = null; // Ensure it's null on failure
+                classificationMetadata = null;
             }
         }
 
-        // --- Generate Focused Queries ---
-        // Use the generateResearchQueriesFromContext helper function defined above
         generatedQueries = await generateResearchQueriesFromContext(
-            chatHistory,
-            [], // Pass memory blocks if available/relevant
-            researchBreadth, // Use the prompted breadth for number of queries
-            veniceKey, // Pass the decrypted Venice key
-            classificationMetadata, // Pass metadata
+            [{ role: 'user', content: researchQueryString }],
+            [],
+            researchBreadth,
+            veniceKey,
+            classificationMetadata,
             effectiveOutput,
             effectiveError
         );
@@ -722,88 +735,60 @@ export async function executeExitResearch(options = {}) {
             throw new Error("Failed to generate research queries from chat history.");
         }
 
-        // --- Prepare Options for startResearchFromChat ---
         const researchOptions = {
-            // query: researchContextString, // No longer pass the raw history here
-            depth: researchDepth, // Use gathered depth for execution
-            breadth: researchBreadth, // Pass breadth (might be used by engine/path differently now)
+            depth: researchDepth,
+            breadth: researchBreadth,
             password: userPassword,
-            // username: session.username, // Pass currentUser instead
-            currentUser: currentUser, // Pass fetched user data
+            currentUser: currentUser,
             isWebSocket: isWebSocket,
             webSocketClient: webSocketClient,
-            classificationMetadata: classificationMetadata, // Pass metadata for summary
-            overrideQueries: generatedQueries, // --- Pass the generated queries ---
-            output: effectiveOutput, // Pass handlers through
+            classificationMetadata: classificationMetadata,
+            overrideQueries: generatedQueries,
+            output: effectiveOutput,
             error: effectiveError,
-            progressHandler: options.progressHandler // Pass progress handler from original options
-            // verbose: options.verbose // Add if needed
+            progressHandler: options.progressHandler
         };
 
-        // --- Retrieve Relevant Memories (Optional Enhancement) ---
-        // Could retrieve memories based on the generated queries or the whole context
         let relevantMemories = [];
         if (session.memoryManager) {
             try {
-                // Retrieve based on the context string for simplicity
-                relevantMemories = await session.memoryManager.retrieveRelevantMemories(researchContextString, 5);
+                relevantMemories = await session.memoryManager.retrieveRelevantMemories(researchQueryString, 5);
             } catch (memError) {
                 console.error(`[WebSocket] Error retrieving memory for exitResearch: ${memError.message}`);
                 effectiveOutput(`[System] Warning: Could not retrieve relevant memories - ${memError.message}`);
             }
         }
 
-        // --- Execute Research ---
-        // Use the same handlers passed to executeExitResearch
-        researchResult = await startResearchFromChat(researchOptions); // Pass single options object
+        researchResult = await startResearchFromChat(researchOptions);
 
-        // --- FIX: Send research_complete message on success ---
         if (researchResult.success && isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'research_complete', summary: researchResult.results?.summary });
         } else if (!researchResult.success && isWebSocket && webSocketClient) {
-            // Send research_complete even on failure from startResearchFromChat
-             safeSend(webSocketClient, { type: 'research_complete', error: researchResult.error });
+            safeSend(webSocketClient, { type: 'research_complete', error: researchResult.error });
         }
-        // --- End FIX ---
-        // effectiveOutput("Research based on chat history complete."); // Message sent by research_complete handler
     } catch (error) {
         effectiveError(`Error during exitResearch: ${error.message}`);
         researchResult = { success: false, error: error.message };
-        // Clear potentially bad password cache on key/decryption errors
         if (error.message.toLowerCase().includes('password') || error.message.toLowerCase().includes('api key')) {
-             if (session) session.password = null;
+            if (session) session.password = null;
         }
-        // --- FIX: Send research_complete message on caught error ---
         if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'research_complete', error: error.message });
         }
-        // --- End FIX ---
     } finally {
-        // --- Clean up session state regardless of research success/failure ---
         if (session) {
             session.isChatActive = false;
-            session.chatHistory = []; // Clear history
+            session.chatHistory = [];
             if (session.memoryManager) {
-                // Decide whether to finalize or just clear. Let's just clear for now.
-                // Use /exitmemory for explicit finalization.
                 console.log(`[WebSocket] Clearing memory manager on /exitresearch for session ${session.sessionId}.`);
                 session.memoryManager = null;
             }
-            // Don't clear session.password here, might be needed for subsequent commands. Clear on failure was handled above.
         }
-
-        // Inform client about chat exit and mode change
         if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'chat-exit' });
             safeSend(webSocketClient, { type: 'mode_change', mode: 'command', prompt: '> ' });
         }
     }
-
-    // Return success status, always enable input after completion/error
-    // The calling function (handleChatMessage) will use this return value.
-    // Since research_complete and mode_change messages handle enabling input on the client,
-    // we can return keepDisabled: false here.
-    // --- FIX: Return researchResult which contains success status ---
     return { ...researchResult, keepDisabled: false };
 }
 

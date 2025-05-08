@@ -84,6 +84,11 @@ export async function executeResearch(args, options, session, currentUser, reque
       throw new Error("Failed to retrieve necessary API keys. Check user configuration and password.");
     }
 
+    // Store password in session after prompt
+    if (isWebSocket && session && password) {
+      session.password = password;
+    }
+
     // Instantiate ResearchEngine with WebSocket handlers
     const engine = new ResearchEngine({
       braveApiKey,
@@ -126,13 +131,19 @@ export async function executeResearch(args, options, session, currentUser, reque
     // Handle results (e.g., prompt user for action)
     if (results && results.markdownContent) {
       wsOutputHandler('Research complete. Choose an action:'); // Use handler
+      // Store password in session for post-research actions
+      if (isWebSocket && session && password) {
+        session.password = password;
+      }
       // ... (rest of post-research action prompting logic using wsPrompt) ...
       // This part remains largely the same, using wsPrompt which handles WS communication
        const action = await wsPrompt(session, `Choose action for "${results.suggestedFilename}": [Download] | [Upload] | [Keep] | [Discard]`, false, 'post_research_action');
        wsOutputHandler(`Selected action: ${action}`); // Use handler
 
-       await handlePostResearchAction(action, results.suggestedFilename, results.markdownContent, options);
-
+       // --- FIX: Pass password from session or currentUser to handler ---
+       const userPassword = (session && session.password) || (currentUser && currentUser.password) || null;
+       await handlePostResearchAction(action, results.suggestedFilename, results.markdownContent, { ...options, password: userPassword });
+       // --- END FIX ---
 
     } else {
        wsErrorHandler('Research finished but no markdown content was generated.'); // Use handler
@@ -154,3 +165,19 @@ export async function executeResearch(args, options, session, currentUser, reque
 }
 
 // ... (rest of the file, including handlePostResearchAction etc.) ...
+
+// --- FIX: Example handlePostResearchAction (ensure password is passed) ---
+async function handlePostResearchAction(action, filename, markdownContent, options) {
+  // ...existing code...
+  // Always use password from options
+  const password = options.password;
+  // ...existing code...
+  if (action.toLowerCase() === 'upload') {
+    // ...existing code...
+    // Pass password to upload logic
+    await uploadToGitHub(filename, markdownContent, password);
+    // ...existing code...
+  }
+  // ...existing code...
+}
+// ...existing code...

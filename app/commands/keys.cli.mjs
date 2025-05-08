@@ -298,9 +298,9 @@ export async function executeKeys(options = {}) {
                 effectiveOutput('--- API Key & GitHub Status ---');
                 effectiveOutput(`Brave API Key: ${keysStatus.brave ? 'Configured' : 'Not Configured'}`);
                 effectiveOutput(`Venice API Key: ${keysStatus.venice ? 'Configured' : 'Not Configured'}`);
-                // Report GitHub config status (owner/repo) and separately if token is set
-                effectiveOutput(`GitHub Config (Owner/Repo): ${keysStatus.github ? 'Configured' : 'Not Configured'}`);
-                // Add a check for the token specifically
+                // --- FIX: Use correct methods for GitHub config and token ---
+                const githubConfigExists = await userManager.hasGitHubConfig(currentUsername);
+                effectiveOutput(`GitHub Config (Owner/Repo): ${githubConfigExists ? 'Configured' : 'Not Configured'}`);
                 const hasToken = await userManager.hasGitHubToken(currentUsername);
                 effectiveOutput(`GitHub Token: ${hasToken ? 'Set' : 'Not Set'}`);
 

@@ -74,7 +74,21 @@ class Chat {
       this.terminal.appendOutput('Error: Chat session is not active');
       return false;
     }
-    
+
+    // --- NEW: Intercept in-chat commands starting with '/' ---
+    if (message.trim().startsWith('/')) {
+      const [cmd, ...args] = message.trim().slice(1).split(/\s+/);
+      const command = cmd.toLowerCase();
+      if (command === 'exit') {
+        await this.exitChat();
+        return true;
+      }
+      // Optionally handle other in-chat commands here (e.g., /exitmemory, /help, etc.)
+      this.terminal.appendOutput(`Unknown in-chat command: /${command}`);
+      return true;
+    }
+    // --- END NEW ---
+
     try {
       // Add user message to history
       this.history.push({ role: 'user', content: message });

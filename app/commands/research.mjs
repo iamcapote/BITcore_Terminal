@@ -22,6 +22,12 @@ export async function research(options) {
       return { success: false, error: 'Missing session info', keepDisabled: false };
   }
 
+  // --- BLOCK PUBLIC USERS ---
+  if (session.role === 'public' || (options.currentUser && options.currentUser.role === 'public')) {
+      error('Research command is not available for public users. Please /login to use this feature.');
+      return { success: false, error: 'Permission denied for public user', keepDisabled: false };
+  }
+
   if (!password) {
       error('Internal Error: Password was not provided or retrieved for API key decryption.');
       // This case should ideally be caught by the password prompt logic in routes.mjs,

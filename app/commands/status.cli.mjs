@@ -24,8 +24,19 @@ export async function executeStatus(options = {}) {
   // Check API key presence for the correct user
   const veniceKeyExists = await userManager.hasApiKey('venice', username);
   const braveKeyExists = await userManager.hasApiKey('brave', username);
-  // --- FIX: Add GitHub key check ---
-  const githubKeyExists = await userManager.hasApiKey('github', username);
+  // --- FIX: Use correct methods for GitHub config and token ---
+  const githubConfigExists = await userManager.hasGitHubConfig(username);
+  const githubTokenExists = await userManager.hasGitHubToken(username);
+
+  output('=== User Status ===');
+  output(`Username: ${username}`);
+  output(`Role: ${role}`);
+  output('API Key Configurations:');
+  output(`  - Venice: ${veniceKeyExists ? '✓' : '✗'}`);
+  output(`  - Brave:  ${braveKeyExists ? '✓' : '✗'}`);
+  // --- FIX: Display GitHub config and token status separately ---
+  output(`  - GitHub Config (Owner/Repo): ${githubConfigExists ? '✓' : '✗'}`);
+  output(`  - GitHub Token: ${githubTokenExists ? '✓' : '✗'}`);
 
   // --- REMOVED Debug logs for brevity ---
   // output('[DEBUG] Retrieving user status...');
@@ -35,15 +46,6 @@ export async function executeStatus(options = {}) {
   // output(`[DEBUG] Venice API Key Exists: ${veniceKeyExists}`);
   // output(`[DEBUG] Brave API Key Exists: ${braveKeyExists}`);
   // output(`[DEBUG] GitHub API Key Exists: ${githubKeyExists}`);
-
-  output('=== User Status ===');
-  output(`Username: ${username}`);
-  output(`Role: ${role}`);
-  output('API Key Configurations:');
-  output(`  - Venice: ${veniceKeyExists ? '✓' : '✗'}`);
-  output(`  - Brave:  ${braveKeyExists ? '✓' : '✗'}`);
-  // --- FIX: Display GitHub key status ---
-  output(`  - GitHub: ${githubKeyExists ? '✓' : '✗'}`);
 
   // --- FIX: Display limits more clearly ---
   const limitEntries = Object.entries(limits);

@@ -1001,6 +1001,11 @@ export class UserManager {
    * @returns {Promise<boolean>} True if an encrypted key exists for the service.
    */
   async hasApiKey(service, username) {
+    if (service === 'github') {
+      // GitHub config/token is not stored in encryptedApiKeys
+      console.warn(`[Auth][hasApiKey] 'github' is not a valid service for hasApiKey. Use hasGitHubConfig/hasGitHubToken instead.`);
+      return false;
+    }
     if (service !== 'brave' && service !== 'venice') {
       console.warn(`[Auth][hasApiKey] Invalid service '${service}' requested. Only 'brave' or 'venice' supported.`);
       return false;

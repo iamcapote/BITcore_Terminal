@@ -99,6 +99,12 @@ export async function executeResearch(options = {}) {
         : (progressData) => { /* Optional CLI progress logging */ };
     // --- End FIX ---
 
+    // --- BLOCK PUBLIC USERS ---
+    if (currentUser && currentUser.role === 'public') {
+        effectiveError('Research command is not available for public users. Please /login to use this feature.');
+        return { success: false, error: 'Permission denied for public user', handled: true, keepDisabled: false }; // Enable input after error
+    }
+
     // Determine query for 'run' action
     // --- Query now comes ONLY from positionalArgs or options.query ---
     let researchQuery = positionalArgs.join(' ').trim() || queryFromOptions;
@@ -306,6 +312,8 @@ export async function executeResearch(options = {}) {
                 // --- FIX: Store promptData needed by handleInputMessage ---
                 session.promptData = { suggestedFilename: results.suggestedFilename };
                 effectiveDebug("Stored research markdown content and suggested filename in session and promptData.");
+                // --- FIX: Store password in session for post-research actions ---
+                if (session.password !== userPassword) session.password = userPassword;
             } else if (results.suggestedFilename && isWebSocket && session) {
                 effectiveError(`Internal Warning: Suggested filename exists but markdown content is missing in session ${session.sessionId}.`);
             }
@@ -339,6 +347,9 @@ export async function executeResearch(options = {}) {
                     false, // Not a password prompt
                     'post_research_action' // Set context for handleInputMessage
                 );
+                // --- FIX: Ensure password is available for post-research actions ---
+                if (session.password !== userPassword) session.password = userPassword;
+                // --- END FIX ---
                 effectiveDebug(`Post-research action prompt sent. Server awaits response via handleInputMessage with context 'post_research_action'.`);
                 // Keep input disabled, handleInputMessage will re-enable it after processing the choice.
 
