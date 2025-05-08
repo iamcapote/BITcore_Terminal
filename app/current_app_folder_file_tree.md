@@ -1,8 +1,6 @@
 # Current APP Folder File Tree
 
 ```plaintext
-cli/
-
 commands/
   admin.cli.mjs
   chat.cli.mjs
@@ -14,6 +12,7 @@ commands/
   memory.cli.mjs
   password.cli.mjs
   research.cli.mjs
+  research.command.mjs
   research.mjs
   status.cli.mjs
   users.cli.mjs
@@ -32,6 +31,8 @@ features/
     routes.mjs
     user-manager.mjs
     user-manager.mjs.bak
+
+  chat/
 
   research/
     research.controller.mjs
@@ -58,18 +59,20 @@ infrastructure/
     search.mjs
     search.providers.mjs
 
-  storage/
-
 
 public/
   chat.js
   command-processor.js
   index.html
+  js/
+
+  research/
+    index.html
+
   research.js
+  style.css
   terminal.js
   webcomm.js
-
-routes/
 
 start.mjs
 tests/

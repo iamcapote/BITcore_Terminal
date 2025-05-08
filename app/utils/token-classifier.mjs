@@ -1,5 +1,7 @@
 import fetch from 'node-fetch';
 import { output } from './research.output-manager.mjs';
+import { LLMClient } from '../infrastructure/ai/venice.llm-client.mjs';
+import { getDefaultTokenClassifierCharacterSlug } from '../infrastructure/ai/venice.characters.mjs';
 // Removed VENICE_CHARACTERS import as it wasn't used
 
 /**
@@ -21,6 +23,8 @@ export async function callVeniceWithTokenClassifier(query, veniceApiKey) {
     throw new Error(errorMsg);
   }
 
+  const llm = new LLMClient({ apiKey: veniceApiKey });
+
   // Use a specific character/prompt for classification if desired, otherwise default
   // Using 'metacore' as previously defined, assuming it's suitable.
   const payload = {
@@ -28,7 +32,7 @@ export async function callVeniceWithTokenClassifier(query, veniceApiKey) {
     model: 'llama-3.3-70b',
     messages: [{ role: 'user', content: query }],
     // Ensure venice_parameters and character_slug are correct
-    venice_parameters: { character_slug: 'metacore' },
+    venice_parameters: { character_slug: getDefaultTokenClassifierCharacterSlug() },
   };
 
   try {

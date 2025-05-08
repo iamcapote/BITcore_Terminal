@@ -96,15 +96,28 @@ class Chat {
   /**
    * Handle chat response from server
    * 
-   * @param {Object} data - Response data
+   * @param {Object} data - Response data { type: 'chat-response', message: '...' }
    */
   handleChatResponse(data) {
-    if (data.content) {
-      // Add to history
-      this.history.push({ role: 'assistant', content: data.content });
+    if (data.message) { // Server sends 'message', not 'content'
+      // Add to history (Chat class specific logic)
+      // Store the raw message, which might include <thinking> tags
+      this.history.push({ role: 'assistant', content: data.message }); 
       
-      // Display in terminal
-      this.terminal.appendOutput(`[AI] ${data.content}`);
+      // Delegate display to the terminal's handler for chat responses
+      // This ensures consistent display, including the generic "thinking..." message
+      // and parsing of <thinking> tags by terminal._displayAiResponse.
+      if (this.terminal && typeof this.terminal.handleChatResponse === 'function') {
+        this.terminal.handleChatResponse(data); // Pass the full message object
+      } else if (this.terminal && typeof this.terminal._displayAiResponse === 'function') {
+        // Fallback to _displayAiResponse if terminal.handleChatResponse is not available for some reason
+        this.terminal._displayAiResponse(data.message);
+      } else if (this.terminal) {
+        // Basic fallback if specific display methods are missing
+        this.terminal.appendOutput(`[AI] ${data.message}`);
+      }
+    } else {
+      console.warn("Chat response received without message content:", data);
     }
   }
   

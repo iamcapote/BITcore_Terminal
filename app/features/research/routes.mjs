@@ -106,6 +106,11 @@ export function handleWebSocketConnection(ws, req) {
       currentUser: null, // Cached user data (including potentially decrypted keys)
       currentResearchResult: null, // Store last research result content
       currentResearchFilename: null, // Store last research result suggested filename
+      // --- ADDED FOR MODEL/CHARACTER ---
+      sessionModel: null,      // To store the model for the session (chat/research)
+      sessionCharacter: null,  // To store the character for the session (chat/research)
+      // Classifier model/character are handled by the classifier utility itself or ResearchEngine
+      // --- END ADDED ---
     };
     activeChatSessions.set(sessionId, sessionData);
     wsSessionMap.set(ws, sessionId);
@@ -213,15 +218,10 @@ export function handleWebSocketConnection(ws, req) {
               enableInputAfterProcessing = await handleCommandMessage(ws, message, currentSession);
           }
       } else if (message.type === 'chat-message') {
-          // Handle chat messages ONLY when in chat mode
           if (currentSession.isChatActive) {
-              console.log("[WebSocket] Routing chat message to handleChatMessage.");
               enableInputAfterProcessing = await handleChatMessage(ws, message, currentSession);
           } else {
-              // Received chat message when not in chat mode - treat as error
-              console.warn(`[WebSocket] Received 'chat-message' while not in chat mode (Session ${currentSessionId}).`);
-              wsErrorHelper(ws, 'Cannot send chat messages when not in chat mode. Use /chat first.', true);
-              enableInputAfterProcessing = false; // wsErrorHelper handles enabling
+              wsErrorHelper(ws, 'Cannot send chat messages when not in chat mode.', true);
           }
       } else if (message.type === 'input') {
           // Handle responses to server-side prompts
@@ -433,6 +433,10 @@ async function handleCommandMessage(ws, message, session) {
     const { commandName, positionalArgs, flags } = parseCommandArgs(fullCommandString);
     const passwordFromPayload = message.password; // Get password if sent in payload
 
+    // Declare effectiveModel and effectiveCharacter at the top of the function scope
+    let effectiveModel = null;
+    let effectiveCharacter = null;
+
     outputManager.debug(`[handleCommandMessage] Parsed: name='${commandName}', args=${JSON.stringify(positionalArgs)}, flags=${JSON.stringify(flags)}`);
 
     if (!commandName) {
@@ -452,6 +456,78 @@ async function handleCommandMessage(ws, message, session) {
     let enableInputAfter = true; // Default to enabling input after command finishes
     let isInteractiveResearch = false; // Flag for interactive flow
 
+    // --- MODEL AND CHARACTER HANDLING ---
+    const newModelFlag = flags.m;
+    const newCharacterFlag = flags.c;
+
+    if (commandName === 'chat' || commandName === 'research') {
+        if (newModelFlag) {
+            if (session.sessionModel === null) {
+                session.sessionModel = newModelFlag;
+                outputManager.debug(`[WebSocket] Session ${session.sessionId} model set by flag to: ${session.sessionModel}`);
+                wsOutputHelper(ws, `Session model set to: ${session.sessionModel}`);
+            } else if (session.sessionModel !== newModelFlag) {
+                wsOutputHelper(ws, `Info: Model for this session is already set to '${session.sessionModel}'. Flag '--m ${newModelFlag}' ignored.`);
+            }
+        }
+        if (newCharacterFlag) {
+            const newCharValue = newCharacterFlag.toLowerCase() === 'none' ? 'None' : newCharacterFlag;
+            if (session.sessionCharacter === null) {
+                session.sessionCharacter = newCharValue;
+                outputManager.debug(`[WebSocket] Session ${session.sessionId} character set by flag to: ${session.sessionCharacter}`);
+                wsOutputHelper(ws, `Session character set to: ${session.sessionCharacter === 'None' ? 'None (no character)' : session.sessionCharacter}`);
+            } else if (session.sessionCharacter !== newCharValue) {
+                wsOutputHelper(ws, `Info: Character for this session is already set to '${session.sessionCharacter}'. Flag '--c ${newCharacterFlag}' ignored.`);
+            }
+        }
+    }
+
+    const defaultModels = {
+        chat: 'qwen-2.5-qwq-32b', // Fallback to hardcoded if not in config
+        research: 'llama-4-maverick-17b',
+    };
+    const defaultCharacters = {
+        chat: 'bitcore',
+        research: 'archon',
+    };
+
+    // Assign to the already declared variables (without 'let')
+    effectiveModel = session.sessionModel;
+    effectiveCharacter = session.sessionCharacter; // Can be null (never set), or 'None' (explicitly no character)
+
+    if (commandName === 'chat') {
+        if (effectiveModel === null) {
+            effectiveModel = defaultModels.chat;
+            session.sessionModel = effectiveModel; // Persist default for the session
+            wsOutputHelper(ws, `Using default model for chat: ${effectiveModel}`);
+        }
+        if (effectiveCharacter === null) { 
+            effectiveCharacter = defaultCharacters.chat;
+            session.sessionCharacter = effectiveCharacter; // Persist default for the session
+            wsOutputHelper(ws, `Using default character for chat: ${effectiveCharacter}`);
+        }
+    } else if (commandName === 'research') {
+        if (effectiveModel === null) {
+            effectiveModel = defaultModels.research;
+            session.sessionModel = effectiveModel; // Persist default for the session
+            wsOutputHelper(ws, `Using default model for research: ${effectiveModel}`);
+        }
+        if (effectiveCharacter === null) {
+            effectiveCharacter = defaultCharacters.research;
+            session.sessionCharacter = effectiveCharacter; // Persist default for the session
+            wsOutputHelper(ws, `Using default character for research: ${effectiveCharacter}`);
+        }
+    }
+    
+    // Ensure a model is always present if the command requires one
+    if (!effectiveModel && (commandName === 'chat' || commandName === 'research')) {
+         // This case should ideally be covered by the above logic setting defaults
+        effectiveModel = defaultModels[commandName];
+        if (session.sessionModel === null) session.sessionModel = effectiveModel;
+         outputManager.debug(`[WebSocket] Session ${session.sessionId} model defaulted to: ${effectiveModel} as a fallback.`);
+    }
+    // --- END MODEL AND CHARACTER HANDLING ---
+
     // --- Options Setup ---
     // Use parsed values directly
     const options = {
@@ -467,6 +543,10 @@ async function handleCommandMessage(ws, message, session) {
         output: null,
         error: null,
         // Query is now derived later if needed, or comes from positionalArgs
+        // --- PASS EFFECTIVE MODEL AND CHARACTER ---
+        model: effectiveModel,
+        // Pass null if character is 'None', otherwise pass the character string
+        character: (effectiveCharacter === 'None' ? null : effectiveCharacter),
     };
     // --- End Options Setup ---
 
@@ -883,243 +963,42 @@ function commandRequiresPassword(commandName) {
  */
 async function handleChatMessage(ws, message, session) {
     if (!session.isChatActive) {
-        wsErrorHelper(ws, "Cannot process chat message: Not in chat mode.", true);
-        return false;
+        safeSend(ws, { type: 'error', error: 'Chat mode not active. Use /chat first.' });
+        return true;          // enable input afterwards
     }
 
-    const userInput = message.message;
-    let enableInputAfter = true; // Default to enabling input
+    const userMsg = message.message?.trim();
+    if (!userMsg) return true;
 
-    // Define output/error handlers specific to this chat context
-    const chatOutput = (data) => wsOutputHelper(ws, data);
-    const chatError = (data) => {
-        wsErrorHelper(ws, data, true);
-        enableInputAfter = false;
-    };
-
-    // --- Public User Handling ---
-    const isPublicUser = session.role === 'public';
-    // Ensure chatHistory exists for all users (including public)
-    if (!session.chatHistory) session.chatHistory = [];
+    // store user line
+    session.chatHistory ??= [];
+    session.chatHistory.push({ role: 'user', content: userMsg });
 
     try {
-        // --- Handle In-Chat Commands ---
-        if (userInput.startsWith('/')) {
-            const parts = userInput.substring(1).split(' ');
-            const command = parts[0].toLowerCase();
-            const args = parts.slice(1);
+        const llm      = new LLMClient();
+        const model    = session.sessionModel     || 'qwen-2.5-qwq-32b';
+        const character= session.sessionCharacter || 'bitcore';
 
-            // --- Public User Command Restrictions ---
-            if (isPublicUser && !['exit', 'help'].includes(command)) {
-                chatError(`Command /${command} is not available for public users in chat mode. Use /login.`);
-                return false; // Keep input disabled as error was sent
-            }
-            // --- End Public User Command Restrictions ---
+        // prepend a single system instruction
+        const system = { role:'system',
+                         content: character
+                           ? `You are ${character}. You are a helpful assistant.`
+                           : 'You are a helpful assistant.' };
 
-            // --- FIX: Pass chatOutput/chatError as output/error ---
-            const commandOptions = {
-                webSocketClient: ws,
-                isWebSocket: true,
-                session: session,
-                output: chatOutput, // Pass chatOutput
-                error: chatError,   // Pass chatError
-                wsPrompt: wsPrompt,
-                currentUser: session.currentUser,
-                requestingUser: session.currentUser,
-                password: session.password,
-                positionalArgs: args,
-                // Parse flags
-                depth: session.chatDepth || 2, // Default or from session?
-                breadth: session.chatBreadth || 3, // Default or from session?
-                classify: session.chatClassify || false, // Default or from session?
-                verbose: session.chatVerbose || false, // Use session verbose setting
-            };
-            // ... existing flag parsing ...
-            commandOptions.query = commandOptions.positionalArgs.join(' '); // For /research
+        const shortHistory = session.chatHistory.slice(-9); // keep context short
+        const messages = [system, ...shortHistory];
 
-            console.log(`[WebSocket] Processing in-chat command: /${command} (Session ${session.sessionId})`);
+        const res   = await llm.completeChat({ messages, model, temperature:0.7, maxTokens: 2048 });
+        const clean = cleanChatResponse(res.content);
 
-            let commandResult; // To store result from command execution
+        session.chatHistory.push({ role: 'assistant', content: clean });
 
-            switch (command) {
-                case 'exit':
-                    chatOutput('Exiting chat mode...');
-                    session.isChatActive = false;
-                    session.chatHistory = [];
-                    session.llmClient = null;
-                    // Finalize memory if enabled? No, use /exitmemory
-                    if (session.memoryManager) {
-                        // Don't output warning for public users as memory is always off
-                        if (!isPublicUser) {
-                            chatOutput('Note: Memory was active. Use /exitmemory before /exit to save memory.');
-                        }
-                        session.memoryManager = null; // Clear manager on simple exit
-                    }
-                    safeSend(ws, { type: 'chat-exit' });
-                    safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
-                    enableInputAfter = false; // Mode change handles enabling
-                    break;
-
-                case 'exitmemory':
-                    // Already blocked for public users above
-                    commandResult = await exitMemory(commandOptions);
-                    // exitMemory sends its own output/error messages via commandOptions.output/error
-                    enableInputAfter = !(commandResult?.keepDisabled === true); // Respect keepDisabled flag
-                    break;
-
-                case 'memory':
-                    // Already blocked for public users above
-                    if (args[0] === 'stats' && session.memoryManager) {
-                        const stats = await session.memoryManager.getStats();
-                        chatOutput(`Memory Stats: ${JSON.stringify(stats)}`);
-                    } else if (!session.memoryManager) {
-                        chatOutput('Memory mode is not currently active.');
-                    } else {
-                        chatOutput('Usage: /memory stats');
-                    }
-                    enableInputAfter = true;
-                    break;
-
-                case 'research':
-                    // Already blocked for public users above
-                    chatOutput(`Starting research for query: "${commandOptions.query}"...`);
-                    // --- FIX: Pass progress handler ---
-                    commandOptions.progressHandler = (progressData) => {
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            safeSend(ws, { type: 'progress', data: progressData });
-                        }
-                    };
-                    commandResult = await executeResearch(commandOptions);
-                    // executeResearch sends its own output/error and handles prompts
-                    enableInputAfter = !(commandResult?.keepDisabled === true); // Respect keepDisabled flag
-                    break;
-
-                case 'exitresearch':
-                    // Already blocked for public users above
-                    commandOptions.progressHandler = (progressData) => {
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            safeSend(ws, { type: 'progress', data: progressData });
-                        }
-                    };
-                    commandResult = await executeExitResearch(commandOptions);
-                    // executeExitResearch handles session cleanup, mode change, and output/errors
-                    enableInputAfter = !(commandResult?.keepDisabled === true); // Respect keepDisabled flag
-                    break;
-
-                case 'help':
-                    // Display in-chat help (show all commands, restrictions handled above)
-                    // --- FIX: Update help text for public users ---
-                    if (isPublicUser) {
-                        chatOutput(`Available in-chat commands (Public User):
-    /exit          - Exit chat mode, return to command prompt.
-    /help          - Show this help message.
-    Use /login <username> to access memory and research features.`);
-                    } else {
-                        chatOutput(`Available in-chat commands:
-    /exit          - Exit chat mode, return to command prompt.
-    /exitmemory    - Finalize and save memory (if active), then exit chat mode. (Requires Login)
-    /memory stats  - Show statistics about the current memory session (if active). (Requires Login)
-    /research <q>  - Start a research task based on <q> within the chat context. (Requires Login)
-    /exitresearch  - Exit chat, generate queries from history, and start research. (Requires Login)
-    /help          - Show this help message.`);
-                    }
-                    // --- End FIX ---
-                    enableInputAfter = true;
-                    break;
-
-                default:
-                    chatOutput(`Unknown command: ${userInput}. Type /help for available commands.`);
-                    enableInputAfter = true;
-                    break;
-            }
-        } else {
-            // --- Handle Regular Chat Message ---
-            // --- FIX: Allow public users to proceed ---
-            enableInputAfter = false; // Keep disabled during LLM call + memory ops
-
-            // 1. Store User Message (if not public, or if memory enabled in future for public)
-            if (!isPublicUser || session.memoryManager) { // Only store if logged in or memory somehow active
-                session.chatHistory.push({ role: 'user', content: userInput });
-                if (session.memoryManager) {
-                    try {
-                        await session.memoryManager.storeMemory(userInput, 'user');
-                    } catch (memError) {
-                        chatError(`Memory Error: ${memError.message}`);
-                        // Decide if this should stop processing or just warn
-                    }
-                }
-            }
-
-            // 2. Retrieve Relevant Memories (only if memory enabled)
-            let retrievedMemoryContext = '';
-            if (session.memoryManager) {
-                try {
-                    const relevantMemories = await session.memoryManager.retrieveRelevantMemories(userInput);
-                    if (relevantMemories && relevantMemories.length > 0) {
-                        retrievedMemoryContext = "Relevant information from memory:\n" + relevantMemories.map(mem => `- ${mem.content}`).join('\n') + "\n";
-                    }
-                } catch (memError) {
-                    chatError(`Memory Retrieval Error: ${memError.message}`);
-                }
-            }
-
-            // 3. Prepare history and context for LLM
-            // Use session history if logged in, otherwise just the current message for public
-            let llmHistory = isPublicUser
-                ? [{ role: 'user', content: userInput }] // Public users have no persistent history
-                : session.chatHistory.slice(-10); // Logged-in users use session history (limited)
-
-            const systemPromptContent = retrievedMemoryContext
-                ? `${retrievedMemoryContext}Continue the conversation.`
-                : 'You are a helpful assistant.';
-
-            // Prepend system prompt if it exists and is not empty
-            if (systemPromptContent) {
-                llmHistory = [{ role: 'system', content: systemPromptContent }, ...llmHistory];
-            }
-
-
-            // 4. Call LLM
-            if (!session.llmClient) { // Check if LLM client was initialized (should be for public too now)
-                chatError("LLM client is not available in this session.");
-                enableInputAfter = true; // Re-enable input after error
-            } else {
-                try {
-                    chatOutput('[AI thinking...]'); // Indicate activity
-                    // --- FIX: Pass messages correctly to completeChat ---
-                    const response = await session.llmClient.completeChat({ messages: llmHistory });
-                    const assistantResponse = cleanChatResponse(response.content); // Access content property
-
-                    // Store assistant response (if not public, or if memory enabled)
-                    if (!isPublicUser || session.memoryManager) {
-                        session.chatHistory.push({ role: 'assistant', content: assistantResponse });
-                        if (session.memoryManager) {
-                            try {
-                                await session.memoryManager.storeMemory(assistantResponse, 'assistant');
-                            } catch (memError) {
-                                chatError(`Memory Error: ${memError.message}`);
-                            }
-                        }
-                    }
-
-                    chatOutput(`[AI] ${assistantResponse}`); // Send response
-                    enableInputAfter = true; // Re-enable input after successful response
-                } catch (llmError) {
-                    console.error(`[WebSocket] LLM Error (Session ${session.sessionId}):`, llmError);
-                    chatError(`LLM Error: ${llmError.message}`);
-                    enableInputAfter = true; // Re-enable input after LLM error
-                }
-            }
-            // --- End FIX ---
-        }
-    } catch (error) {
-        console.error(`[WebSocket] Error in handleChatMessage (Session ${session.sessionId}):`, error);
-        chatError(`Internal Server Error: ${error.message}`);
-        enableInputAfter = true; // Ensure input is enabled after unexpected errors
+        safeSend(ws, { type: 'chat-response', message: clean });   // <── NOTE the hyphen
+    } catch (err) {
+        console.error('[Chat] LLM error:', err);
+        safeSend(ws, { type: 'error', error: `Chat failed: ${err.message}` });
     }
-
-    console.log(`[WebSocket] Returning from handleChatMessage. Final enableInputAfter: ${enableInputAfter}`);
-    return enableInputAfter;
+    return true;
 }
 
 /**

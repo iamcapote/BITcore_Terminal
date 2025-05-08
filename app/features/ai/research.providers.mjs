@@ -1,6 +1,6 @@
 import { LLMClient, LLMError } from '../../infrastructure/ai/venice.llm-client.mjs'; // Import LLMError
 import { systemPrompt, queryExpansionTemplate } from '../../utils/research.prompt.mjs';
-import { VENICE_CHARACTERS } from '../../infrastructure/ai/venice.characters.mjs';
+import { VENICE_CHARACTERS, getDefaultResearchCharacterSlug, getDefaultTokenClassifierCharacterSlug } from '../../infrastructure/ai/venice.characters.mjs';
 
 function processQueryResponse(rawText) {
   const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
@@ -102,6 +102,11 @@ export async function generateOutput({ apiKey, type, system, prompt, temperature
       return { success: false, error: 'API key is required for generateOutput.', isApiError: true };
   }
   // Instantiate client with the provided key
+  // Set default character_slug for research and token classifier
+  let character_slug;
+  if (type === 'research') character_slug = getDefaultResearchCharacterSlug();
+  else if (type === 'token_classifier') character_slug = getDefaultTokenClassifierCharacterSlug();
+
   const client = new LLMClient({ apiKey, outputFn, errorFn });
   try {
     outputFn(`[generateOutput] Calling LLM for type: ${type}. Max Tokens: ${maxTokens}, Temp: ${temperature}`); // DEBUG LOG
@@ -110,7 +115,9 @@ export async function generateOutput({ apiKey, type, system, prompt, temperature
       system,
       prompt,
       temperature,
-      maxTokens
+      maxTokens,
+      type,
+      venice_parameters: character_slug ? { character_slug } : {}
     });
 
     const rawContent = response.content; // Store raw content

@@ -29,6 +29,7 @@ the default model is:
 chat => `qwen-2.5-qwq-32b`
 research => `llama-4-maverick-17b`
 token classifier => `venice-uncensored`
+remember that the research and token classifier are two different models in the swarm cauuse they have two different roles, one is for metadata and the other is for deep research.
 
 
 the default chracter is 
@@ -40,4 +41,5 @@ token classifier => metacore
 
 --- 
 
-important the chat character default bitcore is a thinking model and returns `<thinking>thought<thinking/>response` or similar. we must be able to properly display all of this in the chat but separated lgically by thinking vs response.
+important the chat character default bitcore is a thinking model and returns `<thinking>thought</thinking>response` or similar. we must be able to properly display all of this in the chat but separated lgically by thinking vs response.
+

@@ -436,7 +436,7 @@ class Terminal {
         if (typeof message.data === 'string' && message.data.includes('ETA:') && message.data.includes('%')) {
             this.updateLastLine(message.data);
         } else {
-            this.appendOutput(message.data);
+            this.appendOutput(message.data, 'output-default'); // Use a default type
         }
     }
     // REMOVED keepDisabled logic - rely on enable/disable messages
@@ -445,7 +445,7 @@ class Terminal {
   handleError(message) {
     console.log("Received 'error' message:", message); // Add log
     if (message.error) {
-      this.appendOutput(`Error: ${message.error}`);
+      this.appendOutput(`Error: ${message.error}`, 'error-output'); // Use a specific type for errors
     }
     // --- Start: Reset prompt state on error ---
     // Check both password and generic prompts
@@ -578,7 +578,8 @@ class Terminal {
 
   handleChatReady(message) {
       console.log("Received 'chat-ready' message:", message); // Add log
-      this.setMode('chat', message.prompt || '[chat] ');
+      // Explicitly set mode to 'chat' here
+      this.setMode('chat', message.prompt || '[chat] > ');
       this.appendOutput('Chat session ready. Type /exit to leave.');
       // Server should send enable_input
   }
@@ -644,10 +645,11 @@ class Terminal {
   }
 
   handleChatResponse(message) {
-      console.log("Received 'chat-response' message"); // Add log
-      this.appendOutput(`[AI] ${message.message}`);
-      // Chat responses should enable input ONLY if still in chat mode AND no client prompt active
-      // Server should send enable_input
+      // REMOVED: this.appendOutput('[AI] ...thinking...', 'ai-thinking-output');
+
+      // the actual response comes via _displayAiResponse
+      this._displayAiResponse(message.message);
+      // server will re-enable input
   }
 
   handleMemoryCommit(message) {
@@ -878,29 +880,28 @@ class Terminal {
    *
    * @param {string} text - Text to append
    */
-  appendOutput(text) {
-    if (text === undefined || text === null || !this.outputArea) return;
+  appendOutput(message, type = 'output-default') { // Changed default type for clarity
+    const outputContainer = this.outputArea; // FIX: Use this.outputArea
+    if (!outputContainer) return;
 
-    // Ensure text is a string
-    const textString = String(text);
+    const line = document.createElement('div');
+    // Add a base class and a type-specific class
+    line.className = `terminal-line ${type}`; 
 
-    const lines = textString.split('\n');
-    const wasScrolledToBottom = this.outputArea.scrollHeight - this.outputArea.clientHeight <= this.outputArea.scrollTop + 1; // +1 for tolerance
-
-    for (const line of lines) {
-      const outputLine = document.createElement('div');
-      outputLine.className = 'terminal-line';
-      // Sanitize or escape HTML if necessary, for now just textContent
-      outputLine.textContent = line;
-      this.outputArea.appendChild(outputLine);
+    if (typeof message === 'object') {
+        // Pretty print JSON objects
+        try {
+            line.textContent = JSON.stringify(message, null, 2);
+            line.classList.add('json-output'); // Add class for potential JSON styling
+        } catch (e) {
+            line.textContent = String(message);
+        }
+    } else {
+        // For strings, handle newlines by converting to <br>
+        line.innerHTML = String(message).replace(/\n/g, '<br>');
     }
-
-    if (wasScrolledToBottom) {
-        clearTimeout(this.scrollTimeout);
-        this.scrollTimeout = setTimeout(() => {
-            this.outputArea.scrollTop = this.outputArea.scrollHeight;
-        }, 50); // Debounce scrolling
-    }
+    outputContainer.appendChild(line);
+    this.scrollToBottom();
   }
 
   /**
@@ -927,6 +928,16 @@ class Terminal {
         this.scrollTimeout = setTimeout(() => {
             this.outputArea.scrollTop = this.outputArea.scrollHeight;
         }, 50); // Debounce scrolling
+    }
+  }
+
+  /**
+   * Scrolls the terminal output area to the bottom
+   * Ensures newest content is visible
+   */
+  scrollToBottom() {
+    if (this.outputArea) {
+      this.outputArea.scrollTop = this.outputArea.scrollHeight;
     }
   }
 
@@ -1104,6 +1115,59 @@ class Terminal {
       this.outputArea.innerHTML = '';
     }
   }
+
+  _displayAiResponse(messageContent) {
+    console.log("Raw message content:", messageContent);
+    
+    // Enhanced regex to match EITHER <thinking> OR <think> tags with robust whitespace handling
+    const thinkingTagRegex = /<(thinking|think)\s*>([\s\S]*?)<\/\s*(thinking|think)\s*>/s;
+    const match = messageContent.match(thinkingTagRegex);
+    
+    console.log("Regex match result:", match ? "Match found" : "No match");
+
+    const outputContainer = this.outputArea;
+    if (!outputContainer) return;
+
+    if (match) {
+      // match[2] contains the thinking content (the second capture group)
+      const thinkingText = match[2].trim();
+      console.log("Extracted thinking text length:", thinkingText.length);
+      
+      // Remove the entire thinking block from the message
+      const replyText = messageContent.replace(thinkingTagRegex, '').trim();
+      console.log("Extracted reply text length:", replyText.length);
+
+      if (thinkingText) {
+        const thinkingLine = document.createElement('div');
+        thinkingLine.className = 'terminal-line thinking-line';
+        thinkingLine.innerHTML = `<span class="thinking-header">[thinking]</span><br>${thinkingText.replace(/\n/g, '<br>')}`;
+        outputContainer.appendChild(thinkingLine);
+        
+        // Add empty line for visual separation
+        const spacerLine = document.createElement('div');
+        spacerLine.className = 'terminal-line-spacer';
+        spacerLine.innerHTML = '&nbsp;';
+        outputContainer.appendChild(spacerLine);
+      }
+
+      if (replyText) {
+        const replyLine = document.createElement('div');
+        replyLine.className = 'terminal-line reply-line';
+        replyLine.innerHTML = `<span class="reply-header">[reply]</span><br>${replyText.replace(/\n/g, '<br>')}`;
+        outputContainer.appendChild(replyLine);
+      }
+    } else {
+      // No thinking tag found, treat the whole message as a reply
+      if (messageContent.trim()) {
+        const replyLine = document.createElement('div');
+        replyLine.className = 'terminal-line reply-line';
+        replyLine.innerHTML = `<span class="reply-header">[reply]</span><br>${messageContent.replace(/\n/g, '<br>')}`;
+        outputContainer.appendChild(replyLine);
+      }
+    }
+    
+    this.scrollToBottom();
+  }
 }
 
 // Create global instances when DOM is loaded
@@ -1135,6 +1199,14 @@ document.addEventListener('DOMContentLoaded', () => {
   } else {
       console.log("Terminal already initialized.");
   }
+
+  // --- ADD THIS LINE ---
+  // Set the terminal instance on webcomm if both exist
+  if (window.webcomm && window.terminal && !window.webcomm.terminal) {
+    window.webcomm.setTerminal(window.terminal);
+    console.log("Terminal instance set on WebComm.");
+  }
+  // --- END ADDITION ---
 
   // Ensure commandProcessor is created AFTER terminal and webcomm are ready
   if (window.terminal && window.webcomm && !window.commandProcessor) {

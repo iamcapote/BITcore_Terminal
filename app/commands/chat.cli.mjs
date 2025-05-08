@@ -40,248 +40,43 @@ import config from '../config/index.mjs';
  * @returns {Promise<Object>} Chat session results
  */
 export async function executeChat(options = {}) {
-  const {
-    memory = false,
-    depth: memoryDepth = 'medium', // Renamed depth to memoryDepth for clarity
-    verbose = false,
-    password: providedPassword, // Password from handleCommandMessage (payload/cache/prompt)
-    isWebSocket = false,
-    session, // WebSocket session object
-    output: cmdOutput, // Renamed for clarity within function
-    error: cmdError,   // Renamed for clarity within function
-    currentUser, // User data from handleCommandMessage
-    webSocketClient, // Added for sending messages
-    _testMode = false // Internal flag for testing
-  } = options;
+    const {
+        model = 'qwen-2.5-qwq-32b',
+        character = 'bitcore',
+        session,
+        output,
+        error,
+        webSocketClient,
+        isWebSocket
+    } = options;
 
-  // --- FIX: Add check for valid output/error functions ---
-  if (typeof cmdOutput !== 'function') {
-      console.error("[executeChat] CRITICAL: cmdOutput is not a function.", options);
-      // Cannot easily send error back, log and return failure
-      return { success: false, error: "Internal server error: Output handler misconfigured.", handled: true, keepDisabled: false };
-  }
-  if (typeof cmdError !== 'function') {
-      console.error("[executeChat] CRITICAL: cmdError is not a function.", options);
-      // Log, but try to continue if possible
-      // If we can't report errors, things might fail silently
-      // Let's return an error here too for safety
-      return { success: false, error: "Internal server error: Error handler misconfigured.", handled: true, keepDisabled: false };
-  }
-  // --- End FIX ---
-
-  const timeoutMs = options.timeout || 30000; // Example timeout
-
-  try {
-    // Use cmdOutput for logging
-    logCommandStart('chat', options); // Use helper for consistent logging
-
-    const isPublicUser = currentUser && currentUser.role === 'public';
-    let effectiveMemory = memory; // Use let to allow modification
-
-    // --- Public User Handling ---
-    if (isPublicUser) {
-        // --- FIX: Allow chat, disable memory ---
-        cmdOutput("Entering chat mode for public user.");
-        cmdOutput("Memory and research features are disabled. Use /login for full features.");
-        effectiveMemory = false; // Force disable memory for public users
-    }
-    // --- End Public User Handling ---
-
-    // --- Authentication Check (Only for non-public users needing memory/research) ---
-    // Allow public users to proceed for basic chat
-    if (!isPublicUser && (!currentUser || currentUser.role === 'public')) { // Check added !isPublicUser
-      cmdError('You must be logged in to use memory or research features.');
-      // Don't return error here, allow basic chat for public
-      // return { success: false, error: 'Authentication required', handled: true, keepDisabled: false };
-    }
-    // --- End Authentication Check ---
-
-    const currentUsername = currentUser.username; // Will be 'public' for public users
-
-    // --- API Key Check & Decryption ---
-    let veniceKey = null;
-    let llmClient = null; // Initialize llmClient here
-    let userPassword = null; // Initialize userPassword
-
-    if (isPublicUser) {
-        // --- FIX: Use public key for public users ---
-        veniceKey = config.venice.apiKey;
-        if (!veniceKey) {
-            cmdError('Public Venice API key is not configured in .env. Public chat disabled.');
-            return { success: false, error: 'Public API key not configured', handled: true, keepDisabled: false };
-        }
-        cmdOutput("Using public API key for chat.");
-        llmClient = new LLMClient({ apiKey: veniceKey }); // Initialize for public user
-    } else {
-        // --- Logged-in user key retrieval ---
-        const hasVeniceKeyConfigured = await userManager.hasApiKey('venice', currentUsername);
-        if (!hasVeniceKeyConfigured) {
-            cmdError('Missing Venice API key required for chat. Use /keys set venice <key> to configure.');
-            return { success: false, error: 'Venice API key not configured', handled: true, keepDisabled: false };
-        }
-
-        // --- Password Handling & Key Decryption ---
-        userPassword = session?.password || providedPassword; // Check session cache first
-        const needsPassword = !userPassword; // Only need password if not already cached/provided
-
-        if (needsPassword) {
-            cmdError('Internal Error: Password required for chat but was not provided or prompted.');
-            if (session) session.password = null; // Clear potentially invalid cache
-            return { success: false, error: 'Password required but missing', handled: true, keepDisabled: false };
-        }
-
-        // --- Get API Key ---
-        veniceKey = await userManager.getApiKey({ username: currentUsername, password: userPassword, service: 'venice' }); // Use options object
-
-        if (!veniceKey) {
-            if (session) session.password = null;
-            cmdError('Failed to decrypt Venice API key with the provided password.');
-            return { success: false, error: 'API key decryption failed', handled: true, keepDisabled: false };
-        } else {
-            if (session && !session.password) {
-                session.password = userPassword;
-                console.log(`[executeChat] Cached password in session ${session.sessionId} after successful key decryption.`);
-            }
-            // --- Initialize LLM Client (Only if key obtained) ---
-            llmClient = new LLMClient({ apiKey: veniceKey }); // Initialize for logged-in user
-        }
-    }
-    // --- End API Key Check & Decryption ---
-
-
-    // --- Test Mode Handling ---
-    if (_testMode) {
-      cmdOutput("Running in test mode, skipping interactive chat");
-      logCommandSuccess('chat (test mode)', options);
-      return {
-        success: true,
-        testMode: true,
-        memoryEnabled: memory,
-        keepDisabled: false // Ensure input enabled after test mode message
-      };
-    }
-
-    // --- Initialize Memory Manager (if needed and NOT public user) ---
-    let memoryManagerInstance = null;
-    if (effectiveMemory && !isPublicUser) { // Check effectiveMemory and !isPublicUser
-      try { // <-- Outer try for memory init
-        // --- FIX: Pass LLMClient and GitHub token if available ---
-        let llmApiKeyForMem = veniceKey; // Use the already decrypted key
-        let githubTokenForMem = null;
-        if (await userManager.hasGitHubConfig(currentUsername)) { // Check if config exists
-            try { // <-- Inner try for getGitHubConfig (around line 205)
-                // --- FIX: Pass password to getGitHubConfig ---
-                const ghConfig = await userManager.getGitHubConfig(currentUsername, userPassword); // Pass password here
-                if (ghConfig && ghConfig.token) {
-                    githubTokenForMem = ghConfig.token; // Note: getGitHubConfig should return decrypted token
-                }
-            } catch (ghError) { // <-- ADDED CATCH for inner try
-                cmdError(`Warning: Failed to get GitHub token for memory manager: ${ghError.message}`);
-                // Optionally clear cached password if token decryption failed specifically
-                if (ghError.message.toLowerCase().includes('password') || ghError.message.toLowerCase().includes('decrypt')) {
-                    if (session) session.password = null;
-                    cmdError('GitHub token decryption failed. Please check password.');
-                    // Decide if this should be a fatal error for memory mode
-                    // return { success: false, error: `GitHub token decryption failed: ${ghError.message}`, handled: true, keepDisabled: false };
-                }
-            } // <-- END ADDED CATCH for inner try
-        }
-
-        memoryManagerInstance = new MemoryManager(currentUsername, {
-            output: cmdOutput, // Use command's output handler
-            error: cmdError,   // Use command's error handler
-            llmClient: llmApiKeyForMem ? new LLMClient({ apiKey: llmApiKeyForMem }) : null, // Pass LLM client
-            githubToken: githubTokenForMem // Pass GitHub token
-        });
-        // --- End FIX ---
-        cmdOutput(`Memory mode enabled (Depth: ${memoryDepth}). Use /exitmemory to finalize.`);
-      } catch (error) { // <-- Catch for outer try (already existed)
-        // Ensure this line uses correct backticks and syntax
-        cmdError(`Failed to initialize memory system: ${error.message}`);
-        // Clear cached password if memory init failed due to key/token issues potentially related to password
-        if (error.message.toLowerCase().includes('password') || error.message.toLowerCase().includes('decrypt')) {
-             if (session) session.password = null;
-        }
-        return { success: false, error: `Memory init failed: ${error.message}`, handled: true, keepDisabled: false };
-      }
-    } else if (effectiveMemory && isPublicUser) {
-        // This message is now redundant as it's covered earlier
-        // cmdOutput("Memory features are disabled for public users.");
-    }
-
-    // --- FIX: Remove duplicate LLMClient initialization ---
-    // const llmClient = new LLMClient({ apiKey: veniceKey }); // REMOVED - Already initialized above
-
-    // --- Update Session State (Server-side) ---
-    if (session) {
+    try {
         session.isChatActive = true;
-        session.chatHistory = []; // Start fresh history
-        session.memoryManager = memoryManagerInstance; // Assign manager instance
-        session.llmClient = llmClient; // Assign LLM client instance
-        session.chatVerbose = verbose; // Store verbose setting
-        // session.password is already cached above if decryption succeeded
-        console.log(`[WebSocket] Session ${session.sessionId} entering chat mode.`);
-    } else if (!isWebSocket) {
-        console.warn("[CLI] Running chat without a session object. State will not persist across commands.");
-    }
-    // --- End Update Session State ---
-
-    // --- Signal Client (WebSocket) ---
-    if (isWebSocket && webSocketClient) {
-        const chatPrompt = memory ? `[chat:${memoryDepth}]> ` : '[chat]> ';
-        // Send chat-ready and mode_change together
-        safeSend(webSocketClient, { type: 'chat-ready', memoryEnabled: !!memoryManagerInstance });
-        safeSend(webSocketClient, { type: 'mode_change', mode: 'chat', prompt: chatPrompt });
-        // Input should be enabled by the client upon receiving mode change to 'chat'
-        logCommandSuccess('chat (WebSocket session started)', options);
-        // --- FIX: Return keepDisabled: false ---
-        // The client will enable input based on the mode_change message.
-        // The server should allow input to be enabled after this command completes.
-        return { success: true, keepDisabled: false };
-    }
-    // --- End Signal Client ---
-
-    // --- Start Interactive CLI Chat (Console Only) ---
-    if (!isWebSocket) {
-        try {
-            // Pass the bound output/error functions
-            await startInteractiveChat(llmClient, memoryManagerInstance, verbose, cmdOutput, cmdError);
-            logCommandSuccess('chat (CLI session ended)', options);
-            return { success: true, keepDisabled: false }; // Ensure input enabled after CLI chat
-        } catch (cliChatError) {
-            cmdError(`CLI chat session failed: ${cliChatError.message}`);
-            return handleCliError(cliChatError, { command: 'chat', error: cmdError });
+        session.chatHistory = [];
+        session.sessionModel = model;
+        session.sessionCharacter = character;
+        
+        // Send chat-ready event for WebSocket clients
+        if (isWebSocket && webSocketClient) {
+            const chatReadyMessage = {
+                type: 'chat-ready',
+                prompt: '[chat] > ',
+                model: model,
+                character: character
+            };
+            try {
+                webSocketClient.send(JSON.stringify(chatReadyMessage));
+            } catch (err) {
+                error(`Failed to send chat-ready message: ${err.message}`);
+            }
         }
+
+        output('Chat session ready. Type /exit to leave.');
+        return { success: true, keepDisabled: false };
+    } catch (err) {
+        error(`Failed to start chat: ${err.message}`);
+        return { success: false, keepDisabled: false };
     }
-
-    // Fallback case (shouldn't be reached)
-    cmdError("Failed to start chat session.");
-    return { success: false, error: "Failed to start chat session", handled: true, keepDisabled: false };
-
-  } catch (error) { // <-- Catch block for the main try statement
-    // Use the provided error handler, or console.error as a fallback
-    // --- FIX: Use the validated cmdError function ---
-    cmdError(`Unhandled error during chat command execution: ${error.message}`);
-    console.error(error.stack); // Log stack for debugging
-
-    // Clear potentially bad password cache on key/decryption errors
-    if (error.message.toLowerCase().includes('password') || error.message.toLowerCase().includes('api key')) {
-        if (options.session) options.session.password = null;
-    }
-
-    // Ensure input is re-enabled on error for WebSocket clients
-    if (options.isWebSocket && options.webSocketClient) {
-        safeSend(options.webSocketClient, { type: 'mode_change', mode: 'command', prompt: '> ' });
-    }
-
-    // Return a generic error response
-    return {
-        success: false,
-        error: `Chat command failed: ${error.message}`,
-        handled: true, // Indicate the error was caught here
-        keepDisabled: false // Ensure input is enabled after error
-    };
-  } // <-- End of catch block
 }
 
 /**
@@ -358,9 +153,11 @@ async function promptHiddenFixed(query) {
  * @param {boolean} verbose - Enable verbose logging
  * @param {Function} outputFn - Output function (bound cmdOutput)
  * @param {Function} errorFn - Error output function (bound cmdError)
+ * @param {string} model - Chat model to use
+ * @param {string|null} character - Chat character to use
  * @returns {Promise<Object>} Chat session results
  */
-async function startInteractiveChat(llmClient, memoryManager, verbose = false, outputFn, errorFn) { // Renamed params for clarity
+async function startInteractiveChat(llmClient, memoryManager, verbose = false, outputFn, errorFn, model, character) {
   // Return a promise that resolves when the chat session ends (rl closes)
   return new Promise((resolve) => {
       const rl = readline.createInterface({
@@ -370,8 +167,43 @@ async function startInteractiveChat(llmClient, memoryManager, verbose = false, o
         prompt: '[user] '
       });
 
+      let chatHistory = []; // Maintain history for CLI session
+
+      // Construct system prompt based on character and new formatting rules
+      const personaName = character || 'Bitcore'; // Default to Bitcore if no character specified
+      const systemMessageContent = `You are ${personaName}, an AI assistant powering the /chat command.
+
+✦ Formatting rules ✦
+1. Your answer MUST consist of **two distinct parts** in a single message:
+   a) Your private reasoning, wrapped in a <thinking> … </thinking> tag.
+   b) Your final user-visible reply, which comes immediately after the closing </thinking> tag with **no tag** around it.
+2. Do **not** write “[AI] ...thinking...” or any other extra markers—the tags alone are sufficient.
+3. If you have no private reasoning to share, simply omit the <thinking> block; everything you send will then be treated as the reply.
+4. Keep the language of both sections consistent with the user’s language, unless the user explicitly requests otherwise.
+
+Example
+-------
+User: hi
+
+Assistant (one message):
+<thinking>
+Okay, the user just said “hi”. I should greet them warmly and invite a follow-up question.
+</thinking>
+Hello! How can I assist you today?`;
+
+      // Add system message to history if it's not empty
+      if (systemMessageContent.trim()) {
+        chatHistory.push({ role: 'system', content: systemMessageContent });
+      }
+
       let chatEnded = false; // Flag to prevent multiple resolves
-      const chatHistory = []; // Maintain history for CLI session
+      const endChat = () => {
+        if (!chatEnded) {
+          chatEnded = true;
+          outputFn('Exiting chat mode.');
+          rl.close();
+        }
+      };
 
       rl.on('line', async (line) => {
         // If chat already ended, ignore further input (shouldn't happen often)
@@ -407,15 +239,36 @@ async function startInteractiveChat(llmClient, memoryManager, verbose = false, o
                   retrievedMemoryContext = "Relevant information from memory:\n" + relevantMemories.map(mem => `- ${mem.content}`).join('\n') + "\n";
               }
           }
-          const systemPrompt = retrievedMemoryContext ? `${retrievedMemoryContext}Continue the conversation.` : 'You are a helpful assistant.';
+          // The main system prompt with formatting rules is already at the start of chatHistory.
+          // For subsequent turns, we might add memory context if available.
+          // We need to ensure the LLM gets the full history including the initial system prompt.
 
-          // Prepare history for LLM (limit context window)
-          const maxHistoryLength = 10;
-          const llmHistory = chatHistory.slice(-maxHistoryLength);
+          // Prepare history for LLM (limit context window, but ensure system prompt is included)
+          const maxHistoryLength = 10; // Example, adjust as needed
+          let llmHistory = [];
+          if (chatHistory.length > 0 && chatHistory[0].role === 'system') {
+            llmHistory.push(chatHistory[0]); // Always include the initial system prompt
+            // Add recent messages, excluding the initial system prompt if already added
+            llmHistory.push(...chatHistory.slice(Math.max(1, chatHistory.length - maxHistoryLength + 1)));
+          } else {
+            llmHistory = chatHistory.slice(-maxHistoryLength);
+          }
+          
+          // If memory context exists and isn't already part of a complex system prompt,
+          // we could prepend it to the user's latest message or as a separate system message.
+          // For simplicity, let's insert it before the last user message if not already handled.
+          // This part needs careful consideration based on how LLM best uses such context.
+          // The current system prompt is about formatting. Memory context is different.
+          // A simple approach:
+          if (messagesForLlm.length > 1 && messagesForLlm[messagesForLlm.length -1].role === 'user') {
+              messagesForLlm.splice(messagesForLlm.length -1, 0, {role: 'system', content: "Relevant information from memory:\n" + retrievedMemoryContext});
+          } else {
+               messagesForLlm.push({role: 'system', content: "Relevant information from memory:\n" + retrievedMemoryContext});
+          }
 
           // Call LLM
-          const response = await llmClient.completeChat(llmHistory, { system: systemPrompt });
-          const assistantResponse = cleanChatResponse(response);
+          const response = await llmClient.completeChat({ messages: messagesForLlm, model: model, temperature: 0.7, maxTokens: 2048 });
+          const assistantResponse = cleanChatResponse(response.content);
 
           // Store assistant response
           chatHistory.push({ role: 'assistant', content: assistantResponse });

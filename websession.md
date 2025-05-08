@@ -33,3 +33,34 @@ Developer Profile: This refactoring plan is tailored for a senior, experienced d
 
 
 additionally we need a pin pong sort of websocket structure.
+
+
+
+---
+
+# WebSocket and HTTP Refactoring Plan
+
+## Objective
+Enhance the stability and scalability of the MCP application by refining WebSocket usage and transitioning non-real-time tasks to HTTP.
+
+---
+
+## Key Changes Implemented
+
+### WebSocket Usage Refinement
+- **Scope**: WebSockets are now used only for real-time updates (e.g., notifications, chat messages, progress updates).
+- **Exclusions**: Tasks like authentication, session management, and research execution have been moved to HTTP endpoints.
+- **Ping/Pong Mechanism**: Implemented to detect and handle disconnections.
+
+### HTTP Requests for Stability
+- **Authentication & Session Management**: Moved to dedicated HTTP endpoints.
+- **Research Tasks**: Long-running research tasks are now handled via background job queues, with progress updates sent through WebSockets.
+
+### Separation of Concerns
+- **Modules Created**:
+  - `websocket.handler.mjs`: Handles WebSocket connections and message routing.
+  - `session.manager.mjs`: Manages user sessions.
+  - `research.routes.mjs`: Defines HTTP routes for research tasks.
+  - `research.worker.mjs`: Executes research tasks asynchronously.
+
+---

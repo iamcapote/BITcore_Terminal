@@ -1,5 +1,6 @@
 import fetch from 'node-fetch';
 import { VENICE_MODELS, isValidModel } from './venice.models.mjs';
+import { VENICE_CHARACTERS, getDefaultChatCharacterSlug, getDefaultResearchCharacterSlug, getDefaultTokenClassifierCharacterSlug } from './venice.characters.mjs';
 
 export class LLMError extends Error {
   constructor(code, message, originalError) {
@@ -168,9 +169,10 @@ export class LLMClient {
    * @param {string} params.prompt - User prompt content.
    * @param {number} [params.temperature=0.7] - Sampling temperature.
    * @param {number} [params.maxTokens=1000] - Maximum tokens to generate.
+   * @param {string} [params.model] - Model to use for completion.
    * @returns {Promise<Object>} - Response object with content, model, timestamp.
    */
-  async complete({ system, prompt, temperature = 0.7, maxTokens = 1000 }) {
+  async complete({ system, prompt, temperature = 0.7, maxTokens = 1000, model, venice_parameters = {}, type }) {
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
     if (prompt) messages.push({ role: 'user', content: prompt });
@@ -179,8 +181,27 @@ export class LLMClient {
         throw new LLMError('InputError', 'At least one of system or prompt message is required.');
     }
 
+    // --- Set default character_slug based on type ---
+    let character_slug = venice_parameters.character_slug;
+    if (!character_slug) {
+      if (type === 'chat') character_slug = getDefaultChatCharacterSlug();
+      else if (type === 'research') character_slug = getDefaultResearchCharacterSlug();
+      else if (type === 'token_classifier') character_slug = getDefaultTokenClassifierCharacterSlug();
+    }
+    const veniceParams = { ...venice_parameters, ...(character_slug ? { character_slug } : {}) };
+
+    const payload = {
+      model,
+      messages: system && prompt ? [{ role: 'system', content: system }, { role: 'user', content: prompt }] : undefined,
+      system,
+      prompt,
+      temperature,
+      max_tokens: maxTokens,
+      venice_parameters: veniceParams
+    };
+
     // Use completeChat internally
-    return this.completeChat({ messages, temperature, maxTokens });
+    return this.completeChat(payload);
   }
 
   /**
@@ -190,9 +211,10 @@ export class LLMClient {
    * @param {Array<Object>} options.messages - Array of message objects with role and content. Required.
    * @param {number} [options.temperature=0.7] - Temperature parameter (0-1).
    * @param {number} [options.maxTokens=1000] - Maximum tokens to generate.
+   * @param {string} [options.model] - Model to use for completion.
    * @returns {Promise<Object>} Response with content, model, timestamp, and usage info.
    */
-  async completeChat({ messages, temperature = 0.7, maxTokens = 1000 }) {
+  async completeChat({ messages, temperature = 0.7, maxTokens = 1000, model, venice_parameters = {} }) {
      if (!messages || !Array.isArray(messages) || messages.length === 0) {
         throw new LLMError('InputError', 'Messages array cannot be empty.');
      }
@@ -201,6 +223,18 @@ export class LLMClient {
          throw new LLMError('InputError', 'Each message must be an object with string properties "role" and "content".');
      }
 
+    // --- Ensure default character_slug for chat ---
+    const character_slug = venice_parameters.character_slug || getDefaultChatCharacterSlug();
+    const veniceParams = { ...venice_parameters, character_slug };
+
+    const payload = {
+      model: model || this.config.model, // Pass the resolved model
+      messages: messages, // Pass the full message history
+      temperature,
+      max_tokens: maxTokens,
+      venice_parameters: veniceParams
+    };
+
     try {
       const response = await this._fetchWithRetry(`${this.config.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -208,12 +242,7 @@ export class LLMClient {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.config.apiKey}`,
         },
-        body: JSON.stringify({
-          model: this.config.model, // Pass the resolved model
-          messages: messages, // Pass the full message history
-          temperature,
-          max_tokens: maxTokens,
-        }),
+        body: JSON.stringify(payload),
       });
 
       // _fetchWithRetry ensures response.ok is true here
