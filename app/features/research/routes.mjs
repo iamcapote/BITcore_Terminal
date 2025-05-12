@@ -1022,28 +1022,64 @@ async function handleChatMessage(ws, message, session) {
     session.chatHistory.push({ role: 'user', content: userMsg });
 
     try {
-        const llm      = new LLMClient();
-        const model    = session.sessionModel     || 'qwen-2.5-qwq-32b';
-        const character= session.sessionCharacter || 'bitcore';
+        let veniceApiKey = null;
+        // Attempt to get user-specific API key if user is logged in and password is known
+        if (session.currentUser && session.currentUser.username !== 'public' && session.password) {
+            try {
+                outputManager.debug(`[WebSocket][Chat] Attempting to retrieve Venice API key for user: ${session.currentUser.username}`);
+                veniceApiKey = await userManager.getApiKey({
+                    username: session.currentUser.username,
+                    password: session.password,
+                    service: 'venice'
+                });
+                if (veniceApiKey) {
+                    outputManager.debug(`[WebSocket][Chat] Successfully retrieved Venice API key for user: ${session.currentUser.username}.`);
+                } else {
+                    outputManager.warn(`[WebSocket][Chat] Could not retrieve user-specific Venice API key for ${session.currentUser.username}. It might not be set.`);
+                }
+            } catch (keyError) {
+                outputManager.error(`[WebSocket][Chat] Error retrieving Venice API key for ${session.currentUser.username}: ${keyError.message}. Chat will use fallback.`);
+                if (keyError.message.toLowerCase().includes('password is incorrect')) {
+                    wsErrorHelper(ws, `Chat Error: Password for API key decryption was incorrect. Chat may be degraded.`, true);
+                }
+            }
+        } else if (session.currentUser && session.currentUser.username !== 'public' && !session.password) {
+            outputManager.warn(`[WebSocket][Chat] Session password not available for ${session.currentUser.username}. Cannot retrieve user-specific Venice API key. Chat will use fallback.`);
+        }
 
-        // prepend a single system instruction
-        const system = { role:'system',
-                         content: character
-                           ? `You are ${character}. You are a helpful assistant.`
-                           : 'You are a helpful assistant.' };
+        const llmConfig = {};
+        if (veniceApiKey) {
+            llmConfig.apiKey = veniceApiKey;
+            outputManager.debug(`[WebSocket][Chat] LLMClient will use user-specific Venice API key for ${session.currentUser.username}.`);
+        } else {
+            outputManager.debug('[WebSocket][Chat] LLMClient will use default (environment) Venice API key.');
+        }
 
-        const shortHistory = session.chatHistory.slice(-9); // keep context short
+        const llm = new LLMClient(llmConfig);
+        const model = session.sessionModel || 'qwen-2.5-qwq-32b'; // Ensure fallback
+        const character = session.sessionCharacter === 'None' ? null : (session.sessionCharacter || 'bitcore'); // Handle 'None' and fallback
+
+        const systemMessageContent = character
+            ? `You are ${character}. You are a helpful assistant.`
+            : 'You are a helpful assistant.';
+        const system = { role: 'system', content: systemMessageContent };
+
+        const shortHistory = session.chatHistory.slice(-9);
         const messages = [system, ...shortHistory];
 
-        const res   = await llm.completeChat({ messages, model, temperature:0.7, maxTokens: 2048 });
+        const res = await llm.completeChat({ messages, model, temperature: 0.7, maxTokens: 2048 });
         const clean = cleanChatResponse(res.content);
 
         session.chatHistory.push({ role: 'assistant', content: clean });
 
-        safeSend(ws, { type: 'chat-response', message: clean });   // <── NOTE the hyphen
+        safeSend(ws, { type: 'chat-response', message: clean });
     } catch (err) {
-        console.error('[Chat] LLM error:', err);
-        safeSend(ws, { type: 'error', error: `Chat failed: ${err.message}` });
+        console.error('[WebSocket][Chat] LLM error:', err.message, err.stack);
+        if (err instanceof Error && err.message.toLowerCase().includes('api key is required')) {
+            wsErrorHelper(ws, `Chat failed: Venice API key is missing or invalid. Please set it via '/keys set venice <apikey>' or ensure VENICE_API_KEY environment variable is configured.`, true);
+        } else {
+            wsErrorHelper(ws, `Chat failed: ${err.message}`, true);
+        }
     }
     return true;
 }

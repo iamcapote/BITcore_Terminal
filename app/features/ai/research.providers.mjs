@@ -481,3 +481,117 @@ export async function generateSummary({ apiKey, query, learnings = [], metadata 
 export function trimPrompt(text = '', maxLength = 100000, outputFn = console.log, errorFn = console.error) {
   return text.length <= maxLength ? text : text.slice(0, maxLength);
 }
+
+// Assuming LLMClient is imported if not already
+// import { LLMClient } from '../../infrastructure/ai/venice.llm-client.mjs'; // If needed
+
+// ... other imports ...
+
+export async function generateQueriesLLM({ llmClient, query, numQueries, learnings, metadata, characterSlug }) {
+  const systemPrompt = `You are an AI research assistant. Your task is to generate ${numQueries} diverse and insightful search queries based on the initial query and existing learnings.
+Each query should explore a different facet of the topic. Avoid redundant queries.
+If metadata (e.g., from token classification) is provided, use it to refine the queries for better targeting.
+Focus on generating queries that will yield new information.
+Previous learnings:
+${learnings.length > 0 ? learnings.map(l => `- ${l}`).join('\n') : 'None'}
+${metadata ? `\nToken Classification Metadata:\n${JSON.stringify(metadata, null, 2)}` : ''}
+Respond with a JSON array of strings, where each string is a query. Example: ["query 1", "query 2"]`;
+
+  const userPrompt = `Initial query: "${query}"\nGenerate ${numQueries} search queries.`;
+
+  try {
+    const response = await llmClient.completeChat({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.7,
+      maxTokens: 500 + (numQueries * 50),
+      venice_parameters: { character_slug: characterSlug }
+    });
+
+    const responseContent = response.content;
+    // Attempt to parse JSON from the response
+    const jsonMatch = responseContent.match(/\[\s*".*?"\s*(,\s*".*?"\s*)*\]/s); // Regex for JSON array of strings
+    if (jsonMatch) {
+      const queries = JSON.parse(jsonMatch[0]);
+      return queries.map(q => ({ original: q, metadata: null })); // Return in expected format
+    } else {
+      // Fallback: if no JSON array, try to split by newline if it looks like a list
+      if (responseContent.includes('\n') && !responseContent.trim().startsWith("[")) {
+        return responseContent.split('\n').map(s => s.trim()).filter(Boolean).map(q => ({ original: q, metadata: null }));
+      }
+      console.error("Failed to parse queries from LLM response, not a valid JSON array or simple list:", responseContent);
+      throw new Error("Failed to parse queries from LLM response.");
+    }
+  } catch (error) {
+    console.error(`Error in generateQueriesLLM: ${error.message}`);
+    throw error;
+  }
+}
+
+export async function generateSummaryLLM({ llmClient, query, learnings, sources, characterSlug }) {
+  const systemPrompt = `You are an AI research assistant. Your task is to synthesize the provided learnings and sources into a comprehensive summary for the query: "${query}".
+The summary should be well-structured, informative, and directly address the query.
+Highlight key findings and insights.
+Learnings:
+${learnings.map(l => `- ${l}`).join('\n')}
+Sources:
+${sources.map(s => `- ${s.url} (${s.title})`).join('\n')}
+Respond with the summary as a single block of text.`;
+  const userPrompt = `Generate a comprehensive summary for the query: "${query}" based on the provided learnings and sources.`;
+
+  try {
+    const response = await llmClient.completeChat({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.5,
+      maxTokens: 2000,
+      venice_parameters: { character_slug: characterSlug }
+    });
+    return response.content;
+  } catch (error) {
+    console.error(`Error in generateSummaryLLM: ${error.message}`);
+    throw error;
+  }
+}
+
+// Assuming processResults is the correct name of the function that extracts learnings
+export async function processResultsLLM({ results, query, llmClient, characterSlug }) {
+  const systemPrompt = `You are an AI research assistant. Analyze the following search result snippets for the query "${query}" and extract key learnings.
+Focus on information directly relevant to the query. Each learning should be a concise statement.
+Search Results:
+${results.map((r, i) => `Snippet ${i + 1} (URL: ${r.url}):\n${r.snippet}`).join('\n\n')}
+Respond with a JSON array of strings, where each string is a distinct learning. Example: ["learning 1", "learning 2"]`;
+  const userPrompt = `Extract key learnings from the provided search results for the query: "${query}".`;
+
+  try {
+    const response = await llmClient.completeChat({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.3,
+      maxTokens: 1000,
+      venice_parameters: { character_slug: characterSlug }
+    });
+    const responseContent = response.content;
+    const jsonMatch = responseContent.match(/\[\s*".*?"\s*(,\s*".*?"\s*)*\]/s);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    } else {
+      if (responseContent.includes('\n') && !responseContent.trim().startsWith("[")) {
+        return responseContent.split('\n').map(s => s.trim()).filter(Boolean);
+      }
+      console.error("Failed to parse learnings from LLM response, not a valid JSON array or simple list:", responseContent);
+      throw new Error("Failed to parse learnings from LLM response.");
+    }
+  } catch (error) {
+    console.error(`Error in processResultsLLM: ${error.message}`);
+    throw error;
+  }
+}
+
+// ... other functions ...

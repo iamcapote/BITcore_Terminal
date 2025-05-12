@@ -1057,12 +1057,8 @@ export class UserManager {
         outputManager.error(`[Auth][getApiKey] Invalid service type received: "${service}". Valid types: ${validServices.join(', ')}`);
         // Refine the error message for clarity
         let errorMsg = `Invalid service type '${service}' received by getApiKey.`;
-        // Provide specific guidance only if 'github' was likely intended but misused
-        if (service === 'github') {
-             errorMsg += ' Use getGitHubToken method instead.'; // Assuming getGitHubToken exists or should
-        } else {
-             errorMsg += ` Valid services are: ${validServices.filter(s => s !== 'github').join(', ')}.`;
-        }
+        // Provide specific guidance
+        errorMsg += ` Valid services are: ${validServices.join(', ')}.`; // Simpler message
         outputManager.error(`[Auth][getApiKey] Throwing error: ${errorMsg}`); // Log the exact error message
         throw new Error(errorMsg); // Throw the refined error // LINE 895
     }

@@ -32,6 +32,9 @@ import { saveToFile } from '../utils/research.file-utils.mjs'; // For saving res
 // Keep track of the active readline interface to avoid conflicts
 let activeRlInstance = null;
 
+const PROMPT_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+const POST_RESEARCH_PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for post-research action
+
 /**
  * CLI command for executing research.
  * @param {Object} options - Command options including positionalArgs, flags, session, output/error handlers.

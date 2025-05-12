@@ -10,6 +10,10 @@ import { generateQueries } from '../../features/ai/research.providers.mjs';
 import { safeSend } from '../../utils/websocket.utils.mjs';
 // --- Import suggestSearchProvider ---
 import { suggestSearchProvider } from '../search/search.providers.mjs';
+import { BraveSearchProvider } from '../search/search.providers.mjs';
+import { RateLimiter } from '../../utils/research.rate-limiter.mjs';
+import { generateQueriesLLM, generateSummaryLLM, processResults } from '../../features/ai/research.providers.mjs';
+import { getDefaultResearchCharacterSlug } from '../ai/venice.characters.mjs'; // Import character slug getter
 
 /**
  * Main research engine that coordinates research paths
@@ -87,6 +91,31 @@ export class ResearchEngine {
     this.debug(`[ResearchEngine] Initialized for user: ${this.user.username}`);
     if (this.overrideQueries) {
         this.debug(`[ResearchEngine] Initialized with ${this.overrideQueries.length} override queries.`);
+    }
+
+    const llmConfig = {};
+    if (this.veniceApiKey) {
+      llmConfig.apiKey = this.veniceApiKey;
+    }
+    if (config.model) { // Pass model from engine options to LLMClient
+        llmConfig.model = config.model;
+    }
+    // Character is passed to specific AI provider functions, not set globally on LLMClient here.
+    // ResearchEngine might have a default research character.
+    this.researchCharacterSlug = config.character === 'None' ? null : (config.character || getDefaultResearchCharacterSlug());
+
+
+    this.llmClient = new LLMClient(llmConfig);
+    this.debugHandler(`ResearchEngine LLMClient initialized. API Key Set: ${!!this.veniceApiKey}, Model: ${this.llmClient.config.model}, Character for Research: ${this.researchCharacterSlug || 'Default (from provider)'}`);
+
+    this.searchProvider = new BraveSearchProvider({ apiKey: this.braveApiKey, debugHandler: this.debugHandler });
+    this.rateLimiter = new RateLimiter(5, 1000);
+
+    if (!this.braveApiKey) {
+      this.outputHandler('[ResearchEngine] Warning: Brave API key not provided or not decrypted. Search functionality will fail if global BRAVE_API_KEY is also missing.');
+    }
+    if (!this.veniceApiKey) {
+      this.outputHandler('[ResearchEngine] Warning: Venice API key not provided or not decrypted. AI functionalities may fail or use environment fallbacks if global VENICE_API_KEY is also missing.');
     }
   }
 
@@ -378,6 +407,58 @@ export class ResearchEngine {
       this.error(`[ResearchEngine] Error generating markdown result: ${error.message}`); // Use engine's error handler
       console.error(error.stack);
       return null;
+    }
+  }
+
+  async generateQueries(query, numQueries, learnings = [], metadata = null) {
+    this.debugHandler(`Generating ${numQueries} queries for: "${query.original}" using character: ${this.researchCharacterSlug}`);
+    try {
+      return await generateQueriesLLM({
+        llmClient: this.llmClient,
+        query: query.original,
+        numQueries,
+        learnings,
+        metadata,
+        characterSlug: this.researchCharacterSlug
+      });
+    } catch (error) {
+      this.errorHandler(`Error generating queries: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async generateSummary(query, allLearnings, allSources) {
+    this.debugHandler(`Generating summary for query: "${query.original}" using character: ${this.researchCharacterSlug}`);
+    if (allLearnings.length === 0) {
+      this.outputHandler("No learnings found to summarize.");
+      return "No summary could be generated as no learnings were found.";
+    }
+    try {
+      return await generateSummaryLLM({
+        llmClient: this.llmClient,
+        query: query.original,
+        learnings: allLearnings,
+        sources: allSources,
+        characterSlug: this.researchCharacterSlug
+      });
+    } catch (error) {
+      this.errorHandler(`Error generating summary: ${error.message}`);
+      return `Summary generation failed: ${error.message}`;
+    }
+  }
+
+  async processResults(results, query) {
+    this.debugHandler(`Processing ${results.length} results for query: "${query}" using character: ${this.researchCharacterSlug}`);
+    try {
+      return await processResults({ // Assuming processResults is the actual function name
+        results,
+        query,
+        llmClient: this.llmClient,
+        characterSlug: this.researchCharacterSlug
+      });
+    } catch (error) {
+      this.errorHandler(`Error processing results: ${error.message}`);
+      throw error;
     }
   }
 }
