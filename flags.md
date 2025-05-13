@@ -26,9 +26,9 @@ A model is always required, so if no model flag is provided, the default model i
 
 the default model is:
 
-chat => `qwen-2.5-qwq-32b`
-research => `llama-4-maverick-17b`
-token classifier => `venice-uncensored`
+chat => `qwen3-235b`
+research => `dolphin-2.9.2-qwen2-72b`
+token classifier => `dolphin-2.9.2-qwen2-72b`
 remember that the research and token classifier are two different models in the swarm cauuse they have two different roles, one is for metadata and the other is for deep research.
 
 

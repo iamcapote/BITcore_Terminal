@@ -483,8 +483,8 @@ async function handleCommandMessage(ws, message, session) {
     }
 
     const defaultModels = {
-        chat: 'qwen-2.5-qwq-32b', // Fallback to hardcoded if not in config
-        research: 'llama-4-maverick-17b',
+        chat: 'qwen3-235b', // Fallback to hardcoded if not in config
+        research: 'dolphin-2.9.2-qwen2-72b',
     };
     const defaultCharacters = {
         chat: 'bitcore',

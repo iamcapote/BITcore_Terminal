@@ -43,7 +43,7 @@ export async function handleChatMessage(ws, message, session) {
         const llm = new LLMClient();
         
         // Get model and character from session or use defaults
-        const model = session.sessionModel || 'qwen-2.5-qwq-32b';
+        const model = session.sessionModel || 'qwen3-235b';
         const character = session.sessionCharacter || getDefaultChatCharacterSlug();
         
         // Construct system message based on character

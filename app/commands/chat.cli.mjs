@@ -41,7 +41,7 @@ import config from '../config/index.mjs';
  */
 export async function executeChat(options = {}) {
     const {
-        model = 'qwen-2.5-qwq-32b',
+        model = 'qwen3-235b',
         character = 'bitcore',
         session,
         output,

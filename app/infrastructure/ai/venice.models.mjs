@@ -44,6 +44,11 @@ export const VENICE_MODELS = {
     traits: [],
     modelSource: 'https://huggingface.co/Qwen/Qwen2.5-VL-72B-Instruct',
   },
+  'qwen3-235b': { // New model
+    availableContextTokens: 131072, // Assuming a default, adjust as needed
+    traits: [],
+    modelSource: 'https://huggingface.co/Qwen/Qwen3-235B-Instruct', // Assuming a source, adjust as needed
+  },
   'dolphin-2.9.2-qwen2-72b': {
     availableContextTokens: 32768,
     traits: ['most_uncensored'],
@@ -70,13 +75,13 @@ export function getDefaultModelId() {
 }
 
 export function getDefaultChatModelId() {
-  return 'llama-3.3-70b'; // Default for chat
+  return 'qwen3-235b'; // Default for chat
 }
 
 export function getDefaultResearchModelId() {
-  return 'llama-3.1-405b'; // Default for research
+  return 'dolphin-2.9.2-qwen2-72b'; // Default for research
 }
 
 export function getDefaultTokenClassifierModelId() {
-  return 'llama-3.3-70b'; // Default for token classification
+  return 'dolphin-2.9.2-qwen2-72b'; // Default for token classification
 }
