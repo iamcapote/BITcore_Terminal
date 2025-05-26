@@ -2,6 +2,11 @@
 
 The Deep Research Privacy App is a privacy-focused research tool that automates exploring topics in depth. It uses the Brave Search API along with optional token classification from the Venice LLM API. The app supports both CLI and browser-based terminal interfaces, letting you securely perform research, manage accounts, and enhance queries with metadata from external APIs.
 
+![image](https://github.com/user-attachments/assets/5f086aef-2f31-4649-a288-ddedf13f9403)
+
+![image](https://github.com/user-attachments/assets/4b90fc56-e746-4403-916f-b85ab8ef03f3)
+
+
 ---
 
 ## Table of Contents
