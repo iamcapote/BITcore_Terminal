@@ -63,17 +63,10 @@ class CommandProcessor {
             }
 
             // --- Send Command to Backend ---
-            const payload = {
-                command: command,
-                args: args, // Send original args
-                // Include password ONLY if it was provided directly in the command string
-                ...(passwordArgProvided && password !== null && { password: password })
-            };
-
-            console.log("Sending command payload to backend:", { command: payload.command, args: payload.args, password: passwordArgProvided ? '******' : null });
-
-            // Use webcomm to send the command with correct arguments
-            await this.webcomm.sendCommand(payload.command, payload.args, payload.password); // Corrected call
+            // Build command string to send
+            const fullCommand = `/${command}` + (args.length ? ` ${args.join(' ')}` : '');
+            console.log("Sending command to backend:", fullCommand);
+            await this.webcomm.sendCommand(fullCommand);
 
             // Backend will now process the command. If a password is required and wasn't provided,
             // the backend (routes.mjs) will send a 'prompt' message back to the client.

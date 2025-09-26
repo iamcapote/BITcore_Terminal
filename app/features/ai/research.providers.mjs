@@ -157,11 +157,8 @@ export async function generateOutput({ apiKey, type, system, prompt, temperature
  * @returns {Promise<Array<Object>>} - Array of generated query objects { original: string, metadata?: any }.
  */
 export async function generateQueries({ apiKey, query, numQueries = 3, learnings = [], metadata = null, outputFn = console.log, errorFn = console.error }) {
-  // ** Add explicit checks for required parameters **
-  if (!apiKey) {
-      errorFn("[generateQueries] Error: API key is missing.");
-      throw new Error('API key is required for generateQueries.');
-  }
+  // In single-user mode, allow running without an API key by using a deterministic fallback.
+  const hasApiKey = !!apiKey || !!process.env.VENICE_API_KEY;
   // Allow potentially long query strings (like chat history) but log a warning if very long
   if (!query || typeof query !== 'string' || !query.trim()) {
       errorFn(`[generateQueries] Error: Invalid query provided: ${query}`);
@@ -213,16 +210,22 @@ Based on this context and the original text, generate simple search queries that
 Keep queries plain, clear, and focused on the core concepts identified. Ensure they are formatted correctly: each on a new line, starting with What, How, Why, When, Where, or Which.`;
   }
 
-  const result = await generateOutput({
-    apiKey, // Pass key
-    type: 'query',
-    system: systemPrompt(),
-    prompt: enrichedPrompt,
-    temperature: 0.7,
-    maxTokens: 500, // Reduced max tokens for query generation
-    outputFn,
-    errorFn
-  });
+  let result = { success: false };
+  if (hasApiKey) {
+    const effectiveKey = apiKey || process.env.VENICE_API_KEY;
+    result = await generateOutput({
+      apiKey: effectiveKey, // Pass key
+      type: 'query',
+      system: systemPrompt(),
+      prompt: enrichedPrompt,
+      temperature: 0.7,
+      maxTokens: 500, // Reduced max tokens for query generation
+      outputFn,
+      errorFn
+    });
+  } else {
+    errorFn('[generateQueries] No API key available. Using simple fallback queries.');
+  }
 
   // --- Start: Enhanced Logging ---
   outputFn(`[generateQueries] LLM result for query generation:`, JSON.stringify(result));
@@ -248,7 +251,9 @@ Keep queries plain, clear, and focused on the core concepts identified. Ensure t
     return queries;
   } else {
       // --- Start: Log the specific error from the result object ---
-      errorFn(`[generateQueries] Failed to generate queries via LLM. Error: ${result?.error || 'Unknown error during generateOutput'}. Falling back to basic queries.`);
+      if (result && result.error) {
+        errorFn(`[generateQueries] Failed to generate queries via LLM. Error: ${result?.error}. Falling back to basic queries.`);
+      }
       // --- End: Log the specific error ---
 
       // --- Refined Fallback Logic ---
@@ -269,11 +274,16 @@ Keep queries plain, clear, and focused on the core concepts identified. Ensure t
       errorFn(`[generateQueries] Using fallback topic: "${fallbackTopic}"`);
 
       // Generate very simple fallback queries based on the extracted topic
-      return [
+      const base = [
         { original: `What is ${fallbackTopic}?`, metadata: { goal: `Research definition of: ${fallbackTopic}` } },
         { original: `How does ${fallbackTopic} work?`, metadata: { goal: `Research how ${fallbackTopic} works` } },
         { original: `Examples of ${fallbackTopic}`, metadata: { goal: `Research examples of: ${fallbackTopic}` } }
-      ].slice(0, numQueries); // Ensure fallback respects numQueries
+      ];
+      // If more than 3 requested, pad with variations
+      while (base.length < (Number(numQueries) || 3)) {
+        base.push({ original: `Which aspects of ${fallbackTopic} are most important?`, metadata: { goal: `Explore key aspects of: ${fallbackTopic}` } });
+      }
+      return base.slice(0, numQueries); // Ensure fallback respects numQueries
   }
 }
 
@@ -291,11 +301,8 @@ Keep queries plain, clear, and focused on the core concepts identified. Ensure t
  * @returns {Promise<Object>} - Object containing arrays of learnings and followUpQuestions.
  */
 export async function processResults({ apiKey, query, content, numLearnings = 3, numFollowUpQuestions = 3, metadata = null, outputFn = console.log, errorFn = console.error }) {
-  // ** Add explicit checks for required parameters **
-  if (!apiKey) {
-      errorFn("[processResults] Error: API key is missing.");
-      throw new Error('API key is required for processResults.'); // Keep throwing for fatal config issues
-  }
+  // In single-user mode, allow running without an API key by using a deterministic fallback.
+  const hasApiKey = !!apiKey || !!process.env.VENICE_API_KEY;
   if (!Array.isArray(content) || content.length === 0) {
       errorFn(`[processResults] Error: Invalid content provided for query "${query}". Must be a non-empty array.`);
       // If no content, we can't extract anything. Return empty results.
@@ -330,16 +337,22 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
 
   outputFn(`[processResults] Final prompt for learning extraction (query: "${query}"):\n---START---\n`, analysisPrompt, `\n---END---`);
 
-  const result = await generateOutput({
-    apiKey, // Pass key
-    type: 'learning',
-    system: systemPrompt(), // Use standard system prompt
-    prompt: analysisPrompt,
-    temperature: 0.5,
-    maxTokens: 1000, // Allow sufficient tokens for learnings/questions
-    outputFn,
-    errorFn
-  });
+  let result = { success: false };
+  if (hasApiKey) {
+    const effectiveKey = apiKey || process.env.VENICE_API_KEY;
+    result = await generateOutput({
+      apiKey: effectiveKey, // Pass key
+      type: 'learning',
+      system: systemPrompt(), // Use standard system prompt
+      prompt: analysisPrompt,
+      temperature: 0.5,
+      maxTokens: 1000, // Allow sufficient tokens for learnings/questions
+      outputFn,
+      errorFn
+    });
+  } else {
+    errorFn('[processResults] No API key available. Using simple fallback analysis.');
+  }
 
   outputFn(`[processResults] LLM result for learning extraction (query: "${query}"):`, JSON.stringify(result));
 
@@ -355,10 +368,13 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
   } else {
     // --- ADJUSTED ERROR HANDLING WITH FALLBACK ---
     if (result.isApiError) {
-        // If the API call itself failed (network, key, etc.), re-throw the error.
-        errorFn(`[processResults] CRITICAL: LLM API call failed for query "${query}". Error: ${result.error}`);
-        throw new Error(`LLM API call failed during learning extraction: ${result.error}`);
-    } else {
+        // If the API call itself failed (network, key, etc.), and no key available, continue with fallback.
+        if (hasApiKey) {
+          errorFn(`[processResults] CRITICAL: LLM API call failed for query "${query}". Error: ${result.error}`);
+          throw new Error(`LLM API call failed during learning extraction: ${result.error}`);
+        }
+        // else, fall through to fallback
+    }
         // If it was a parsing failure (LLM response received but not parsable),
         // log the error and attempt fallback extraction from raw content.
         errorFn(`[processResults] WARNING: Failed to parse LLM response structure for learning extraction (query: "${query}"). Error: ${result.error || 'Unknown parsing error'}. Attempting fallback extraction.`);
@@ -387,14 +403,16 @@ export async function processResults({ apiKey, query, content, numLearnings = 3,
                 return { learnings: [], followUpQuestions: [] }; // Fallback failed, return empty
             }
         } else {
-            // Raw content wasn't available for some reason (shouldn't happen with generateOutput changes)
-            errorFn(`[processResults] Raw content not available for fallback extraction.`);
-            return { learnings: [], followUpQuestions: [] }; // Cannot perform fallback, return empty
+            // If no raw content or no API key at all, synthesize minimal learnings from input content
+            const base = content
+              .map(c => String(c).trim())
+              .filter(Boolean);
+            const learnings = base.length > 0 ? [base[0]] : [String(query || 'General topic')];
+            return { learnings: learnings.slice(0, numLearnings || 1), followUpQuestions: [] };
         }
     }
     // --- END ADJUSTED ERROR HANDLING ---
   }
-}
 
 /**
  * Generates a narrative summary based on the query and accumulated learnings.

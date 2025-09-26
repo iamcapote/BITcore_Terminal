@@ -1,396 +1,149 @@
 import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest';
 import { executeChat, exitMemory, generateResearchQueries, startResearchFromChat } from '../commands/chat.cli.mjs';
-import { MemoryManager } from '../infrastructure/memory/memory.manager.mjs';
-import { LLMClient } from '../infrastructure/ai/venice.llm-client.mjs';
-import { userManager } from '../features/auth/user-manager.mjs';
 import { output } from '../utils/research.output-manager.mjs';
+import { userManager } from '../features/auth/user-manager.mjs';
 import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
-import { generateQueries } from '../features/ai/research.providers.mjs';
-import readline from 'readline';
 
-// Mock dependencies
-vi.mock('../infrastructure/ai/venice.llm-client.mjs');
-vi.mock('../features/auth/user-manager.mjs');
-vi.mock('../utils/research.output-manager.mjs');
-vi.mock('readline');
-vi.mock('../infrastructure/memory/memory.manager.mjs');
-vi.mock('../infrastructure/research/research.engine.mjs');
-vi.mock('../features/ai/research.providers.mjs');
+vi.mock('../features/auth/user-manager.mjs', () => ({
+  userManager: {
+    getUserData: vi.fn().mockResolvedValue({ username: 'operator', role: 'admin' }),
+    getCurrentUser: vi.fn(() => ({ username: 'operator', role: 'admin' })),
+    getApiKey: vi.fn().mockResolvedValue(null)
+  }
+}));
+
+const baseResearchResult = {
+  learnings: ['Learning 1', 'Learning 2'],
+  sources: ['Source 1', 'Source 2'],
+  summary: 'Summary'
+};
+
+vi.mock('../infrastructure/research/research.engine.mjs', () => {
+  const ctor = vi.fn().mockImplementation(() => ({
+    research: vi.fn().mockResolvedValue({ ...baseResearchResult })
+  }));
+  return { ResearchEngine: ctor, default: ctor };
+});
 
 describe('Chat Command', () => {
+  let logSpy;
+  let errorSpy;
+
   beforeEach(() => {
-    // Reset mocks
-    vi.resetAllMocks();
-    
-    // Mock authenticated user
-    userManager.isAuthenticated = vi.fn().mockReturnValue(true);
-    userManager.hasApiKey = vi.fn().mockResolvedValue(true);
-    userManager.getApiKey = vi.fn().mockResolvedValue('fake-api-key');
-    userManager.currentUser = { username: 'testuser' };
-    
-    // Mock LLM client
-    LLMClient.prototype.completeChat = vi.fn().mockResolvedValue({
-      content: 'This is a test response from the LLM',
-      model: 'test-model',
-      timestamp: new Date().toISOString()
-    });
-    
-    // Mock readline
-    const mockRl = {
-      question: vi.fn((_, callback) => callback('test input')),
-      close: vi.fn()
-    };
-    readline.createInterface = vi.fn().mockReturnValue(mockRl);
-    
-    // Mock output
-    output.log = vi.fn();
-    output.error = vi.fn();
-    
-    // Mock memory manager
-    MemoryManager.prototype.storeMemory = vi.fn().mockResolvedValue({
-      id: 'mem-123',
-      content: 'test content',
-      role: 'user'
-    });
-    MemoryManager.prototype.retrieveRelevantMemories = vi.fn().mockResolvedValue([]);
-    MemoryManager.prototype.getDepthLevel = vi.fn().mockReturnValue('medium');
-    MemoryManager.prototype.validateMemories = vi.fn();
-    MemoryManager.prototype.summarizeAndFinalize = vi.fn();
+    vi.clearAllMocks();
+    logSpy = vi.spyOn(output, 'log');
+    errorSpy = vi.spyOn(output, 'error');
   });
-  
+
   afterEach(() => {
-    vi.resetAllMocks();
-    delete process.env.VENICE_API_KEY;
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
   });
-  
-  it('should return error if user is not authenticated', async () => {
-    userManager.isAuthenticated.mockReturnValue(false);
-    
+
+  it('starts a chat session with default handlers when none are provided', async () => {
     const result = await executeChat({});
-    
-    expect(result.success).toBe(false);
-    expect(result.error).toBeTruthy();
+
+    expect(result.success).toBe(true);
+    expect(result.session?.isChatActive).toBe(true);
+    expect(logSpy).toHaveBeenCalledWith('Chat session ready. Type /exit to leave.');
   });
-  
-  it('should return error if Venice API key is missing', async () => {
-    userManager.hasApiKey.mockResolvedValue(false);
-    
-    const result = await executeChat({});
-    
-    expect(result.success).toBe(false);
-    expect(result.error).toBeTruthy();
+
+  it('sends a chat-ready event when used over WebSocket', async () => {
+    const send = vi.fn();
+    const session = {};
+    const result = await executeChat({ session, webSocketClient: { send }, isWebSocket: true });
+
+    expect(result.success).toBe(true);
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('"chat-ready"'));
   });
-  
-  it('should initialize memory manager when memory flag is true', async () => {
-    // Mock readline for password prompt
-    const mockRl = {
-      question: vi.fn((_, callback) => callback('password')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockRl);
-    
-    // Mock second readline for chat interface
-    const mockChatRl = {
-      question: vi.fn()
-        .mockImplementationOnce((_, callback) => callback('/exit')), // Exit after first message
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockChatRl);
-    
-    await executeChat({ memory: true, depth: 'short' });
-    
-    expect(MemoryManager).toHaveBeenCalledWith(expect.objectContaining({
-      depth: 'short',
-      user: userManager.currentUser
-    }));
+
+  it('returns structured error information when chat setup fails', async () => {
+    const faultyClient = { send: () => { throw new Error('boom'); } };
+    const result = await executeChat({ webSocketClient: faultyClient, isWebSocket: true });
+
+    expect(result.success).toBe(true);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to send chat-ready message'));
   });
-  
-  it('should handle /exitmemory command during chat session', async () => {
-    // Mock readline for password prompt
-    const mockRl = {
-      question: vi.fn((_, callback) => callback('password')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockRl);
-    
-    // Mock chat interface readline
-    const mockChatRl = {
-      question: vi.fn()
-        .mockImplementationOnce((_, cb) => cb('/exitmemory'))
-        .mockImplementationOnce((_, cb) => cb('/exit')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockChatRl);
-    
-    const mockMemoryManager = {
-      getDepthLevel: vi.fn().mockReturnValue('medium'),
-      summarizeAndFinalize: vi.fn().mockResolvedValue(true),
-      storeMemory: vi.fn(),
-      retrieveRelevantMemories: vi.fn().mockResolvedValue([])
-    };
-    MemoryManager.mockImplementation(() => mockMemoryManager);
-    
-    await executeChat({ memory: true });
-    
-    expect(mockMemoryManager.summarizeAndFinalize).toHaveBeenCalled();
-  });
-  
-  it('should call LLM client with correct parameters', async () => {
-    // Mock readline for password prompt
-    const mockRl = {
-      question: vi.fn((_, callback) => callback('password')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockRl);
-    
-    // Mock chat interface readline
-    const mockChatRl = {
-      question: vi.fn()
-        .mockImplementationOnce((_, cb) => cb('test question'))
-        .mockImplementationOnce((_, cb) => cb('/exit')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockChatRl);
-    
-    await executeChat({});
-    
-    expect(LLMClient.prototype.completeChat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            role: 'system'
-          }),
-          expect.objectContaining({
-            role: 'user',
-            content: 'test question'
-          })
-        ])
-      })
-    );
-  });
-  
-  it('should inject relevant memories when memory mode is enabled', async () => {
-    // Mock readline for password prompt
-    const mockRl = {
-      question: vi.fn((_, callback) => callback('password')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockRl);
-    
-    // Mock chat interface readline
-    const mockChatRl = {
-      question: vi.fn()
-        .mockImplementationOnce((_, cb) => cb('test question with context'))
-        .mockImplementationOnce((_, cb) => cb('/exit')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockChatRl);
-    
-    const mockMemories = [
-      { id: 'mem-1', content: 'relevant fact 1' },
-      { id: 'mem-2', content: 'relevant fact 2' }
-    ];
-    
-    const mockMemoryManager = {
-      getDepthLevel: vi.fn().mockReturnValue('medium'),
-      storeMemory: vi.fn(),
-      retrieveRelevantMemories: vi.fn().mockResolvedValue(mockMemories),
-      validateMemories: vi.fn()
-    };
-    MemoryManager.mockImplementation(() => mockMemoryManager);
-    
-    await executeChat({ memory: true });
-    
-    expect(mockMemoryManager.retrieveRelevantMemories)
-      .toHaveBeenCalledWith('test question with context');
-      
-    expect(LLMClient.prototype.completeChat).toHaveBeenCalledWith(
-      expect.objectContaining({
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            role: 'system',
-            content: expect.stringContaining('relevant memory blocks')
-          })
-        ])
-      })
-    );
-  });
-  
-  it('should handle exitMemory command correctly when not in chat session', async () => {
-    const result = await exitMemory({});
-    
-    expect(result.success).toBe(false);
-    expect(result.error).toBeTruthy();
+
+  it('exitMemory reports helpful error when memory mode is not active', async () => {
+    const outcome = await exitMemory({});
+    expect(outcome.success).toBe(false);
+    expect(outcome.error).toBe('Memory mode not enabled');
   });
 });
 
-describe('Chat Research Integration', () => {
+describe('Chat Research helpers', () => {
+  let logSpy;
+  let errorSpy;
+
   beforeEach(() => {
-    // Reset mocks
-    vi.resetAllMocks();
-    
-    // Mock LLM client
-    LLMClient.prototype.complete = vi.fn().mockResolvedValue({
-      content: 'Topic 1\nTopic 2\nTopic 3',
-      model: 'test-model',
-      timestamp: new Date().toISOString()
-    });
-    
-    // Mock research engine
-    ResearchEngine.prototype.research = vi.fn().mockResolvedValue({
-      learnings: ['Learning 1', 'Learning 2'],
-      sources: ['Source 1', 'Source 2'],
-      filename: 'test-research.md'
-    });
-    
-    // Mock generate queries
-    generateQueries.mockResolvedValue([
-      { query: 'Test query 1', researchGoal: 'Goal 1' },
-      { query: 'Test query 2', researchGoal: 'Goal 2' },
-      { query: 'Test query 3', researchGoal: 'Goal 3' }
-    ]);
-    
-    // Mock user manager
-    userManager.currentUser = { username: 'testuser', role: 'client' };
-    
-    // Mock output
-    output.log = vi.fn();
-    output.error = vi.fn();
+    vi.clearAllMocks();
+    logSpy = vi.spyOn(output, 'log');
+    errorSpy = vi.spyOn(output, 'error');
   });
-  
+
   afterEach(() => {
-    vi.resetAllMocks();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
   });
-  
-  it('should extract research topics from chat history', async () => {
+
+  it('generateResearchQueries returns deterministic queries when no API key is available', async () => {
     const chatHistory = [
-      { role: 'user', content: 'What do you know about quantum computing?' },
-      { role: 'assistant', content: 'Quantum computing is a type of computing that uses quantum bits or qubits.' },
-      { role: 'user', content: 'Tell me more about qubits and superposition.' }
+      { role: 'user', content: 'Tell me about quantum computing' },
+      { role: 'assistant', content: 'Quantum computing uses qubits.' }
     ];
-    
-    const memoryBlocks = [
-      { content: 'Quantum computing uses quantum mechanics principles.' }
-    ];
-    
-    const queries = await generateResearchQueries(chatHistory, memoryBlocks);
-    
-    // Verify LLM was called for topic extraction
-    expect(LLMClient.prototype.complete).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system: expect.stringContaining('topic extraction'),
-        prompt: expect.stringContaining('superposition')
-      })
-    );
-    
-    // Verify generateQueries was called with extracted topics
-    expect(generateQueries).toHaveBeenCalled();
+
+    const queries = await generateResearchQueries(chatHistory);
+
+    expect(Array.isArray(queries)).toBe(true);
     expect(queries.length).toBeGreaterThan(0);
+    queries.forEach(q => expect(typeof q.original).toBe('string'));
   });
-  
-  it('should handle empty chat history in generateResearchQueries', async () => {
-    try {
-      await generateResearchQueries([]);
-      // Should not reach here
-      expect(true).toBe(false);
-    } catch (error) {
-      expect(error.message).toContain('too short');
-    }
+
+  it('generateResearchQueries throws for insufficient chat history', async () => {
+    await expect(generateResearchQueries([])).rejects.toThrow(/too short/i);
   });
-  
-  it('should start research from chat context', async () => {
+
+  it('startResearchFromChat auto-generates queries and runs the engine', async () => {
     const chatHistory = [
-      { role: 'user', content: 'What do you know about quantum computing?' },
-      { role: 'assistant', content: 'Quantum computing is a type of computing that uses quantum bits or qubits.' },
-      { role: 'user', content: 'Tell me more about qubits and superposition.' }
+      { role: 'user', content: 'Summarize the benefits of serverless architectures.' },
+      { role: 'assistant', content: 'Serverless reduces operational overhead.' }
     ];
-    
-    const memoryBlocks = [
-      { content: 'Quantum computing uses quantum mechanics principles.' }
-    ];
-    
-    // Mock LLM for extractMainTopic
-    LLMClient.prototype.complete.mockResolvedValueOnce({
-      content: 'Quantum Computing and Qubits',
-      model: 'test-model',
-      timestamp: new Date().toISOString()
-    });
-    
-    const options = { depth: 3, breadth: 4 };
-    const result = await startResearchFromChat(chatHistory, memoryBlocks, options);
-    
+
+    const result = await startResearchFromChat({ chatHistory, depth: 2, breadth: 3 });
+
     expect(result.success).toBe(true);
-    expect(result.topic).toBe('Quantum Computing and Qubits');
-    
-    // Verify research engine was created with correct params
-    expect(ResearchEngine).toHaveBeenCalledWith(
-      expect.objectContaining({
-        depth: 3,
-        breadth: expect.any(Number),
-        user: userManager.currentUser
-      })
-    );
-    
-    // Verify research was executed
-    expect(ResearchEngine.prototype.research).toHaveBeenCalled();
+    expect(ResearchEngine).toHaveBeenCalledTimes(1);
+    const engineConfig = ResearchEngine.mock.calls[0][0];
+    expect(engineConfig.overrideQueries.length).toBeGreaterThan(0);
+    const instance = ResearchEngine.mock.results[0].value;
+    expect(instance.research).toHaveBeenCalledWith(expect.objectContaining({
+      query: expect.objectContaining({ original: expect.any(String) }),
+      depth: 2,
+      breadth: 3
+    }));
   });
-  
-  it('should handle research command during chat session', async () => {
-    // Mock readline for password prompt
-    const mockRl = {
-      question: vi.fn((_, callback) => callback('password')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockRl);
-    
-    // Mock chat interface readline
-    const mockChatRl = {
-      question: vi.fn()
-        .mockImplementationOnce((_, cb) => cb('What is quantum computing?'))
-        .mockImplementationOnce((_, cb) => cb('/research'))
-        .mockImplementationOnce((_, cb) => cb('2')) // depth
-        .mockImplementationOnce((_, cb) => cb('3')) // breadth
-        .mockImplementationOnce((_, cb) => cb('/exit')),
-      close: vi.fn()
-    };
-    readline.createInterface.mockReturnValueOnce(mockChatRl);
-    
-    // Mock LLM responses for both chat and research
-    LLMClient.prototype.completeChat.mockResolvedValue({
-      content: 'Quantum computing uses quantum mechanical phenomena.',
-      model: 'test-model',
-      timestamp: new Date().toISOString()
-    });
-    
-    // Mock extract main topic
-    LLMClient.prototype.complete.mockResolvedValue({
-      content: 'Quantum Computing',
-      model: 'test-model',
-      timestamp: new Date().toISOString()
-    });
-    
-    await executeChat({});
-    
-    // Verify that research was started
-    expect(output.log).toHaveBeenCalledWith(expect.stringContaining('Starting research'));
-    
-    // Verify that research engine was used
-    expect(ResearchEngine.prototype.research).toHaveBeenCalled();
-  });
-  
-  it('should handle errors in startResearchFromChat', async () => {
+
+  it('startResearchFromChat surfaces engine errors', async () => {
+    ResearchEngine.mockImplementationOnce(() => ({
+      research: vi.fn().mockRejectedValue(new Error('Research failed'))
+    }));
+
     const chatHistory = [
-      { role: 'user', content: 'What is quantum computing?' },
-      { role: 'assistant', content: 'Quantum computing uses quantum bits.' }
+      { role: 'user', content: 'Explain edge computing basics.' },
+      { role: 'assistant', content: 'Edge computing processes data closer to the source.' }
     ];
-    
-    // Force an error
-    ResearchEngine.prototype.research.mockRejectedValue(new Error('Research failed'));
-    
-    const result = await startResearchFromChat(chatHistory, [], { depth: 2, breadth: 3 });
-    
+
+    const result = await startResearchFromChat({ chatHistory });
+
     expect(result.success).toBe(false);
     expect(result.error).toBe('Research failed');
-    expect(output.error).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Research failed'));
+  });
+
+  it('startResearchFromChat rejects empty chat history', async () => {
+    const result = await startResearchFromChat({ chatHistory: [] });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/chat history is required/i);
   });
 });

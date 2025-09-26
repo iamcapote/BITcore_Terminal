@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node app/start.mjs",
-    "test": "mocha tests/**/*.test.mjs",
-    "test:vitest": "vitest run"
+  "test": "vitest run",
+  "test:vitest": "vitest run"
   },
   "dependencies": {
     "@octokit/rest": "^21.1.1",

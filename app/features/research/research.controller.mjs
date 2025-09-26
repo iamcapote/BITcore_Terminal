@@ -7,8 +7,12 @@ import { userManager } from '../auth/user-manager.mjs'; // Assuming userManager 
  */
 export async function getResearchData(query = 'default research topic', depth = 2, breadth = 3) {
   try {
-    const engine = new ResearchEngine({ query, depth, breadth });
-    return await engine.research();
+    const queryObject = typeof query === 'string'
+      ? { original: query }
+      : { original: query?.original || 'default research topic', metadata: query?.metadata || null };
+
+    const engine = new ResearchEngine({ query: queryObject, depth, breadth });
+    return await engine.research({ query: queryObject, depth, breadth });
   } catch (error) {
     console.error('Error in getResearchData:', error);
     return {

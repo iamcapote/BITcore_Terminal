@@ -10,105 +10,45 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
-// Use the actual userManager instance
 import { userManager } from '../features/auth/user-manager.mjs';
-import fetch from 'node-fetch'; // Ensure fetch is available
-import readline from 'readline'; // For password prompt
 
 // --- Placeholder Constants ---
 // These should ideally be imported from a central config file if they exist elsewhere
-const USER_FILES_DIR = path.join(os.homedir(), '.mcp', 'users');
-const RESEARCH_DIR = path.join(os.homedir(), '.mcp', 'research'); // Example path
-const API_TIMEOUT = 10000; // 10 seconds timeout for API checks
+const USER_FILES_DIR = userManager.storageDir;
+const RESEARCH_DIR = path.join(USER_FILES_DIR, 'research');
 // --- End Placeholder Constants ---
 
 /**
  * Check API connectivity and keys (Internal helper for executeDiagnose)
  * @param {Object} options - Command options, potentially including session/password/currentUser.
  */
-async function checkApi(options) {
-    const { output, error, debug, currentUser, password } = options;
-    output('\n--- API Connectivity & Key Check ---');
-    let allOk = true;
+async function checkApi({ output, error }) {
+  output('\n--- API Connectivity & Key Check ---');
 
-    if (!currentUser || currentUser.username === 'public') {
-        error('Cannot test user API keys without being logged in.');
-        return false; // Cannot proceed without a logged-in user
+  try {
+  const results = await userManager.testApiKeys();
+
+  const describe = (label, result) => {
+    if (result.success === true) {
+    output(`� ${label}: OK`);
+    } else if (result.success === false) {
+    output(`🔴 ${label}: Failed (${result.error || 'Unknown error'})`);
+    } else {
+    output(`🟡 ${label}: Not Configured`);
     }
+  };
 
-    // Use the password from options if available (likely passed from session cache or prompt)
-    const userPassword = password;
-    if (!userPassword) {
-        error(`Password required for user ${currentUser.username} to test API keys, but none provided.`);
-        // Consider prompting if in interactive mode and no password available?
-        // For now, just fail the check.
-        return false;
-    }
+  describe('Brave', results.brave);
+  describe('Venice', results.venice);
+  describe('GitHub', results.github);
 
-    debug(`Checking APIs for user: ${currentUser.username}`);
-
-    // Check Brave
-    try {
-        debug(`Attempting to decrypt Brave key for ${currentUser.username}...`);
-        // Pass options object
-        const braveKey = await userManager.getApiKey({ username: currentUser.username, password: userPassword, service: 'brave' });
-        if (!braveKey) {
-            output('🟡 Brave: Key not set or decryption failed.');
-            allOk = false;
-        } else {
-            // Add a simple fetch test if possible, requires a known simple endpoint
-            output('🟢 Brave: Key decrypted successfully (Connectivity test skipped).');
-        }
-    } catch (e) {
-        error(`🔴 Brave: Error during key check/decryption: ${e.message}`);
-        allOk = false;
-    }
-
-    // Check Venice
-    try {
-        debug(`Attempting to decrypt Venice key for ${currentUser.username}...`);
-        // Pass options object
-        const veniceKey = await userManager.getApiKey({ username: currentUser.username, password: userPassword, service: 'venice' });
-        if (!veniceKey) {
-            output('🟡 Venice: Key not set or decryption failed.');
-            allOk = false;
-        } else {
-            debug('Venice key decrypted, attempting ping...');
-            const llmClient = new LLMClient(veniceKey);
-            await llmClient.ping();
-            output('🟢 Venice: Key decrypted and API ping successful.');
-        }
-    } catch (e) {
-        error(`🔴 Venice: Error during key check/test: ${e.message}`);
-        allOk = false;
-    }
-
-     // Check GitHub
-    try {
-        debug(`Attempting to decrypt GitHub token for ${currentUser.username}...`);
-        const githubToken = await userManager.getGitHubToken(currentUser.username, userPassword); // Assuming getGitHubToken needs password
-        if (!githubToken) {
-            output('🟡 GitHub: Token not set or decryption failed.');
-            // Not necessarily a failure if user doesn't use GitHub feature
-        } else {
-            debug('GitHub token decrypted, attempting authentication check...');
-            const octokit = new Octokit({ auth: githubToken });
-            await octokit.rest.users.getAuthenticated();
-            output('🟢 GitHub: Token decrypted and authentication successful.');
-        }
-    } catch (e) {
-         if (e.message.includes('decryption failed')) {
-             output('🟡 GitHub: Token decryption failed.');
-         } else if (e.message.includes('Not set')) {
-             output('🟡 GitHub: Token not set.');
-         } else {
-            error(`🔴 GitHub: Error during token check/test: ${e.message}`);
-            allOk = false; // Fail if test call fails
-         }
-    }
-
-    output(`API Check Result: ${allOk ? 'OK' : 'Issues found'}`);
-    return allOk;
+  const anyFailure = Object.values(results).some((res) => res.success === false);
+  output(`API Check Result: ${anyFailure ? 'Issues found' : 'OK'}`);
+  return !anyFailure;
+  } catch (err) {
+  error(`API test failed: ${err.message}`);
+  return false;
+  }
 }
 
 

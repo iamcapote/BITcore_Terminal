@@ -14,7 +14,7 @@ The Deep Research Privacy App is a privacy-focused research tool that automates 
 2. [Features](#features)
 3. [File Structure](#file-structure)
 4. [Usage Modes](#usage-modes)
-5. [Authentication System](#authentication-system)
+5. [Single-User Mode](#single-user-mode)
 6. [Research Pipeline](#research-pipeline)
 7. [API Key Management](#api-key-management)
 8. [Token Classification Module](#token-classification-module)
@@ -24,52 +24,42 @@ The Deep Research Privacy App is a privacy-focused research tool that automates 
 12. [Security Considerations](#security-considerations)
 13. [Troubleshooting](#troubleshooting)
 14. [Validation & Accuracy Check](#validation--accuracy-check)
+15. [Development Guidelines (Agents & Modules)](#development-guidelines-agents--modules)
 
 ---
 
 ## Overview
-This application automates research using AI-driven querying and summarization. It supports both public use (with limited features) and authenticated users (client or admin) who can store their own encrypted API keys. The app integrates seamlessly with the Venice API for optional token classification, adding metadata to strengthen query context. The implemented chat system enables interactive conversations with memory retention capabilities (`app/infrastructure/memory/memory.manager.mjs`) and seamless transition to deep research.
+This application automates research using AI-driven querying and summarization. The app now runs in single-user mode (no login/auth). API keys can be provided via environment variables or set at runtime using the `/keys` command. It integrates with the Venice API for optional token classification, adding metadata to strengthen query context. The chat system enables interactive conversations with memory retention capabilities (`app/infrastructure/memory/memory.manager.mjs`) and seamless transition to deep research.
 
 ---
 
 ## Features
 1. **Dual-Mode Application**
    - Runs in Server Mode or CLI Mode, determined by arguments passed to `app/start.mjs`.
-   - Server Mode: Provides a web interface (`public/index.html`) via Express and uses WebSockets (`app/features/research/routes.mjs`) for real-time communication.
-   - CLI Mode: Interactive text-based prompts for commands and operations using Node.js `readline` via `app/utils/research.prompt.mjs` and managed by `app/utils/cli-runner.mjs`.
+   - Server Mode: Serves the web terminal (`app/public/index.html`, `app/public/terminal.js`, `app/public/chat.js`) via Express and streams events over WebSockets (`app/features/research/routes.mjs`).
+   - CLI Mode: Provides an interactive terminal powered by Node.js `readline` through `app/utils/research.prompt.mjs` and orchestrated by `app/utils/cli-runner.mjs`.
 
 2. **Web-Based Terminal Interface**
-   - Real-time output and input via WebSockets, mirroring the Console-CLI experience (`public/terminal.js`, `public/webcomm.js`).
-   - Handles commands (`/login`, `/research`, `/chat`, etc.) parsed client-side (`public/command-processor.js`) and sent to the backend via specific message types (`command`, `chat-message`, `input`).
-   - Supports interactive prompts initiated by the backend (e.g., for passwords, research parameters, post-research actions) handled by `app/features/research/routes.mjs` (`wsPrompt`) and `public/terminal.js` (`handlePrompt`).
-   - Manages different interaction modes ('command', 'chat', 'research', 'prompt') to route user input correctly (`public/terminal.js`). Server dictates mode changes via messages (`mode_change`, `chat-ready`, `prompt`, etc.).
-   - **Strict CLI Parity:** GUI elements that modify commands are not present in `public/index.html`. Flags must be typed manually.
-   - Input enable/disable state is explicitly managed by the server sending `enable_input` and `disable_input` messages (`app/features/research/routes.mjs`, `public/terminal.js`).
+   - Real-time output and input via WebSockets, mirroring the console CLI (`app/public/terminal.js`, `app/public/webcomm.js`).
+   - Handles commands (`/research`, `/chat`, `/keys`, etc.) parsed client-side (`app/public/command-processor.js`) and sent to the backend via structured messages (`command`, `chat-message`, `input`).
+   - Supports interactive prompts initiated by the backend (for passwords, research parameters, or post-research actions) via `wsPrompt` (`app/features/research/routes.mjs`) and the corresponding handlers in `app/public/terminal.js`.
+   - Manages distinct interaction modes ('command', 'chat', 'research', 'prompt') to route user input correctly. The server drives state changes via messages (`mode_change`, `chat-ready`, `prompt`, etc.), and the client toggles input state when it receives `enable_input` / `disable_input` events.
 
 3. **Research Engine**
-   - Orchestrated by `app/infrastructure/research/research.engine.mjs` and `app/infrastructure/research/research.path.mjs`.
-   - Generates multiple queries (breadth) and follow-ups (depth) using AI (`app/features/ai/research.providers.mjs::generateQueries`).
-   - Uses a configurable search provider, defaulting to Brave Search (`app/infrastructure/search/search.providers.mjs`), for retrieving results, with rate limiting (`app/utils/research.rate-limiter.mjs`).
-   - Summarizes findings via AI (`app/features/ai/research.providers.mjs::generateSummary`), returning summaries, sources, and learnings.
-   - Progress is streamed to the client via WebSocket messages (`type: 'progress'`) sent from `app/infrastructure/research/research.path.mjs` and `app/infrastructure/research/research.engine.mjs`.
-   - Generates Markdown content (`research.engine.mjs::generateMarkdownResult`) but does not save it automatically.
+   - Orchestrated by `app/infrastructure/research/research.engine.mjs` (multi-path coordination) and `app/infrastructure/research/research.path.mjs` (single-path execution).
+   - Generates breadth/depth queries through Venice LLM helpers in `app/features/ai/research.providers.mjs` and executes them with the Brave provider in `app/infrastructure/search/search.providers.mjs`, guarded by `app/utils/research.rate-limiter.mjs`.
+   - Streams progress events and debug updates back to the caller (CLI or WebSocket) and composes the final Markdown response via `generateMarkdownResult`.
 
 4. **Token Classification**
-   - Optional module using `app/utils/token-classifier.mjs` to call the Venice API (model and character details likely within `venice.llm-client.mjs` or configuration, not explicitly in `token-classifier.mjs`).
-   - Embeds the raw text response returned by Venice into the research query object's `tokenClassification` property.
-   - **Integration:**
-      - **CLI Mode:** Prompts "Use token classification? (y/n)" during interactive research setup (`app/commands/research.cli.mjs`).
-      *   **Web-CLI Mode:**
-          *   If starting research interactively (e.g., `/research` without query, handled by `handleCommandMessage` in `routes.mjs`), prompts "Use token classification? [y/n]" via WebSocket (`wsPrompt`).
-          *   If typing `/research <query>`, the `--classify` flag must be added manually.
-   - If classification fails (API error, network issue, invalid response), it returns `null` and the pipeline continues with the raw query (`app/utils/token-classifier.mjs`).
+   - Optional module powered by `app/utils/token-classifier.mjs` plus `app/infrastructure/ai/venice.llm-client.mjs` to fetch enriched metadata.
+   - Expands the research query object with `tokenClassification` data before handoff to query generation.
+   - CLI sessions prompt for opt-in (`app/commands/research.cli.mjs`), while Web clients rely on prompts or the `--classify` flag. Failures simply log and continue with the base query.
 
-5. **Authentication & User Management**
-   - Roles: Public, Client, Admin (`app/features/auth/user-manager.mjs`).
-   - File-based user profiles stored at `~/.mcp/users/<username>.json` (or `MCP_TEST_USER_DIR` env var if set).
-   - Session management handled server-side (`app/features/research/routes.mjs` using `activeChatSessions` Map). Client UI updates via `login_success`/`logout_success` messages.
-   - Commands: `/login`, `/logout`, `/status`, `/users` (create, list, delete), `/password-change` handled by respective files in `app/commands/`.
-   - Login attempts are rate-limited (`app/features/auth/user-manager.mjs::RateLimiter`).
+5. **Single-User Mode**
+   - No login or password flows. A single global user is used for all operations.
+   - The active user is stored in `~/.bitcore-terminal/global-user.json` by default (override via `BITCORE_STORAGE_DIR`).
+   - API keys can be set via environment variables or at runtime with `/keys set ...` and are stored unencrypted in the single-user profile.
+   - Commands `/login`, `/logout`, and `/password-change` are retained for compatibility but are no-ops that simply display a helpful message.
 
 6. **Encrypted API Key Storage**
    - Per-user Brave, Venice, and GitHub keys/config (`app/features/auth/user-manager.mjs`).
@@ -78,13 +68,9 @@ This application automates research using AI-driven querying and summarization. 
    - GitHub configuration includes token, owner, repo, and branch.
 
 7. **Chat System with Memory**
-   - Interactive chat via `/chat` command (supports `--memory=true`, `--depth=short|medium|long` flags) handled by `app/commands/chat.cli.mjs` (backend logic) and `app/features/research/routes.mjs` (`handleCommandMessage` initiating session).
-   - Memory managed server-side (`app/infrastructure/memory/memory.manager.mjs`) with configurable depth settings affecting retrieval limits and thresholds.
-   - Optional GitHub persistence for *memory* (`app/infrastructure/memory/github-memory.integration.mjs`), separate from research result uploads.
-   - Seamless integration with research pipeline via `/research <query>` command within chat (`handleChatMessage` -> `startResearchFromChat` in `app/commands/chat.cli.mjs`).
-   - Memory finalization via `/exitmemory` command (triggers `MemoryManager.summarizeAndFinalize` and potentially `GitHubMemoryIntegration.commitMemory`). Sends `memory_commit` event with SHA.
-   - Memory status check via `/memory stats` command (use within active memory session, handled by `app/commands/memory.cli.mjs`).
-   - `/exitresearch` command uses chat history to generate override queries for a new research task (`app/commands/chat.cli.mjs::executeExitResearch`).
+   - `/chat` spins up an AI conversation mediated by `app/commands/chat.cli.mjs` and the Venice client.
+   - Memory is optional (`--memory`, `--depth`) and handled by `app/infrastructure/memory/memory.manager.mjs`, with GitHub persistence via `app/infrastructure/memory/github-memory.integration.mjs`.
+   - In-chat commands (`/exit`, `/exitmemory`, `/memory stats`, `/research …`) are parsed the same way for CLI and WebSocket flows, with Web clients informed through dedicated events such as `memory_commit`.
 
 8. **Logging & Error Handling**
    - Uses `app/utils/research.output-manager.mjs` for broadcasting output to console and connected WebSocket clients.
@@ -93,90 +79,102 @@ This application automates research using AI-driven querying and summarization. 
    - WebSocket errors are caught and sent to the client (`wsErrorHelper` in `routes.mjs`).
 
 9. **Diagnostics**
-    - `/diagnose [check...]` command (`app/commands/diagnose.cli.mjs`) allows checking API connectivity (Brave, Venice, GitHub), user directory permissions, and storage existence. (Note: Session checks, fixes, and tests might be disabled or limited in the current implementation).
+   - `/diagnose [api|perms|storage|all]` (`app/commands/diagnose.cli.mjs`) probes Brave, Venice, and GitHub connectivity plus filesystem readiness for the active session.
 
 10. **Post-Research Actions**
-    - After research completes, the server prompts the user (`wsPrompt` with context `post_research_action` in `routes.mjs`) to choose an action for the generated Markdown content: Display, Download, Upload to GitHub, or Discard.
-    - **Display:** Server sends the content back via `output` message.
-    - **Download:** Server sends a `download_file` message with filename and content; `public/terminal.js` (`handleDownloadFile`) creates and clicks a download link.
-    - **Upload to GitHub:** Server uses `app/utils/github.utils.mjs::uploadToGitHub` (requires user password for token decryption).
-    - **Discard:** No further action.
+   - After research completes, CLI users see a menu while Web users receive a prompt (`post_research_action`) to choose Display, Download, Upload (GitHub), or Discard.
+   - Download leverages the `download_file` WebSocket event, while uploads run through `app/utils/github.utils.mjs` using decrypted user credentials.
 
 ---
 
 ## File Structure
 ```plaintext
 app/
-  commands/
-    # admin.cli.mjs           # Not present in provided structure
-    chat.cli.mjs            # Handles /chat, /exitmemory, /exitresearch (backend logic)
-    diagnose.cli.mjs        # Handles /diagnose (backend logic)
-    index.mjs               # Main command router (`commands` export), argument parser (`parseCommandArgs`), help (`getHelpText`)
-    keys.cli.mjs            # Handles /keys set/check/test (backend logic)
-    login.cli.mjs           # Handles /login (backend logic)
-    logout.cli.mjs          # Handles /logout (backend logic)
-    memory.cli.mjs          # Handles /memory stats (backend logic)
-    password.cli.mjs        # Handles /password-change (backend logic)
-    research.cli.mjs        # Handles /research (backend logic for CLI/Web initiation)
-    status.cli.mjs          # Handles /status (backend logic)
-    users.cli.mjs           # Handles /users create/list/delete, createAdmin
+   commands/
+      admin.cli.mjs            – Admin-only helpers (user bootstrap, audit shortcuts)
+      chat.cli.mjs             – Chat session orchestration and in-chat commands
+      diagnose.cli.mjs         – `/diagnose` health checks (API, perms, storage)
+      index.mjs                – Command registry and CLI parser glue
+      keys.cli.mjs             – `/keys` set/check/test helpers
+      login.cli.mjs            – `/login` command implementation
+      logout.cli.mjs           – `/logout` command implementation
+      memory.cli.mjs           – `/memory stats` and related helpers
+      password.cli.mjs         – `/password-change` workflow
+      research.cli.mjs         – `/research` CLI runner and prompts
+      research.command.mjs     – Shared research execution helpers
+      research.mjs             – Research command entry-point wrapper
+      status.cli.mjs           – `/status` reporting
+      users.cli.mjs            – `/users` admin management
 
-  features/
-    ai/
-      research.providers.mjs       # AI providers for query generation, summarization, result processing
-    auth/
-      encryption.mjs             # AES encryption/decryption, key derivation
-      user-manager.mjs           # User/session management, API key encryption/decryption, RateLimiter
-    research/
-      # research.controller.mjs    # Not present in provided structure
-      routes.mjs                 # Express routes & WebSocket handlers (handleWebSocketConnection, wsPrompt, message routing)
+   config/
+      index.mjs               – Runtime configuration loader
+      websocket.mjs           – WebSocket server wiring
 
-  infrastructure/
-    ai/
-      venice.characters.mjs      # Defines characters for Venice LLM (likely used by llm-client)
-      venice.llm-client.mjs      # Venice LLM API client (fetch wrapper)
-      venice.models.mjs          # Defines models for Venice LLM (likely used by llm-client)
-      venice.response-processor.mjs # Utility to clean LLM responses
-    memory/
-      github-memory.integration.mjs # GitHub persistence logic for memory
-      memory.manager.mjs           # Core memory management (ephemeral/validated stores, retrieval, summarization)
-    research/
-      research.engine.mjs          # Research execution engine, orchestrates paths, generates markdown
-      research.path.mjs            # Single research path logic, recursive querying, progress updates
-    search/
-      # search.mjs                 # Not present in provided structure
-      search.providers.mjs       # Brave Search provider implementation
+   features/
+      ai/
+         research.providers.mjs – LLM prompt templates for queries, summary, follow-ups
+      auth/
+         encryption.mjs        – AES-256-GCM helpers with scrypt-derived keys
+         user-manager.mjs      – User store, sessions, API key encryption, rate limiting
+      chat/
+         handlers.mjs          – WebSocket chat message handlers
+         routes.mjs            – Express routes specific to chat flows
+         ws-chat-handler.mjs   – Chat-specific WebSocket helpers
+      research/
+         research.controller.mjs – Research controller used by Web routes
+         routes.mjs              – WebSocket command router and prompt helpers
 
-  public/
-    # chat.js                    # Not present in provided structure
-    command-processor.js         # Client-side parsing of /commands, triggers prompts for password if needed
-    index.html                   # Web terminal UI (input, output, status, help button)
-    # research.js                # Not present in provided structure
-    terminal.js                  # Core web terminal UI logic (input/output, modes, prompts, connection, event handlers)
-    webcomm.js                   # WebSocket communication wrapper (connect, send, registerHandler)
+   infrastructure/
+      ai/
+         venice.characters.mjs – Character presets for Venice LLM
+         venice.llm-client.mjs – Venice API client
+         venice.models.mjs     – Model catalog and defaults
+         venice.response-processor.mjs – Cleans LLM output for display
+      memory/
+         github-memory.integration.mjs – GitHub persistence for memory summaries
+         memory.manager.mjs     – Memory storage, retrieval, summarization logic
+      research/
+         research.engine.mjs    – Research orchestration and markdown builder
+         research.path.mjs      – Path execution, progress, query sequencing
+      search/
+         search.providers.mjs  – Brave search provider and retry logic
 
-  tests/
-    # Various unit and integration tests (specific files listed in context)
-    ...
+   public/
+      index.html              – Web terminal shell
+      terminal.js             – Terminal UI controller
+      command-processor.js    – Client-side command parsing helpers
+      chat.js                 – Chat panel enhancements for the terminal
+      research/
+         index.html            – Research library UI
+         research.js           – Front-end logic for saved research viewer
+      css/                    – Shared styling assets
+      style.css               – Terminal styling
+      webcomm.js              – WebSocket connection manager
 
-  utils/
-    cli-args-parser.mjs          # CLI argument parsing logic (used by start.mjs)
-    cli-error-handler.mjs        # Error handling specifically for CLI mode
-    cli-runner.mjs               # Main loop for CLI mode interaction
-    github.utils.mjs             # Utility for uploading files (research results) to GitHub
-    research.clean-query.mjs     # Utility to clean query strings
-    research.ensure-dir.mjs      # Utility to ensure directory existence
-    # research.file-utils.mjs    # Not present in provided structure
-    research.object-utils.mjs    # Utility functions for objects
-    research.output-manager.mjs  # Handles output broadcasting (console/WebSocket)
-    research.prompt.mjs          # CLI prompt utility (readline wrapper)
-    research.rate-limiter.mjs    # Generic rate limiter class
-    token-classifier.mjs         # Utility to call Venice for token classification
-    websocket.utils.mjs          # Utility for safe WebSocket sending (`safeSend`)
+   tests/
+      …                       – Vitest suites for commands, providers, and engine
 
-start.mjs                          # Entry point (determines CLI vs. Server mode)
-README.md                          # This file
-# Other files like package.json, vitest.config.js, .env (if present), and various .md files are config/docs/notes
+   utils/
+      cli-args-parser.mjs     – CLI argument parsing
+      cli-error-handler.mjs   – Error categorisation and logging helpers
+      cli-runner.mjs          – CLI REPL orchestrator
+      github.utils.mjs        – GitHub upload helpers for research output
+      research.clean-query.mjs – Query sanitisation
+      research.ensure-dir.mjs – Directory creation helper
+      research.file-utils.mjs – File path utilities for research output
+      research.object-utils.mjs – Object utilities used across the pipeline
+      research.output-manager.mjs – Broadcasts output to console and sockets
+      research.prompt.mjs     – CLI prompt wrappers
+      research.rate-limiter.mjs – Rate limiter implementation
+      token-classifier.mjs    – Venice token classification wrapper
+      websocket.utils.mjs     – Safe WebSocket send helpers
+
+   start.mjs                 – Entry point that bootstraps CLI or server mode
+
+docs & ops/
+   README.md, guides/, todo.md, gaps.md, completed.md, websession.md, etc.
+
+package.json, vitest.config.js, .env (optional), and other project metadata live at the repository root.
 ```
 
 ---
@@ -193,27 +191,16 @@ README.md                          # This file
 
 ---
 
-## Authentication System
-1. **Roles & Permissions**
-   - **Public**: No login needed, restricted features/limits (enforced within command handlers).
-   - **Client**: Must log in (`/login`). Can store personal API keys, potentially higher limits.
-   - **Admin**: Full privileges (`/users` command, potentially `/diagnose`).
+## Single-User Mode
+Authentication is removed. The system operates as a single global user:
 
-2. **User Management**
-   - Users stored under `~/.mcp/users/<username>.json` (or `MCP_TEST_USER_DIR`).
-   - Create users via `/users create <username> --role=<role>` (admin only).
-
-3. **Session Management**
-   - Session state (user auth status, loaded keys, memory manager instance) managed server-side (`activeChatSessions` in `app/features/research/routes.mjs`).
-   - Client (`public/terminal.js`) receives session status updates (`login_success`, `logout_success`, `connection`, `session-expired`) and handles display/state reset.
-   - Logout (`/logout`) clears server and client state. Reconnecting resets client to public/disconnected state.
-
-4. **Authentication Commands**
-   - `/login <username>`
-   - `/logout`
-   - `/status`
-   - `/users create|list|delete...` (admin only)
-   - `/password-change`
+- Username: `operator` by default (override via `BITCORE_USER`); role defaults to `admin`.
+- Storage path: `~/.bitcore-terminal` (override via `BITCORE_STORAGE_DIR`).
+- Keys are loaded from environment variables if set: `BRAVE_API_KEY`, `VENICE_API_KEY`, `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO`, `GITHUB_BRANCH`.
+- You can also set keys via commands without any password prompts:
+  - `/keys set brave <key>`
+  - `/keys set venice <key>`
+  - `/keys set github --github-owner=<user_or_org> --github-repo=<repo> --github-token=<token> [--github-branch=<branch>]`
 
 ---
 
@@ -235,7 +222,7 @@ README.md                          # This file
 
 ## API Key Management
 1. **Key Setup**
-   - Use the `/keys set <service> [options]` command after logging in.
+   - Use the `/keys set <service> [options]` command (no login required).
    - **Brave/Venice:**
      - `/keys set brave <your_brave_api_key>`
      - `/keys set venice <your_venice_api_key>`
@@ -247,8 +234,8 @@ README.md                          # This file
      - Example (with specific branch):
        `/keys set github --github-owner=bitwikiorg --github-repo=BITCORE_MEMORY --github-token=ghp_YourTokenHere --github-branch=dev`
      - The GitHub token needs `repo` scope. Branch defaults to `main` if not specified.
-   - Keys are stored encrypted per user (`app/features/auth/user-manager.mjs`).
-   - Environment variables (`BRAVE_API_KEY`, `VENICE_API_KEY`, `GITHUB_TOKEN`, etc.) used as fallback *only if user keys are not set or cannot be decrypted*.
+   - Keys are stored as plain strings in the single-user profile at `~/.bitcore-terminal/global-user.json`.
+   - Environment variables (`BRAVE_API_KEY`, `VENICE_API_KEY`, `GITHUB_TOKEN`, etc.) are used as initial values if present.
 
 2. **Key Checks**
    - `/keys check` or `/keys stat`: Lists configuration status for Brave, Venice, and GitHub.
@@ -281,9 +268,9 @@ The chat system enables interactive conversations with an AI, featuring context 
 
 ### Chat Commands
 1. **Starting Chat**
-   - `/chat`: Starts basic chat session. Requires password for key decryption (prompted if needed).
-   - `/chat --memory=true`: Enables memory (server-side `MemoryManager`). Requires password.
-   - `/chat --depth=short|medium|long`: Sets memory depth (parsed server-side). Requires password if memory enabled.
+   - `/chat`: Starts basic chat session.
+   - `/chat --memory=true`: Enables memory (server-side `MemoryManager`).
+   - `/chat --depth=short|medium|long`: Sets memory depth (parsed server-side).
 
 2. **In-Chat Commands**
    - `/exit`: Ends chat mode (client and server).
@@ -343,7 +330,7 @@ The chat system enables interactive conversations with an AI, featuring context 
    >
    ```
 
-3. **Web Interface**
+2. **Web Interface**
    - The chat interface is available through the web terminal (`/chat` command).
    - Mode switching and input routing are handled based on server messages.
    - Feedback on memory operations (`/memory stats`, GitHub commits) is provided.
@@ -358,7 +345,7 @@ The chat system enables interactive conversations with an AI, featuring context 
    Create a `.env` file with (at minimum):
    ```
    PORT=3000
-   # Optional global keys (used if user keys not set/decrypted)
+   # Optional global keys
    # BRAVE_API_KEY=your_brave_api_key
    # VENICE_API_KEY=your_venice_api_key
    # Optional for GitHub memory/research persistence:
@@ -390,8 +377,8 @@ The chat system enables interactive conversations with an AI, featuring context 
 ---
 
 ## Security Considerations
-- **API Key Protection**: Keys are AES-256-GCM encrypted (`app/features/auth/encryption.mjs`) with per-user salts derived from their password (`app/features/auth/user-manager.mjs::deriveKey`). Keys are decrypted server-side only when needed for API calls, requiring the user's password (prompted via WebSocket/CLI if necessary).
-- **Password Security**: Passwords hashed using Argon2 (`app/features/auth/user-manager.mjs`). Session management is server-side.
+- **API Key Protection**: In single-user mode, keys are stored in plain JSON. Prefer environment variables in production or secure the storage directory.
+- **Password Security**: Passwords are not used in single-user mode.
 - **Server Hardening**: Use standard practices (firewall, non-root user, updates).
 - **HTTPS**: Essential in production.
 - **Input Sanitization**: Query cleaning (`app/utils/research.clean-query.mjs`) exists, but review command parsing and inputs for potential injection risks.
@@ -435,6 +422,21 @@ This README aims to accurately reflect the application state based on the provid
 
 
 ---
+
+## Development Guidelines (Agents & Modules)
+
+For pragmatic, contextual guidance on adding new agents and modules, see AGENTS.md at the repo root. It lays out contract-first design, file size limits, modular structure, and testing standards tailored to this codebase.
+
+Highlights:
+- Keep files small (target 300–500 LOC; soft ceiling 500). Split by responsibility early. Modularize as needed.
+- Contract first: define inputs, outputs, error modes, and performance budgets (time/memory) before coding.
+- One intent per change; ship in verifiable slices with tests.
+- Separate concerns: one module, one role. Favor composition.
+- Guard → Do → Verify: validate inputs, perform the action, assert invariants, then return immutable results.
+- Test behavior with Vitest; mock external IO at edges; respect cancellation/timeouts.
+- Improve code health with every change (naming, docs, structure). Add short “Why/What/How” headers to files.
+
+Read the complete guidelines: [AGENTS.md](./AGENTS.md)
 
 do not delete (we need this to restart app)
 

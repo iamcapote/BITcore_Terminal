@@ -1,7 +1,8 @@
 export default {
   test: {
     globals: true,
-    include: ['tests/**/*.test.mjs'],
+    // Run only the Vitest-based suites co-located under app/tests
+  include: ['app/tests/**/*.test.mjs', 'tests/**/*.test.mjs'],
     environment: 'node',
     coverage: {
       reporter: ['text', 'json', 'html'],

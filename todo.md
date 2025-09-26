@@ -18,6 +18,7 @@ This list tracks specific tasks to be implemented or fixed.
 
 ## Medium Priority
 
+*   [COMPLETED] Refresh architecture documentation (README, research, chat, auth, token-classifier guides).
 *   Implement persistent storage for research results beyond session/GitHub (e.g., local DB or files tied to user).
     *   Add `/research list` command.
     *   Add `/research download <id>` command.
@@ -81,4 +82,4 @@ This list tracks specific tasks to be implemented or fixed.
 - [ ] **CLI Mode Parity:** Ensure CLI mode (`executeResearch` without WebSocket) handles results appropriately (e.g., prints markdown to console).
 - [ ] **Configuration Management:** Consider a more robust way to manage API keys and GitHub settings beyond simple environment variables or user prompts (e.g., encrypted config file).
 - [ ] **Testing:** Add unit and integration tests for the research engine, command handlers, and WebSocket interactions.
-- [ ] **Documentation:** Update README and command help text (`/help`) to reflect changes.
+- [ ] **Documentation:** Update `/help` command text to mirror current docs/features.

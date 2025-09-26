@@ -1,28 +1,26 @@
 import * as researchCli from './research.cli.mjs';
 import * as keysCli from './keys.cli.mjs';
-import * as loginCli from './login.cli.mjs';
-import * as logoutCli from './logout.cli.mjs';
 import * as statusCli from './status.cli.mjs';
-import * as usersCli from './users.cli.mjs';
-import * as passwordCli from './password.cli.mjs';
 import * as chatCli from './chat.cli.mjs';
 import * as memoryCli from './memory.cli.mjs';
 import * as diagnoseCli from './diagnose.cli.mjs';
+import * as loginCli from './login.cli.mjs';
+import * as logoutCli from './logout.cli.mjs';
+import * as passwordCli from './password.cli.mjs';
 
 // Map command names (lowercase) to their execution functions
 export const commands = {
     research: researchCli.executeResearch,
     keys: keysCli.executeKeys,
-    login: loginCli.executeLogin,
-    logout: logoutCli.executeLogout,
     status: statusCli.executeStatus,
-    users: usersCli.executeUsers,
-    'password-change': passwordCli.executePasswordChange, // Use quotes for hyphenated names
     chat: chatCli.executeChat,
     exitmemory: chatCli.executeExitMemory, // Assuming exitmemory is handled by chat.cli.mjs
     exitresearch: chatCli.executeExitResearch, // Assuming exitresearch is handled by chat.cli.mjs
     memory: memoryCli.executeMemory, // Handles subcommands like 'stats' via positionalArgs
     diagnose: diagnoseCli.executeDiagnose,
+    login: loginCli.executeLogin,
+    logout: logoutCli.executeLogout,
+    'password-change': passwordCli.executePasswordChange,
     // Add other commands here
 };
 
@@ -97,14 +95,13 @@ export function getHelpText() {
     // Add help text from each command module that provides it
     if (researchCli.getResearchHelpText) help += researchCli.getResearchHelpText() + '\n\n';
     if (keysCli.getKeysHelpText) help += keysCli.getKeysHelpText() + '\n\n';
-    if (loginCli.getLoginHelpText) help += loginCli.getLoginHelpText() + '\n\n';
-    if (logoutCli.getLogoutHelpText) help += logoutCli.getLogoutHelpText() + '\n\n';
     if (statusCli.getStatusHelpText) help += statusCli.getStatusHelpText() + '\n\n';
-    if (usersCli.getUsersHelpText) help += usersCli.getUsersHelpText() + '\n\n';
-    if (passwordCli.getPasswordHelpText) help += passwordCli.getPasswordHelpText() + '\n\n';
     if (chatCli.getChatHelpText) help += chatCli.getChatHelpText() + '\n\n'; // Assumes chat provides combined help
     if (memoryCli.getMemoryHelpText) help += memoryCli.getMemoryHelpText() + '\n\n';
     if (diagnoseCli.getDiagnoseHelpText) help += diagnoseCli.getDiagnoseHelpText() + '\n\n';
+    if (loginCli.getLoginHelpText) help += loginCli.getLoginHelpText() + '\n\n';
+    if (logoutCli.getLogoutHelpText) help += logoutCli.getLogoutHelpText() + '\n\n';
+    if (passwordCli.getPasswordChangeHelpText) help += passwordCli.getPasswordChangeHelpText() + '\n\n';
 
     // Add a general help command usage
     help += '/help                     Show this help message.\n';

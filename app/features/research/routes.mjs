@@ -87,22 +87,22 @@ export function handleWebSocketConnection(ws, req) {
   // --- Start: Added Try/Catch for Initial Setup ---
   try {
     const sessionId = crypto.randomUUID();
-    const sessionData = {
+        const current = userManager.getCurrentUser();
+        const sessionData = {
       sessionId: sessionId,
       webSocketClient: ws,
       isChatActive: false,
       chatHistory: [],
       memoryManager: null,
       lastActivity: Date.now(),
-      username: 'public', // Start as public
-      role: 'public',     // Start as public
+            username: current?.username || 'operator',
+            role: current?.role || 'admin',
       pendingPromptResolve: null,
       pendingPromptReject: null,
       promptTimeoutId: null,
       promptIsPassword: false, // Added flag for prompt type
       promptContext: null, // Added flag for prompt context (e.g., 'post_research_action')
       promptData: null, // Added data associated with prompt context
-      password: null, // Cached password for the session
       currentUser: null, // Cached user data (including potentially decrypted keys)
       currentResearchResult: null, // Store last research result content
       currentResearchFilename: null, // Store last research result suggested filename
@@ -120,8 +120,10 @@ export function handleWebSocketConnection(ws, req) {
 
     // Send initial messages
     safeSend(ws, { type: 'connection', connected: true });
+    // Inform client of active user for UI consistency
+    safeSend(ws, { type: 'login_success', username: sessionData.username });
     safeSend(ws, { type: 'output', data: 'Welcome to MCP Terminal!' });
-    safeSend(ws, { type: 'output', data: `Current status: ${sessionData.role}. Use /login <username> to authenticate.` });
+    safeSend(ws, { type: 'output', data: `Single-user mode active as ${sessionData.username} (${sessionData.role}). No login required.` });
     safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
     enableClientInput(ws); // Explicitly enable input after initial setup
 
@@ -590,268 +592,8 @@ async function handleCommandMessage(ws, message, session) {
     options.error = commandError;   // Assign defined handler
     options.debug = commandDebug;   // Assign defined handler
     // --- End Inject ---
-
-    // --- Special Handling for /login in WebSocket ---
-    // Use commandName and already parsed positionalArgs
-    if (commandName === 'login') {
-        const username = options.positionalArgs[0];
-        let providedPassword = options.positionalArgs[1] || passwordFromPayload; // Password from args or payload
-
-        if (!username) {
-            commandOutput(`Current user: ${session.username} (${session.role})`);
-            return true; // Input enabled
-        }
-
-        if (session.username === username && session.role !== 'public') {
-            commandOutput(`Already logged in as ${username}`);
-            return true; // Input enabled
-        }
-
-        try {
-            // Prompt for password if not provided
-            if (!providedPassword) {
-                // Input remains disabled while prompting
-                enableInputAfter = false;
-                // Prompt without context
-                providedPassword = await wsPrompt(ws, session, `Enter password for ${username}: `, PROMPT_TIMEOUT_MS, true, null);
-                // Input remains disabled, wsPrompt resolution doesn't re-enable it.
-                // The rest of the login logic will determine the final state.
-            }
-
-            // Authenticate user using userManager (does not modify global state)
-            const userData = await userManager.authenticateUser(username, providedPassword);
-            const prevUsername = session.username;
-            session.username = userData.username;
-            session.role = userData.role;
-            session.password = providedPassword; // Cache the successful password
-            // --- FIX: Cache user data in session ---
-            session.currentUser = await userManager.getUserData(session.username); // Cache full user data
-            console.log(`[WebSocket] Session ${session.sessionId} updated after login. User: ${prevUsername} -> ${session.username}, Role: ${session.role}`);
-
-            // Send success message and update client state
-            safeSend(ws, {
-                type: 'login_success',
-                username: session.username,
-                role: session.role,
-                message: `Logged in as ${session.username} (${session.role})`
-            });
-            safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
-            enableInputAfter = true; // Enable input after successful login
-        } catch (error) {
-            console.error(`[WebSocket] Login failed for ${username} (Session ${session.sessionId}): ${error.message}`);
-            session.password = null; // Clear cached password on failure
-            session.currentUser = null; // Clear cached user data on failure
-            commandError(`Login failed: ${error.message}`); // commandError sets enableInputAfter = false
-            enableInputAfter = false; // Explicitly ensure it's false
-        }
-
-        console.log(`[WebSocket] Returning from handleCommandMessage (/login). Final enableInputAfter: ${enableInputAfter}`);
-        return enableInputAfter; // Return final decision
-    }
-    // --- End Special Handling for /login ---
-
-    // --- Fetch currentUser data BEFORE specific command logic ---
-    try {
-        // --- FIX: Use cached user data if available ---
-        if (session.currentUser && session.currentUser.username === session.username) {
-            options.currentUser = session.currentUser;
-            console.log(`[WebSocket] Using cached user data for command execution.`);
-        } else if (session.username !== 'public') {
-            options.currentUser = await userManager.getUserData(session.username);
-            if (!options.currentUser) {
-                commandError(`Error: Could not load user data for ${session.username}.`);
-                return false; // commandError handled enabling input
-            }
-            session.currentUser = options.currentUser; // Cache fetched data
-        } else {
-            options.currentUser = await userManager.getUserData('public'); // Get public user data
-            session.currentUser = options.currentUser; // Cache public user data
-        }
-        // *** FIX: Assign fetched user data to requestingUser as expected by executeUsers ***
-        options.requestingUser = options.currentUser;
-        console.log(`[WebSocket] Fetched/used user data for command execution (assigned to currentUser and requestingUser): ${options.requestingUser?.username} (${options.requestingUser?.role})`);
-    } catch (userError) {
-        commandError(`Error fetching user data: ${userError.message}`);
-        return false; // commandError handled enabling input
-    }
-    // --- End Fetch currentUser ---
-
-    // --- Interactive Research Flow ---
-    // Use commandName and check positionalArgs length for query
-    if (commandName === 'research' && options.positionalArgs.length === 0 && Object.keys(options.flags).length === 0) { // Trigger interactive if no args/flags
-        // --- BLOCK PUBLIC USERS BEFORE PROMPTING ---
-        if (session.role === 'public' || (options.currentUser && options.currentUser.role === 'public')) {
-            options.error('Research command is not available for public users. Please /login to use this feature.');
-            return false; // Enable input after error
-        }
-        isInteractiveResearch = true;
-        options.output('Starting interactive research setup...');
-        enableInputAfter = false; // Disable input while prompting
-        try {
-            // Prompt for query - NO CONTEXT NEEDED HERE
-            const queryInput = await wsPrompt(ws, session, 'Please enter your research query: ', PROMPT_TIMEOUT_MS, false, null);
-            if (!queryInput) throw new Error('Research query cannot be empty.');
-            // Add query to positionalArgs for consistency? Or keep separate? Let's keep separate for now.
-            options.query = queryInput;
-
-            // Prompt for breadth - NO CONTEXT NEEDED HERE
-            const breadthInput = await wsPrompt(ws, session, `Enter research breadth (queries per level) [${options.breadth}]: `, PROMPT_TIMEOUT_MS, false, null);
-            if (breadthInput && !isNaN(parseInt(breadthInput))) {
-                options.breadth = parseInt(breadthInput);
-            }
-
-            // Prompt for depth - NO CONTEXT NEEDED HERE
-            const depthInput = await wsPrompt(ws, session, `Enter research depth (levels) [${options.depth}]: `, PROMPT_TIMEOUT_MS, false, null);
-            if (depthInput && !isNaN(parseInt(depthInput))) {
-                options.depth = parseInt(depthInput);
-            }
-
-            // Prompt for classification - NO CONTEXT NEEDED HERE
-            const classifyInput = await wsPrompt(ws, session, 'Use token classification? (y/n) [n]: ', PROMPT_TIMEOUT_MS, false, null);
-            options.classify = classifyInput.toLowerCase() === 'y';
-
-            // Confirm parameters before proceeding
-            // --- FIX: Use options.output ---
-            options.output(`Research parameters set: Query="${options.query}", Breadth=${options.breadth}, Depth=${options.depth}, Classify=${options.classify}`);
-            // Input remains disabled until research command finishes
-        } catch (promptError) {
-            // --- FIX: Use options.error ---
-            options.error(`Interactive setup failed: ${promptError.message}`);
-            // --- FIX: wsPrompt error handler enables input, so return false ---
-            return false; // Keep input disabled (error handler enables)
-        }
-    } else if (commandName === 'research') {
-        // If not interactive, derive query from positionalArgs
-        options.query = options.positionalArgs.join(' ');
-    }
-    // --- End Interactive Flow ---
-
-    // --- Command Lookup ---
-    // Use the normalized commandName from parseCommandArgs
-    const commandFunction = commands[commandName];
-    // --- End Command Lookup ---
-
-    // --- Check if command exists ---
-    if (!commandFunction) {
-        // Handle unknown command (help is handled by its own entry in the commands map now)
-        commandError(`Unknown command: /${commandName}. Type /help for available commands.`);
-        return false; // commandError handled state
-    }
-    // --- End Check ---
-
-
-    // --- Password Handling (for commands other than login) ---
-    let finalPassword = passwordFromPayload; // Password might come directly in the command payload
-    // Check session cache if not in payload
-    if (!finalPassword && session.password) {
-        console.log(`[WebSocket] Using cached password for session ${session.sessionId}`);
-        finalPassword = session.password;
-    }
-
-    // Determine if the command *requires* a password check server-side
-    // Refined list based on command logic needing keys/admin rights
-    // --- FIX: Added 'upload' to needsPasswordCheckCommands for GitHub token ---
-    // 'upload' command doesn't exist, it's an action within handleInputMessage
-    // --- FIX: Use helper function ---
-    const requiresPasswordCheck = commandRequiresPassword(commandName);
-    // --- End FIX ---
-
-    let needsPasswordPrompt = false;
-    // When does the SERVER need to prompt?
-    // - If the command requires a password check AND
-    // - We don't have a password yet (not in payload, not in cache) AND
-    // - The specific command action necessitates it (refined check)
-    if (requiresPasswordCheck && !finalPassword) {
-        // Check if user is logged in (public users cannot trigger password prompts for these)
-        if (session.role === 'public') {
-            // Allow /chat and /research to proceed without password if public (they will fail later if keys are needed)
-            // But block other sensitive commands.
-            // --- FIX: Public users should not be able to run /chat or /research that require keys ---
-            // The checks within executeChat/executeResearch handle public users now.
-            // Block other sensitive commands for public users here.
-            if (commandName !== 'chat' && commandName !== 'research') {
-                commandError(`You must be logged in to use the /${commandName} command.`);
-                return false; // commandError handles input state
-            }
-        } else {
-            // Refine conditions based on command and args (using options.positionalArgs)
-            const actionArg = options.positionalArgs[0]?.toLowerCase(); // Common pattern for action
-            if (commandName === 'keys' && (actionArg === 'set' || actionArg === 'test')) {
-                needsPasswordPrompt = true;
-            } else if (commandName === 'password-change') {
-                needsPasswordPrompt = true; // Always needs current password
-            } else if (commandName === 'chat') {
-                // Chat needs password if API key isn't already decrypted/available
-                // Check if key exists first, prompt only if needed for retrieval
-                const hasKey = await userManager.hasApiKey('venice', session.username);
-                if (hasKey) needsPasswordPrompt = true; // Prompt if key exists but we don't have password
-            } else if (commandName === 'research') {
-                // ** Always prompt for research if password isn't available, as keys are required **
-                const hasBraveKey = await userManager.hasApiKey('brave', session.username);
-                const hasVeniceKey = await userManager.hasApiKey('venice', session.username);
-                // Prompt if *either* key exists and we don't have a password
-                if (hasBraveKey || hasVeniceKey) {
-                    needsPasswordPrompt = true;
-                    console.log(`[WebSocket] Research needs password prompt: BraveKey=${hasBraveKey}, VeniceKey=${hasVeniceKey}, PasswordAvailable=${!!finalPassword}`);
-                } else {
-                    // If no keys are set at all, research will fail later, but no need to prompt now.
-                    console.log(`[WebSocket] Research command: No API keys found for user ${session.username}. No password prompt needed.`);
-                }
-            } else if (commandName === 'diagnose') {
-                // Diagnose might need keys depending on checks performed
-                needsPasswordPrompt = true; // Assume needs password for key checks
-            } else if (commandName === 'users' && (actionArg === 'create' || actionArg === 'delete')) {
-                // Admin actions might require password confirmation in future, but not just for key decryption
-                // For now, admin role check is primary gate. No password prompt needed here based on current logic.
-            } // If a prompt was initiated by executeResearch, keepDisabled should be true.
-            // Note: 'keys check/stat' and 'users list' don't require password prompt here
-        }
-    }
-
-    // If a prompt is needed server-side
-    if (needsPasswordPrompt) {
-        let passwordPromptText = "Enter password: ";
-        if (commandName === 'keys' || commandName === 'chat' || commandName === 'research' || commandName === 'diagnose') {
-            passwordPromptText = "Enter password to decrypt API keys: ";
-        } else if (commandName === 'password-change') {
-            passwordPromptText = "Enter current password: ";
-        } // Add other specific prompts if needed
-
-        try {
-            console.log(`[WebSocket] Server needs password for command ${commandName}. Prompting client (Session ${session.sessionId})`);
-            enableInputAfter = false; // Keep disabled while prompting and executing command
-            // Use wsPrompt to ask the client and wait for the 'input' message - no context needed here
-            const promptedPassword = await wsPrompt(ws, session, passwordPromptText, PROMPT_TIMEOUT_MS, true, null);
-            // *** Assign the prompted password to finalPassword ***
-            finalPassword = promptedPassword;
-            // Input remains disabled, wsPrompt resolution doesn't re-enable it.
-            console.log(`[WebSocket] Password received via server-side prompt for command ${commandName} (Session ${session.sessionId})`);
-            console.log(`[WebSocket] finalPassword after prompt: ${finalPassword ? '******' : 'null or empty'}`);
-            // --- Cache password in session after successful prompt ---
-            if (finalPassword) {
-                session.password = finalPassword;
-                console.log(`[WebSocket] Cached password in session ${session.sessionId} after prompt.`);
-            } else {
-                // If prompt returned empty/null (e.g., cancelled), throw error
-                throw new Error("Password entry cancelled or failed.");
-            }
-            // --- End Cache ---
-        } catch (promptError) {
-            console.error(`[WebSocket] Password prompt failed or timed out for command ${commandName} (Session ${session.sessionId}): ${promptError.message}`);
-            // wsPrompt's error/timeout handler (wsErrorHelper) should have sent an error and re-enabled input.
-            return false; // Stop processing the command, input state handled by wsPrompt error path.
-        }
-    }
-
-    // Add the final password (if obtained) to options for the command function
-    if (finalPassword) {
-        console.log(`[WebSocket] Adding password to options for command /${commandName}`);
-        options.password = finalPassword;
-    } else if (requiresPasswordCheck && session.role !== 'public') {
-        // If password was required (due to keys existing) but we still don't have one (e.g., prompt failed/cancelled implicitly, or wasn't needed but keys exist)
-        // Let the command function handle the missing password error, but log it here.
-        console.warn(`[WebSocket] Proceeding with command /${commandName} without a password, although it might be required.`);
-    }
+    // Single-user mode: no password prompts; API keys are used directly if available
+    // Remove all password/public-user gating. Commands should self-handle missing keys.
 
     // --- Command Execution ---
     try {
@@ -902,18 +644,12 @@ async function handleCommandMessage(ws, message, session) {
             enableInputAfter = false;
         }
 
-        // Special case: /logout should always enable input after success message
+        // Special case: /logout is a no-op in single-user mode
         if (commandName === 'logout') {
-            session.username = 'public';
-            session.role = 'public';
-            session.password = null; // Clear cached password
-            session.currentUser = null; // Clear cached user data
-            session.currentResearchResult = null; // Clear last research result
-            session.currentResearchFilename = null;
-            console.log(`[WebSocket] Session ${session.sessionId} logged out. User: ${session.username}`);
-            safeSend(ws, { type: 'logout_success', message: 'Logged out successfully.' });
+            console.log(`[WebSocket] /logout called in single-user mode. No state change.`);
+            safeSend(ws, { type: 'logout_success', message: 'Single-user mode: logout is a no-op.' });
             safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
-            enableInputAfter = true; // Ensure input is enabled after logout message
+            enableInputAfter = true; // Ensure input is enabled after message
         }
 
         // Special case: /chat command transitions state
@@ -1023,28 +759,16 @@ async function handleChatMessage(ws, message, session) {
 
     try {
         let veniceApiKey = null;
-        // Attempt to get user-specific API key if user is logged in and password is known
-        if (session.currentUser && session.currentUser.username !== 'public' && session.password) {
-            try {
-                outputManager.debug(`[WebSocket][Chat] Attempting to retrieve Venice API key for user: ${session.currentUser.username}`);
-                veniceApiKey = await userManager.getApiKey({
-                    username: session.currentUser.username,
-                    password: session.password,
-                    service: 'venice'
-                });
-                if (veniceApiKey) {
-                    outputManager.debug(`[WebSocket][Chat] Successfully retrieved Venice API key for user: ${session.currentUser.username}.`);
-                } else {
-                    outputManager.warn(`[WebSocket][Chat] Could not retrieve user-specific Venice API key for ${session.currentUser.username}. It might not be set.`);
-                }
-            } catch (keyError) {
-                outputManager.error(`[WebSocket][Chat] Error retrieving Venice API key for ${session.currentUser.username}: ${keyError.message}. Chat will use fallback.`);
-                if (keyError.message.toLowerCase().includes('password is incorrect')) {
-                    wsErrorHelper(ws, `Chat Error: Password for API key decryption was incorrect. Chat may be degraded.`, true);
-                }
+        try {
+            outputManager.debug(`[WebSocket][Chat] Attempting to retrieve Venice API key (single-user mode)`);
+            veniceApiKey = await userManager.getApiKey({ service: 'venice' });
+            if (veniceApiKey) {
+                outputManager.debug(`[WebSocket][Chat] Successfully retrieved Venice API key.`);
+            } else {
+                outputManager.warn(`[WebSocket][Chat] Venice API key not set. Using default or will fail if none.`);
             }
-        } else if (session.currentUser && session.currentUser.username !== 'public' && !session.password) {
-            outputManager.warn(`[WebSocket][Chat] Session password not available for ${session.currentUser.username}. Cannot retrieve user-specific Venice API key. Chat will use fallback.`);
+        } catch (keyError) {
+            outputManager.error(`[WebSocket][Chat] Error retrieving Venice API key: ${keyError.message}. Chat will use fallback.`);
         }
 
         const llmConfig = {};
@@ -1151,40 +875,19 @@ async function handleInputMessage(ws, message, session) {
                     break;
 
                 case 'upload':
-                    if (!session.currentUser || session.currentUser.role === 'public') {
-                        throw new Error("Login required to upload results.");
-                    }
-                    // Check if password is required (if token exists but password not cached)
-                    const needsUploadPassword = await userManager.hasGitHubConfig(session.username) && !userPassword;
-                    if (needsUploadPassword) {
-                        wsOutputHelper(ws, "Password needed for GitHub token.");
-                        enableInputAfter = false; // Keep disabled for nested prompt
-                        try {
-                            // Prompt for password - use context 'github_token_password'
-                            userPassword = await wsPrompt(ws, session, "Enter password to decrypt GitHub token: ", PROMPT_TIMEOUT_MS, true, 'github_token_password');
-                            if (!userPassword) throw new Error("Password required for upload.");
-                            session.password = userPassword; // Cache password on success
-                            // Input remains disabled, continue with upload logic below
-                        } catch (promptError) {
-                            wsErrorHelper(ws, `Password prompt failed: ${promptError.message}`, true);
-                            session.currentResearchResult = null;
-                            session.currentResearchFilename = null;
-                            return false;
-                        }
-                    }
                     wsOutputHelper(ws, "Attempting to upload to GitHub...");
                     enableInputAfter = false;
-                    const githubConfig = await userManager.getDecryptedGitHubConfig(session.username, userPassword);
+                    const githubConfig = await userManager.getDecryptedGitHubConfig();
                     if (!githubConfig || !githubConfig.owner || !githubConfig.repo) {
                         let errorDetail = "Unknown reason";
-                        if (!githubConfig) errorDetail = "Config object is null/undefined (check user data or password)";
+                        if (!githubConfig) errorDetail = "Config object is null/undefined (configure owner/repo)";
                         else if (!githubConfig.owner) errorDetail = "GitHub owner not configured";
                         else if (!githubConfig.repo) errorDetail = "GitHub repo not configured";
                         console.error(`[WebSocket] GitHub Upload Check Failed: ${errorDetail}`);
                         throw new Error(`GitHub owner/repo not configured. Use /keys set github... (${errorDetail})`);
                     }
                     if (!githubConfig.token) {
-                        console.warn(`[WebSocket] GitHub token is missing in the retrieved config for user ${session.username}. Upload will likely fail.`);
+                        console.warn(`[WebSocket] GitHub token is missing. Upload will likely fail.`);
                     }
                     const repoPath = suggestedFilename;
                     const commitMessage = `Research results for query: ${session.currentResearchQuery || 'Unknown Query'}`;
@@ -1229,11 +932,9 @@ async function handleInputMessage(ws, message, session) {
             }
         }
     } else if (context === 'github_token_password') {
-        // This context is handled within the 'upload' case above.
-        // Resolve the nested prompt. The upload logic continues.
-        console.log(`[WebSocket] Resolving nested GitHub password prompt.`);
+        // Single-user mode: no nested GitHub password prompts
         resolve(inputValue);
-        enableInputAfter = false; // Keep disabled, upload logic continues
+        enableInputAfter = true;
     } else {
         // --- FIX: Resolve the promise for prompts without specific context ---
         // This handles the input for interactive research query, breadth, depth, classify,

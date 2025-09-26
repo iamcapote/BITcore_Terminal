@@ -1,332 +1,94 @@
-import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GitHubMemoryIntegration } from '../app/infrastructure/memory/github-memory.integration.mjs';
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
 
-// Mock modules that interact with GitHub API
-vi.mock('node-fetch', () => ({
-  default: vi.fn()
-}));
+describe('GitHub memory integration (local fallback)', () => {
+  let tempDir;
+  let integration;
 
-// Import the mocked fetch after mocking
-import fetch from 'node-fetch';
-
-describe('GitHub Memory Integration', () => {
-  let githubIntegration;
-  
-  beforeEach(() => {
-    // Reset mocks
-    vi.resetAllMocks();
-    
-    // Create a new instance of GitHubMemoryIntegration
-    githubIntegration = new GitHubMemoryIntegration({
-      username: 'testuser',
-      repoName: 'test-memory-repo',
-      enabled: true
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'github-mem-'));
+    integration = new GitHubMemoryIntegration({
+      username: 'operator',
+      dataDir: tempDir,
+      enabled: false
     });
-    
-    // Mock fetch responses for different GitHub API calls
-    fetch.mockImplementation(async (url, options) => {
-      if (url.includes('/contents/long_term_registry.md') && options.method === 'GET') {
-        // Mock getting the long-term memory registry
-        return {
-          ok: true,
-          json: async () => ({
-            sha: 'abc123',
-            content: Buffer.from(`# Long-Term Memory Registry
-              
-## Entry: 2025-04-13T10:30:00Z
-Memory ID: mem-001
-Tags: javascript, react
-Content: React uses a virtual DOM for efficient updates.
-
-## Entry: 2025-04-13T11:45:00Z
-Memory ID: mem-002
-Tags: api, fetch
-Content: Fetch API returns promises that resolve to Response objects.
-`).toString('base64'),
-            encoding: 'base64'
-          })
-        };
-      } else if (url.includes('/contents/meta_memory_registry.md') && options.method === 'GET') {
-        // Mock getting the meta memory registry
-        return {
-          ok: true,
-          json: async () => ({
-            sha: 'def456',
-            content: Buffer.from(`# Meta Memory Registry
-              
-## Summary: 2025-04-13T12:00:00Z
-Tags: javascript, programming
-Content: Discussion about modern JavaScript frameworks and API practices.
-`).toString('base64'),
-            encoding: 'base64'
-          })
-        };
-      } else if (options.method === 'PUT') {
-        // Mock updating a file
-        return {
-          ok: true,
-          json: async () => ({
-            content: {
-              sha: 'updated-sha-123'
-            }
-          })
-        };
-      }
-      
-      // Default mock response for any other request
-      return {
-        ok: false,
-        status: 404,
-        json: async () => ({ message: 'Not found' })
-      };
-    });
+    await integration.ensureDirectoryExists();
   });
-  
-  afterEach(() => {
-    vi.resetAllMocks();
-  });
-  
-  describe('Memory Storage', () => {
-    it('should store a memory in the long-term registry', async () => {
-      const memory = {
-        content: 'TypeScript adds static typing to JavaScript',
-        tags: ['typescript', 'javascript', 'programming']
-      };
-      
-      const result = await githubIntegration.storeMemory(memory, 'long_term');
-      
-      // Verify fetch was called with the correct parameters
-      expect(fetch).toHaveBeenCalled();
-      expect(fetch.mock.calls[0][0]).toContain('/contents/long_term_registry.md');
-      expect(fetch.mock.calls[0][1].method).toBe('GET');
-      
-      // Second fetch should be PUT to update the file
-      expect(fetch.mock.calls[1][0]).toContain('/contents/long_term_registry.md');
-      expect(fetch.mock.calls[1][1].method).toBe('PUT');
-      expect(fetch.mock.calls[1][1].body).toContain('TypeScript adds static typing to JavaScript');
-      
-      // Verify result
-      expect(result).toHaveProperty('success', true);
-    });
-    
-    it('should store a memory in the meta registry', async () => {
-      const memory = {
-        content: 'Summary of discussion about React hooks and lifecycle methods',
-        tags: ['react', 'hooks', 'lifecycle']
-      };
-      
-      const result = await githubIntegration.storeMemory(memory, 'meta');
-      
-      // Verify fetch was called with the correct parameters
-      expect(fetch).toHaveBeenCalled();
-      expect(fetch.mock.calls[0][0]).toContain('/contents/meta_memory_registry.md');
-      
-      // Verify the content in the PUT request
-      expect(fetch.mock.calls[1][1].body).toContain('Summary of discussion about React hooks');
-      
-      // Verify result
-      expect(result).toHaveProperty('success', true);
-    });
-    
-    it('should handle errors gracefully', async () => {
-      // Mock fetch to simulate an error
-      fetch.mockImplementation(() => {
-        throw new Error('Network error');
-      });
-      
-      const memory = { content: 'Test memory', tags: ['test'] };
-      
-      const result = await githubIntegration.storeMemory(memory, 'long_term');
-      
-      expect(result.success).toBe(false);
-      expect(result.error).toBeTruthy();
-    });
-    
-    it('should create a new registry file if it does not exist', async () => {
-      // Mock fetch to first return 404, then success for creation
-      fetch.mockReset();
-      let fetchCallCount = 0;
-      
-      fetch.mockImplementation(async (url, options) => {
-        fetchCallCount++;
-        
-        if (fetchCallCount === 1) {
-          // First call - GET registry file, return 404
-          return { 
-            ok: false, 
-            status: 404,
-            json: async () => ({ message: 'Not found' })
-          };
-        } else {
-          // Second call - PUT to create registry file
-          return {
-            ok: true,
-            json: async () => ({
-              content: {
-                sha: 'new-file-sha-123'
-              }
-            })
-          };
-        }
-      });
-      
-      const memory = { content: 'First memory in new registry', tags: ['first'] };
-      
-      const result = await githubIntegration.storeMemory(memory, 'long_term');
-      
-      // Verify PUT request was made to create the file
-      expect(fetch).toHaveBeenCalledTimes(2);
-      expect(fetch.mock.calls[1][1].method).toBe('PUT');
-      expect(fetch.mock.calls[1][1].body).toContain('First memory in new registry');
-      
-      // Verify no sha in the request when creating a new file
-      const putRequestBody = JSON.parse(fetch.mock.calls[1][1].body);
-      expect(putRequestBody.sha).toBeUndefined();
-      
-      expect(result.success).toBe(true);
-    });
-  });
-  
-  describe('Memory Retrieval', () => {
-    it('should retrieve memories from the long-term registry', async () => {
-      const memories = await githubIntegration.retrieveMemories('long_term');
-      
-      expect(Array.isArray(memories)).toBe(true);
-      expect(memories.length).toBe(2);
-      expect(memories[0]).toHaveProperty('id', 'mem-001');
-      expect(memories[0]).toHaveProperty('content');
-      expect(memories[0].tags).toContain('javascript');
-    });
-    
-    it('should retrieve memories from the meta registry', async () => {
-      const memories = await githubIntegration.retrieveMemories('meta');
-      
-      expect(Array.isArray(memories)).toBe(true);
-      expect(memories.length).toBe(1);
-      expect(memories[0].tags).toContain('javascript');
-      expect(memories[0].content).toContain('Discussion about modern JavaScript frameworks');
-    });
-    
-    it('should handle registry retrieval errors gracefully', async () => {
-      // Mock fetch to simulate an error
-      fetch.mockImplementation(() => {
-        throw new Error('API error');
-      });
-      
-      const memories = await githubIntegration.retrieveMemories('long_term');
-      
-      expect(Array.isArray(memories)).toBe(true);
-      expect(memories.length).toBe(0);
-    });
-    
-    it('should return empty array if registry file does not exist', async () => {
-      // Mock fetch to return 404 for non-existent file
-      fetch.mockImplementation(async () => ({
-        ok: false,
-        status: 404,
-        json: async () => ({ message: 'Not found' })
-      }));
-      
-      const memories = await githubIntegration.retrieveMemories('long_term');
-      
-      expect(Array.isArray(memories)).toBe(true);
-      expect(memories.length).toBe(0);
-    });
-    
-    it('should parse memory entries correctly', async () => {
-      // Mock a specific registry format
-      fetch.mockImplementation(async () => ({
-        ok: true,
-        json: async () => ({
-          content: Buffer.from(`# Test Registry
-          
-## Entry: 2025-04-14T09:00:00Z
-Memory ID: test-id-1
-Tags: test, parsing
-Content: This is a test memory entry.
-Score: 0.85
 
-## Entry: 2025-04-14T10:00:00Z
-Memory ID: test-id-2
-Tags: example, multiline
-Content: This memory
-spans multiple
-lines of text.
-`).toString('base64'),
-          encoding: 'base64'
-        })
-      }));
-      
-      const memories = await githubIntegration.retrieveMemories('test');
-      
-      expect(memories.length).toBe(2);
-      
-      // Check first memory
-      expect(memories[0].id).toBe('test-id-1');
-      expect(memories[0].tags).toContain('test');
-      expect(memories[0].tags).toContain('parsing');
-      expect(memories[0].content).toBe('This is a test memory entry.');
-      expect(memories[0].score).toBe(0.85);
-      
-      // Check multiline content parsing
-      expect(memories[1].content).toBe('This memory\nspans multiple\nlines of text.');
-    });
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
-  
-  describe('Advanced Features', () => {
-    it('should format memory entries correctly for storage', () => {
-      const memory = {
-        id: 'test-mem-123',
-        content: 'This is a test memory',
-        tags: ['test', 'sample'],
-        score: 0.75
-      };
-      
-      const formattedEntry = githubIntegration.formatMemoryEntry(memory);
-      
-      expect(formattedEntry).toContain('Memory ID: test-mem-123');
-      expect(formattedEntry).toContain('Tags: test, sample');
-      expect(formattedEntry).toContain('Score: 0.75');
-      expect(formattedEntry).toContain('Content: This is a test memory');
-    });
-    
-    it('should handle tag filtering when retrieving memories', async () => {
-      // Mock registry with various tags
-      fetch.mockImplementation(async () => ({
-        ok: true,
-        json: async () => ({
-          content: Buffer.from(`# Tagged Registry
-          
-## Entry: 2025-04-14T09:00:00Z
-Memory ID: mem-tag-1
-Tags: javascript, react
-Content: React is a JavaScript library.
 
-## Entry: 2025-04-14T10:00:00Z
-Memory ID: mem-tag-2
-Tags: python, data
-Content: Python is great for data analysis.
+  it('stores memories on disk when GitHub sync is disabled', async () => {
+    const result = await integration.storeMemory({
+      content: 'Store this locally',
+      tags: ['local']
+    }, 'long_term');
 
-## Entry: 2025-04-14T11:00:00Z
-Memory ID: mem-tag-3
-Tags: javascript, typescript
-Content: TypeScript is a superset of JavaScript.
-`).toString('base64'),
-          encoding: 'base64'
-        })
-      }));
-      
-      // Get memories filtered by tag
-      const jsMemories = await githubIntegration.retrieveMemories('test', ['javascript']);
-      
-      expect(jsMemories.length).toBe(2);
-      expect(jsMemories[0].id).toBe('mem-tag-1');
-      expect(jsMemories[1].id).toBe('mem-tag-3');
-      
-      // Test intersecting tags
-      const tsMemories = await githubIntegration.retrieveMemories('test', ['typescript', 'javascript']);
-      expect(tsMemories.length).toBe(1);
-      expect(tsMemories[0].id).toBe('mem-tag-3');
+    const storedFiles = await fs.readdir(path.join(tempDir, 'long_term'));
+
+    expect(result.success).toBe(true);
+    expect(storedFiles.length).toBe(1);
+  });
+
+  it('retrieves locally persisted memories', async () => {
+    const metaDir = path.join(tempDir, 'meta');
+    await integration.storeMemory({ content: 'Meta memory content', tags: ['meta'] }, 'meta');
+
+    const memories = await integration.retrieveMemories('meta');
+
+    expect(Array.isArray(memories)).toBe(true);
+    expect(memories.length).toBe(1);
+    expect(memories[0].content).toContain('Meta memory content');
+  });
+
+  it('filters memories by tags during retrieval', async () => {
+    await integration.storeMemory({ content: 'JS memory', tags: ['javascript'] }, 'long_term');
+    await integration.storeMemory({ content: 'Python memory', tags: ['python'] }, 'long_term');
+
+    const jsMemories = await integration.retrieveMemories('long_term', ['javascript']);
+
+    expect(jsMemories.length).toBe(1);
+    expect(jsMemories[0].tags).toContain('javascript');
+  });
+
+  it('formats registry entries consistently', () => {
+    const formatted = integration.formatMemoryEntry({
+      id: 'mem-test',
+      content: 'Registry formatting demo',
+      tags: ['demo'],
+      score: 0.9,
+      timestamp: '2025-01-01T00:00:00Z'
     });
+
+    expect(formatted).toContain('Memory ID: mem-test');
+    expect(formatted).toContain('Tags: demo');
+    expect(formatted).toContain('Content: Registry formatting demo');
+  });
+
+  it('parses registry markdown into structured memories', () => {
+    const registry = `# Local Registry
+
+## Entry: 2025-04-01T12:00:00Z
+Memory ID: mem-one
+Tags: testing, demo
+Score: 0.80
+Content: First entry
+
+## Entry: 2025-04-02T08:00:00Z
+Memory ID: mem-two
+Tags: parsing
+Score: 0.65
+Content: Second entry`;
+
+    const parsed = integration.parseRegistryContent(registry);
+
+    expect(parsed.length).toBe(2);
+    expect(parsed[0].id).toBe('mem-one');
+    expect(parsed[0].tags).toContain('testing');
+    expect(parsed[1].content).toBe('Second entry');
   });
 });

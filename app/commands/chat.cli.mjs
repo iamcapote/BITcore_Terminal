@@ -50,11 +50,19 @@ export async function executeChat(options = {}) {
         isWebSocket
     } = options;
 
+    const sessionRef = session ?? {};
+    if (!session) {
+        options.session = sessionRef;
+    }
+
+    const outputFn = typeof output === 'function' ? output : outputManagerInstance.log;
+    const errorFn = typeof error === 'function' ? error : outputManagerInstance.error;
+
     try {
-        session.isChatActive = true;
-        session.chatHistory = [];
-        session.sessionModel = model;
-        session.sessionCharacter = character;
+        sessionRef.isChatActive = true;
+        sessionRef.chatHistory = [];
+        sessionRef.sessionModel = model;
+        sessionRef.sessionCharacter = character;
         
         // Send chat-ready event for WebSocket clients
         if (isWebSocket && webSocketClient) {
@@ -67,15 +75,15 @@ export async function executeChat(options = {}) {
             try {
                 webSocketClient.send(JSON.stringify(chatReadyMessage));
             } catch (err) {
-                error(`Failed to send chat-ready message: ${err.message}`);
+                errorFn(`Failed to send chat-ready message: ${err.message}`);
             }
         }
 
-        output('Chat session ready. Type /exit to leave.');
-        return { success: true, keepDisabled: false };
+        outputFn('Chat session ready. Type /exit to leave.');
+        return { success: true, keepDisabled: false, session: sessionRef };
     } catch (err) {
-        error(`Failed to start chat: ${err.message}`);
-        return { success: false, keepDisabled: false };
+        errorFn(`Failed to start chat: ${err.message}`);
+        return { success: false, keepDisabled: false, session: sessionRef };
     }
 }
 
@@ -402,32 +410,102 @@ export async function exitMemory(options = {}) {
  * Renamed from original generateResearchQueries to avoid conflict with the export below.
  * ... JSDoc ...
  */
-async function generateResearchQueriesFromContext(chatHistory, memoryBlocks = [], numQueries = 3, veniceApiKey, metadata = null, outputFn = console.log, errorFn = console.error) {
-    if (!veniceApiKey) throw new Error("Venice API key not available for query generation.");
-    if (!chatHistory || chatHistory.length === 0) {
-        errorFn("Chat history is empty, cannot generate queries.");
-        return [];
+function buildFallbackQueries(contextString, numQueries) {
+    const lines = contextString.split('\n').map(line => line.trim()).filter(Boolean);
+    const firstUserLine = lines.find(line => line.toLowerCase().startsWith('user:')) || lines.find(Boolean);
+    let topic = firstUserLine ? firstUserLine.replace(/^user:\s*/i, '') : 'the topic';
+    if (topic.length > 80) {
+        topic = `${topic.slice(0, 80)}...`;
     }
 
-    // Combine history into a single string for context
-    const contextString = chatHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n---\n');
+    const baseQueries = [
+        { original: `What is ${topic}?`, metadata: { goal: `Understand the fundamentals of ${topic}` } },
+        { original: `How does ${topic} work?`, metadata: { goal: `Explore how ${topic} functions` } },
+        { original: `Why is ${topic} important?`, metadata: { goal: `Assess the significance of ${topic}` } }
+    ];
+
+    while (baseQueries.length < numQueries) {
+        baseQueries.push({
+            original: `Which key challenges exist with ${topic}?`,
+            metadata: { goal: `Identify challenges for ${topic}` }
+        });
+    }
+
+    return baseQueries.slice(0, numQueries);
+}
+
+async function generateResearchQueriesFromContext(chatHistory, memoryBlocks = [], numQueries = 3, veniceApiKey = null, metadata = null, outputFn = outputManagerInstance.log, errorFn = outputManagerInstance.error) {
+    const effectiveOutput = typeof outputFn === 'function' ? outputFn : outputManagerInstance.log;
+    const effectiveError = typeof errorFn === 'function' ? errorFn : outputManagerInstance.error;
+
+    if (!Array.isArray(chatHistory) || chatHistory.length === 0) {
+        throw new Error('Chat history too short to generate research queries.');
+    }
+
+    let effectiveKey = veniceApiKey;
+    if (!effectiveKey) {
+        try {
+            effectiveKey = await userManager.getApiKey('venice');
+        } catch (err) {
+            effectiveError(`[generateResearchQueriesFromContext] Unable to read stored Venice key: ${err.message}`);
+        }
+    }
+    if (!effectiveKey && process.env.VENICE_API_KEY) {
+        effectiveKey = process.env.VENICE_API_KEY;
+    }
+
+    const memoryContext = Array.isArray(memoryBlocks) && memoryBlocks.length > 0
+        ? '\n---\nMemories:\n' + memoryBlocks.map(block => `memory: ${block.content || block}`).join('\n')
+        : '';
+
+    const contextString = chatHistory.map(msg => `${msg.role}: ${msg.content}`).join('\n---\n') + memoryContext;
 
     try {
-        outputFn("Generating focused research queries from chat history...");
-        // Use the imported generateQueries function from research.providers.mjs
+        if (effectiveKey) {
+            effectiveOutput('Generating focused research queries from chat history...');
+        } else {
+            effectiveOutput('[generateResearchQueriesFromContext] No Venice API key available; using deterministic fallback queries.');
+        }
+
         const generatedQueries = await generateResearchQueriesLLM({
-            apiKey: veniceApiKey,
-            query: contextString, // Use the history string as the base "query" for context
-            numQueries: numQueries,
-            learnings: [], // No prior learnings when starting from history
-            metadata: metadata // Pass classification metadata
+            apiKey: effectiveKey,
+            query: contextString,
+            numQueries,
+            learnings: [],
+            metadata
         });
-        outputFn(`Generated ${generatedQueries.length} queries.`);
-        return generatedQueries; // Returns array of { original: string, metadata?: any }
+
+        if (Array.isArray(generatedQueries) && generatedQueries.length > 0) {
+            effectiveOutput(`Generated ${generatedQueries.length} queries.`);
+            return generatedQueries;
+        }
+
+        effectiveError('[generateResearchQueriesFromContext] LLM returned no queries. Falling back to heuristic queries.');
+        return buildFallbackQueries(contextString, numQueries);
     } catch (error) {
-        errorFn(`Error generating research queries from context: ${error.message}`);
-        return []; // Return empty array on failure
+        effectiveError(`Error generating research queries from context: ${error.message}`);
+        return buildFallbackQueries(contextString, numQueries);
     }
+}
+
+export async function generateResearchQueries(chatHistory = [], memoryBlocks = [], options = {}) {
+    const {
+        numQueries = 3,
+        metadata = null,
+        veniceApiKey = null,
+        output = outputManagerInstance.log,
+        error = outputManagerInstance.error
+    } = options;
+
+    return generateResearchQueriesFromContext(
+        chatHistory,
+        memoryBlocks,
+        numQueries,
+        veniceApiKey,
+        metadata,
+        output,
+        error
+    );
 }
 
 /**
@@ -441,105 +519,132 @@ async function generateResearchQueriesFromContext(chatHistory, memoryBlocks = []
  * @param {Function} errorFn - Function to handle errors (e.g., console.error or WebSocket send)
  * @returns {Promise<Object>} Research result object
  */
-export async function startResearchFromChat(options = {}) { // Removed chatHistory, memoryBlocks as direct args
+export async function startResearchFromChat(...args) {
+  let options;
+  if (Array.isArray(args[0])) {
+    const [chatHistory, memoryBlocks = [], legacyOptions = {}] = args;
+    options = { chatHistory, memoryBlocks, ...legacyOptions };
+  } else {
+    options = args[0] || {};
+  }
+
+  const {
+    chatHistory = [],
+    memoryBlocks = [],
+    depth = 2,
+    breadth = 3,
+    verbose = false,
+    classificationMetadata = null,
+    overrideQueries,
+    output: outputFn,
+    error: errorFn,
+    progressHandler,
+    isWebSocket = false,
+    webSocketClient = null,
+    user: providedUser
+  } = options;
+
+  const effectiveOutput = typeof outputFn === 'function' ? outputFn : outputManagerInstance.log;
+  const effectiveError = typeof errorFn === 'function' ? errorFn : outputManagerInstance.error;
+
   try {
-    const {
-        // query: researchQuery, // Original query (long history) - No longer the primary input for engine.research
-        depth = 2,
-        breadth = 3,
-        verbose = false,
-        password, // Password needed for keys
-        // username, // Username needed for keys - Get from currentUser
-        currentUser, // Pass currentUser object
+    const hasPrebuiltQueries = Array.isArray(overrideQueries) && overrideQueries.length > 0;
+    if (!hasPrebuiltQueries && (!Array.isArray(chatHistory) || chatHistory.length === 0)) {
+        throw new Error('Chat history is required to start research.');
+    }
+
+    let queries = overrideQueries;
+    if (!Array.isArray(queries) || queries.length === 0) {
+        queries = await generateResearchQueries(chatHistory, memoryBlocks, {
+            numQueries: Math.max(3, breadth),
+            metadata: classificationMetadata,
+            output: effectiveOutput,
+            error: effectiveError
+        });
+    }
+
+    if (!Array.isArray(queries) || queries.length === 0) {
+        throw new Error('Research requires generated queries (overrideQueries).');
+    }
+
+    const representativeQuery = queries[0]?.original || 'Research from chat history';
+
+    let userInfo = providedUser;
+    if (!userInfo) {
+        try {
+            userInfo = await userManager.getUserData();
+        } catch (err) {
+            effectiveOutput(`[startResearchFromChat] Unable to read stored user profile: ${err.message}. Using defaults.`);
+            userInfo = null;
+        }
+    }
+    userInfo = userInfo || userManager.getCurrentUser();
+
+    let braveKey = null;
+    let veniceKey = null;
+    try {
+        braveKey = await userManager.getApiKey('brave');
+    } catch (err) {
+        effectiveOutput(`[startResearchFromChat] Unable to read stored Brave key: ${err.message}`);
+    }
+    try {
+        veniceKey = await userManager.getApiKey('venice');
+    } catch (err) {
+        effectiveOutput(`[startResearchFromChat] Unable to read stored Venice key: ${err.message}`);
+    }
+
+    if (!braveKey && process.env.BRAVE_API_KEY) {
+        braveKey = process.env.BRAVE_API_KEY;
+    }
+    if (!veniceKey && process.env.VENICE_API_KEY) {
+        veniceKey = process.env.VENICE_API_KEY;
+    }
+
+    effectiveOutput('Initializing research engine...');
+    const engine = new ResearchEngine({
+        braveApiKey: braveKey,
+        veniceApiKey: veniceKey,
+        verbose,
+        user: {
+            username: userInfo?.username || 'operator',
+            role: userInfo?.role || 'admin'
+        },
+        outputHandler: effectiveOutput,
+        errorHandler: effectiveError,
+        debugHandler: (msg) => {
+            if (verbose) {
+                effectiveOutput(`[DEBUG] ${msg}`);
+            }
+        },
+        progressHandler,
         isWebSocket,
         webSocketClient,
-        classificationMetadata, // Added classification metadata
-        overrideQueries, // --- NEW: Expect pre-generated queries ---
-        output: outputFn, // Get output/error from options
-        error: errorFn,
-        progressHandler // Get progress handler from options
-    } = options;
-
-    // --- FIX: Validate overrideQueries instead of researchQuery ---
-    if (!Array.isArray(overrideQueries) || overrideQueries.length === 0) {
-      throw new Error("Research requires generated queries (overrideQueries).");
-    }
-
-    if (!password) {
-        throw new Error("Password is required to retrieve API keys for research.");
-    }
-
-    if (!currentUser || !currentUser.username) { // Use currentUser
-        throw new Error("Username is required to retrieve API keys for research.");
-    }
-    const username = currentUser.username; // Get username from currentUser
-
-    // --- Get API Keys ---
-    let braveKey, veniceKey;
-    try {
-        braveKey = await userManager.getApiKey({ username, password, service: 'brave' }); // Use options object
-        veniceKey = await userManager.getApiKey({ username, password, service: 'venice' }); // Use options object
-        if (!braveKey || !veniceKey) {
-            throw new Error("Failed to retrieve one or both required API keys (Brave, Venice).");
-        }
-    } catch (keyError) {
-        throw new Error(`API key retrieval failed: ${keyError.message}`);
-    }
-
-    // --- Prepare Context for Research Engine ---
-    // Use the first generated query as the representative topic for logging/summary context
-    const representativeQuery = overrideQueries[0]?.original || "Research from chat history";
-    const contextSummary = `Research initiated from chat context. Main focus derived from: "${representativeQuery}"`;
-
-    // User info for the engine
-    const userInfo = { username: username, role: currentUser?.role || 'client' }; // Get role from currentUser
-
-    outputFn('Initializing research engine...'); // Use provided outputFn
-
-    // --- FIX: Pass overrideQueries to the engine config ---
-    const engine = new ResearchEngine({
-      braveApiKey: braveKey, // Pass decrypted key
-      veniceApiKey: veniceKey, // Pass decrypted key
-      verbose: verbose,
-      user: userInfo,
-      outputHandler: outputFn, // Pass provided output function
-      errorHandler: errorFn,   // Pass provided error function
-      debugHandler: (msg) => { if (verbose) outputFn(`[DEBUG] ${msg}`); }, // Simple debug handler
-      progressHandler: progressHandler, // Pass progress handler from options
-      isWebSocket: isWebSocket,
-      webSocketClient: webSocketClient,
-      overrideQueries: overrideQueries // Pass the generated queries here
+        overrideQueries: queries
     });
 
-    outputFn(`Starting research based on ${overrideQueries.length} generated queries (derived from chat history).`);
+    effectiveOutput(`Starting research based on ${queries.length} generated queries (derived from chat history).`);
 
-    // --- FIX: Call engine.research with a placeholder query object ---
-    // The actual queries used will be the overrideQueries.
-    // We still need a query object for summary generation context etc.
     const placeholderQueryObj = {
-        original: representativeQuery, // Use representative query
-        metadata: classificationMetadata // Pass metadata for summary generation
+        original: representativeQuery,
+        metadata: classificationMetadata
     };
 
     const results = await engine.research({
-        query: placeholderQueryObj, // Pass placeholder object
-        depth: depth, // Depth might be applied differently with overrideQueries, check engine logic
-        breadth: breadth // Breadth might be applied differently with overrideQueries, check engine logic
+        query: placeholderQueryObj,
+        depth,
+        breadth
     });
 
     return {
-      success: true,
-      topic: representativeQuery, // Use representative query as topic
-      results
+        success: true,
+        topic: representativeQuery,
+        results
     };
-
   } catch (error) {
-    // Use errorFn if available, otherwise console.error
-    const effectiveError = typeof options.error === 'function' ? options.error : console.error;
-    effectiveError(`Error during research from chat: ${error.message}`); // Use the caught error object
+    effectiveError(`Error during research from chat: ${error.message}`);
     return {
-      success: false,
-      error: error.message
+        success: false,
+        error: error.message
     };
   }
 }

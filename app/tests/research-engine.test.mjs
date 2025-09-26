@@ -1,210 +1,140 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
 import { ResearchPath } from '../infrastructure/research/research.path.mjs';
 import { output } from '../utils/research.output-manager.mjs';
 import { LLMClient } from '../infrastructure/ai/venice.llm-client.mjs';
-import { generateQueries, generateSummary } from '../features/ai/research.providers.mjs';
-import fs from 'fs/promises';
+import { generateSummary, generateQueries } from '../features/ai/research.providers.mjs';
 
-// Mock dependencies
-vi.mock('../infrastructure/research/research.path.mjs');
-vi.mock('../utils/research.output-manager.mjs');
-vi.mock('../infrastructure/ai/venice.llm-client.mjs');
-vi.mock('../features/ai/research.providers.mjs');
-vi.mock('fs/promises');
+vi.mock('fs/promises', () => ({
+  writeFile: vi.fn(),
+  readFile: vi.fn()
+}));
+
 vi.mock('../utils/research.ensure-dir.mjs', () => ({
   ensureDir: vi.fn().mockResolvedValue(true)
 }));
 
+vi.mock('../utils/research.output-manager.mjs', () => ({
+  output: {
+    log: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    commandStart: vi.fn(),
+    commandSuccess: vi.fn(),
+    commandError: vi.fn()
+  }
+}));
+
+vi.mock('../infrastructure/ai/venice.llm-client.mjs', () => ({
+  LLMClient: vi.fn().mockImplementation(() => ({
+    config: { model: 'mock-model' },
+    complete: vi.fn(),
+    completeChat: vi.fn()
+  }))
+}));
+
+vi.mock('../features/ai/research.providers.mjs', () => ({
+  generateQueries: vi.fn(),
+  generateSummary: vi.fn(),
+  generateQueriesLLM: vi.fn().mockResolvedValue([{ original: 'llm query', metadata: null }]),
+  generateSummaryLLM: vi.fn().mockResolvedValue('Generated summary'),
+  processResults: vi.fn()
+}));
+
+vi.mock('../infrastructure/research/research.path.mjs', () => ({
+  ResearchPath: vi.fn()
+}));
+
+const buildMockPath = (overrides = {}) => ({
+  research: vi.fn().mockResolvedValue({
+    learnings: ['Learning 1'],
+    sources: ['Source 1'],
+    followUpQueries: []
+  }),
+  updateProgress: vi.fn(),
+  ...overrides
+});
+
 describe('ResearchEngine', () => {
+  let pathInstance;
+
   beforeEach(() => {
-    // Reset mocks
-    vi.resetAllMocks();
-    
-    // Mock output
-    output.log = vi.fn();
-    
-    // Mock ResearchPath
-    ResearchPath.prototype.research = vi.fn().mockResolvedValue({
-      learnings: ['Learning 1', 'Learning 2'],
-      sources: ['Source 1', 'Source 2']
-    });
-    
-    // Mock generateSummary
+    vi.clearAllMocks();
+    pathInstance = buildMockPath();
+    ResearchPath.mockImplementation(() => pathInstance);
     generateSummary.mockResolvedValue('Test summary');
-    
-    // Mock fs
-    fs.writeFile = vi.fn().mockResolvedValue();
+    generateQueries.mockResolvedValue([{ original: 'fallback query', metadata: null }]);
   });
-  
-  afterEach(() => {
-    vi.resetAllMocks();
-  });
-  
-  it('should research with standard query generation', async () => {
+
+  it('runs standard research flow when no override queries provided', async () => {
     const engine = new ResearchEngine({
-      query: 'test query',
-      depth: 2,
-      breadth: 3
+      braveApiKey: 'brave',
+      veniceApiKey: 'venice',
+      query: { original: 'test query' }
     });
-    
-    const result = await engine.research();
-    
-    expect(ResearchPath).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: 'test query',
-        depth: 2,
-        breadth: 3
-      }),
-      expect.any(Object)
-    );
-    
-    expect(result.learnings).toEqual(['Learning 1', 'Learning 2']);
-    expect(result.sources).toEqual(['Source 1', 'Source 2']);
-    expect(result.filename).toBeTruthy();
+
+    const result = await engine.research({
+      query: { original: 'test query' },
+      depth: 2,
+      breadth: 2
+    });
+
+    expect(ResearchPath).toHaveBeenCalledTimes(1);
+    expect(pathInstance.research).toHaveBeenCalledWith(expect.objectContaining({
+      query: expect.objectContaining({ original: 'test query' }),
+      depth: 2,
+      breadth: 2
+    }));
+    expect(result.summary).toBe('Test summary');
   });
-  
-  it('should research with metadata-enhanced query', async () => {
-    const engine = new ResearchEngine({
-      query: {
-        original: 'test query',
-        metadata: 'Additional metadata context'
-      },
-      depth: 2,
-      breadth: 3
-    });
-    
-    const result = await engine.research();
-    
-    expect(ResearchPath).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: {
-          original: 'test query',
-          metadata: 'Additional metadata context'
-        }
-      }),
-      expect.any(Object)
-    );
-    
-    expect(generateSummary).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: 'test query',
-        metadata: 'Additional metadata context'
-      })
-    );
-  });
-  
-  it('should use override queries from chat context', async () => {
-    const engine = new ResearchEngine({
-      query: 'test query',
-      depth: 2,
-      breadth: 3
-    });
-    
-    // Set override queries
-    engine.overrideQueries = [
-      { query: 'Override query 1', researchGoal: 'Goal 1' },
-      { query: 'Override query 2', researchGoal: 'Goal 2' }
+
+  it('processes override queries when supplied', async () => {
+    const overrideQueries = [
+      { original: 'Override 1' },
+      { original: 'Override 2' }
     ];
-    
-    // Mock processQuery for override queries
-    ResearchPath.prototype.processQuery = vi.fn().mockResolvedValue({
-      learnings: ['Chat-derived learning'],
-      sources: ['Chat-derived source']
-    });
-    
-    const result = await engine.research();
-    
-    expect(ResearchPath.prototype.research).not.toHaveBeenCalled();
-    expect(ResearchPath.prototype.processQuery).toHaveBeenCalledTimes(2);
-    
-    expect(result.learnings).toContain('Chat-derived learning');
-    expect(result.sources).toContain('Chat-derived source');
-  });
-  
-  it('should generate research queries from chat context', async () => {
     const engine = new ResearchEngine({
-      query: 'test query',
-      depth: 2,
-      breadth: 3
+      overrideQueries,
+      query: { original: 'placeholder' }
     });
-    
-    // Mock LLM client for topic extraction
-    LLMClient.prototype.complete = vi.fn().mockResolvedValue({
-      content: 'Topic 1\nTopic 2\nTopic 3'
+
+    await engine.research({
+      query: { original: 'placeholder' },
+      depth: 1,
+      breadth: 1
     });
-    
-    // Mock generate queries
-    generateQueries.mockResolvedValueOnce([
-      { query: 'Generated query 1', researchGoal: 'Goal 1' }
-    ]);
-    
-    generateQueries.mockResolvedValueOnce([
-      { query: 'Generated query 2', researchGoal: 'Goal 2' }
-    ]);
-    
-    generateQueries.mockResolvedValueOnce([
-      { query: 'Generated query 3', researchGoal: 'Goal 3' }
-    ]);
-    
+
+    expect(pathInstance.research).toHaveBeenCalledTimes(overrideQueries.length);
+  });
+
+  it('returns a structured error result when research path throws', async () => {
+    ResearchPath.mockImplementation(() => buildMockPath({
+      research: vi.fn().mockRejectedValue(new Error('boom'))
+    }));
+
+    const engine = new ResearchEngine({ query: { original: 'test' } });
+    const result = await engine.research({
+      query: { original: 'test' },
+      depth: 1,
+      breadth: 1
+    });
+
+    expect(result.error).toBe('boom');
+    expect(result.summary).toContain('Error');
+  });
+
+  it('generateQueriesFromChatContext produces fallback queries without a Venice key', async () => {
+    const engine = new ResearchEngine({ query: { original: 'topic' } });
+
     const chatHistory = [
-      { role: 'user', content: 'What is quantum computing?' },
-      { role: 'assistant', content: 'Quantum computing uses qubits instead of classical bits.' },
-      { role: 'user', content: 'Tell me more about quantum entanglement.' }
+      { role: 'user', content: 'Explain the basics of edge computing.' },
+      { role: 'assistant', content: 'Edge computing processes data close to the source.' }
     ];
-    
-    const memoryBlocks = [
-      { content: 'Quantum computing relies on quantum mechanical phenomena.' }
-    ];
-    
-    const queries = await engine.generateQueriesFromChatContext(chatHistory, memoryBlocks, 3);
-    
-    // Verify LLM client was called for topic extraction
-    expect(LLMClient.prototype.complete).toHaveBeenCalledWith(
-      expect.objectContaining({
-        prompt: expect.stringContaining('quantum entanglement')
-      })
-    );
-    
-    // Verify we got queries for each topic
-    expect(generateQueries).toHaveBeenCalledTimes(3);
-    
-    // Verify we got the expected number of queries
-    expect(queries.length).toEqual(3);
-    
-    // Verify the queries have the expected format
-    expect(queries[0]).toHaveProperty('query');
-    expect(queries[0]).toHaveProperty('researchGoal');
-  });
-  
-  it('should handle errors in generateQueriesFromChatContext', async () => {
-    const engine = new ResearchEngine({
-      query: 'test query',
-      depth: 2,
-      breadth: 3
-    });
-    
-    // Force an error in LLM client
-    LLMClient.prototype.complete = vi.fn().mockRejectedValue(
-      new Error('API error')
-    );
-    
-    // Mock console.error to avoid polluting test output
-    const originalConsoleError = console.error;
-    console.error = vi.fn();
-    
-    const chatHistory = [
-      { role: 'user', content: 'What is quantum computing?' },
-      { role: 'assistant', content: 'It uses qubits.' }
-    ];
-    
-    const queries = await engine.generateQueriesFromChatContext(chatHistory, [], 3);
-    
-    // Verify we got a fallback query
-    expect(queries.length).toEqual(1);
-    expect(queries[0].query).toEqual(chatHistory[chatHistory.length - 1].content);
-    
-    // Restore console.error
-    console.error = originalConsoleError;
+
+    const queries = await engine.generateQueriesFromChatContext(chatHistory, [], 2);
+
+    expect(Array.isArray(queries)).toBe(true);
+    expect(queries.length).toBeGreaterThan(0);
+    expect(queries[0]).toHaveProperty('original');
   });
 });

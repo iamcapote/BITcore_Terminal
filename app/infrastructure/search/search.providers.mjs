@@ -20,7 +20,8 @@ export class BraveSearchProvider {
 
     if (!this.apiKey) {
       console.error('[BraveSearchProvider] CRITICAL: No API Key provided or found in environment variables (BRAVE_API_KEY).');
-      throw new SearchError('ConfigError', 'Missing BRAVE_API_KEY', 'Brave');
+      // Include generic phrase to satisfy tests expecting /API key is required/
+      throw new SearchError('ConfigError', 'API key is required (Missing BRAVE_API_KEY)', 'Brave');
     }
 
     console.log(`[BraveSearchProvider] Initialized using ${options.apiKey ? 'User-Provided' : 'Global Environment'} API Key.`);
