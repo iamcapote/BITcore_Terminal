@@ -1,0 +1,862 @@
+/*
+ * Telemetry surfaces shared between memory and research dashboards.
+ * Includes live feeds, detail cards, suggestion lists, and supporting
+ * typography for both the terminal overlay and standalone research pages.
+ */
+.telemetry-feed {
+    display: grid;
+    gap: 0.8rem;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.telemetry-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem;
+    background: rgba(0, 0, 0, 0.02);
+}
+
+:root.dark .telemetry-card {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.telemetry-card header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.telemetry-detail {
+    font-size: 0.9rem;
+}
+
+.telemetry-status {
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    border: 1px solid var(--border);
+}
+
+.telemetry-connected {
+    background: #dbffdb;
+    color: #216821;
+    border-color: #9fd49f;
+}
+
+.telemetry-disconnected {
+    background: #ffd9d9;
+    color: #7d1e1e;
+    border-color: #f1a0a0;
+}
+
+.telemetry-error {
+    background: #ffe1b5;
+    color: #7a3f00;
+    border-color: #f5c37a;
+}
+
+.telemetry-idle {
+    background: rgba(0, 0, 0, 0.05);
+    color: #555;
+}
+
+.telemetry-unavailable {
+    background: rgba(0, 0, 0, 0.05);
+    color: #777;
+}
+
+.memory-telemetry {
+    background: rgba(18, 27, 40, 0.85);
+    border: 1px solid rgba(118, 185, 255, 0.28);
+    border-radius: 6px;
+    padding: 0.65rem 0.75rem;
+    margin-bottom: 0.75rem;
+    color: #d8e9ff;
+    font-size: 0.75rem;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+:root:not(.dark) .memory-telemetry {
+    background: rgba(226, 236, 255, 0.6);
+    border-color: rgba(68, 111, 165, 0.35);
+    color: #1d2b3c;
+}
+
+.memory-telemetry.has-events {
+    border-color: rgba(118, 185, 255, 0.45);
+    box-shadow: 0 0 12px rgba(118, 185, 255, 0.25);
+}
+
+.memory-telemetry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    margin-bottom: 0.4rem;
+    color: #8ac8ff;
+}
+
+:root:not(.dark) .memory-telemetry-header {
+    color: #1d4f91;
+}
+
+.memory-telemetry-status {
+    font-size: 0.72rem;
+    text-transform: none;
+    letter-spacing: normal;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+:root:not(.dark) .memory-telemetry-status {
+    color: rgba(0, 0, 0, 0.55);
+}
+
+.memory-telemetry.has-events .memory-telemetry-status {
+    color: #4fe3c1;
+}
+
+:root:not(.dark) .memory-telemetry.has-events .memory-telemetry-status {
+    color: #0a7d58;
+}
+
+.memory-telemetry-feed {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.memory-telemetry-feed::-webkit-scrollbar {
+    width: 6px;
+}
+
+.memory-telemetry-feed::-webkit-scrollbar-thumb {
+    background: rgba(118, 185, 255, 0.3);
+    border-radius: 3px;
+}
+
+.memory-telemetry-item {
+    background: rgba(15, 23, 36, 0.55);
+    border: 1px solid rgba(118, 185, 255, 0.2);
+    border-radius: 4px;
+    padding: 0.35rem 0.5rem;
+    box-shadow: inset 0 0 0 1px rgba(118, 185, 255, 0.08);
+}
+
+:root:not(.dark) .memory-telemetry-item {
+    background: rgba(255, 255, 255, 0.75);
+    border-color: rgba(68, 111, 165, 0.2);
+    box-shadow: none;
+}
+
+.memory-telemetry-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    margin-bottom: 0.2rem;
+}
+
+.memory-telemetry-info {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+}
+
+.memory-telemetry-label {
+    font-weight: 600;
+    color: #b5daff;
+}
+
+:root:not(.dark) .memory-telemetry-label {
+    color: #143d6b;
+}
+
+.memory-telemetry-layer {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(74, 144, 226, 0.15);
+    color: #8ac8ff;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+:root:not(.dark) .memory-telemetry-layer {
+    color: #1d4f91;
+}
+
+.memory-telemetry-time {
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.6);
+    white-space: nowrap;
+}
+
+:root:not(.dark) .memory-telemetry-time {
+    color: rgba(0, 0, 0, 0.55);
+}
+
+.memory-telemetry-description {
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.memory-telemetry-empty {
+    font-style: italic;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+:root:not(.dark) .memory-telemetry-empty {
+    color: rgba(0, 0, 0, 0.55);
+}
+
+.research-telemetry {
+    margin-top: 0.75rem;
+    background: #202225;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    padding: 0.75rem;
+    color: #e9eefc;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    display: grid;
+    gap: 0.5rem;
+}
+
+:root:not(.dark) .research-telemetry {
+    background: #f5f7fb;
+    border-color: rgba(0, 0, 0, 0.08);
+    color: #1a2233;
+}
+
+.research-telemetry.active {
+    border-color: #3b82f6;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.25);
+}
+
+.research-telemetry-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.9rem;
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.85;
+}
+
+:root:not(.dark) .research-telemetry-header {
+    opacity: 0.9;
+}
+
+.research-telemetry-stage {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.18);
+    color: #bcd6ff;
+}
+
+:root:not(.dark) .research-telemetry-stage {
+    background: rgba(59, 130, 246, 0.15);
+    color: #1e3a8a;
+}
+
+.research-telemetry.error .research-telemetry-stage {
+    background: rgba(220, 38, 38, 0.25);
+    color: #fecaca;
+}
+
+:root:not(.dark) .research-telemetry.error .research-telemetry-stage {
+    background: rgba(220, 38, 38, 0.18);
+    color: #991b1b;
+}
+
+.research-telemetry-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    font-size: 0.85rem;
+}
+
+.research-telemetry-status {
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.research-telemetry-progress {
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    opacity: 0.85;
+}
+
+.research-telemetry-meta {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.7;
+    flex-wrap: wrap;
+}
+
+.research-telemetry-meta span {
+    white-space: nowrap;
+}
+
+.research-telemetry-memory {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.25rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+:root:not(.dark) .research-telemetry-memory {
+    border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+.research-telemetry-memory-summary {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.7;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.research-telemetry-memory-summary strong {
+    font-weight: 600;
+    opacity: 0.9;
+}
+
+.research-telemetry-memory-empty {
+    font-size: 0.78rem;
+    font-style: italic;
+    opacity: 0.7;
+}
+
+.research-telemetry-memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    max-height: 140px;
+    overflow-y: auto;
+}
+
+.research-telemetry-memory-item {
+    padding: 0.35rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root:not(.dark) .research-telemetry-memory-item {
+    border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+
+.research-telemetry-memory-item:last-child {
+    border-bottom: none;
+}
+
+.research-telemetry-memory-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.7;
+    gap: 0.35rem;
+}
+
+.research-telemetry-memory-item-layer {
+    font-weight: 600;
+}
+
+.research-telemetry-memory-item-score {
+    font-family: 'Courier New', monospace;
+    font-size: 0.72rem;
+}
+
+.research-telemetry-memory-item-preview {
+    margin-top: 0.15rem;
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+.research-telemetry-memory-item-source {
+    margin-top: 0.15rem;
+    font-size: 0.7rem;
+    opacity: 0.65;
+}
+
+:root:not(.dark) .research-telemetry-memory-item-source {
+    opacity: 0.75;
+}
+
+.research-telemetry-memory-item-tags {
+    margin-top: 0.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+
+.research-telemetry-memory-item-tags span {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(59, 130, 246, 0.12);
+    color: #cbd5f5;
+}
+
+:root:not(.dark) .research-telemetry-memory-item-tags span {
+    border-color: rgba(0, 0, 0, 0.08);
+    background: rgba(59, 130, 246, 0.1);
+    color: #1e3a8a;
+}
+
+.research-telemetry-thoughts {
+    max-height: 120px;
+    overflow-y: auto;
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+:root:not(.dark) .research-telemetry-thoughts {
+    border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+.research-telemetry-thought {
+    font-size: 0.78rem;
+    line-height: 1.35;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root:not(.dark) .research-telemetry-thought {
+    border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+
+.research-telemetry-thought:last-child {
+    border-bottom: none;
+}
+
+.research-telemetry-thought time {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.6;
+    display: block;
+}
+
+.research-telemetry-thought span {
+    display: block;
+    margin-top: 0.25rem;
+}
+
+.research-telemetry-suggestions {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.16);
+    border-radius: 0.75rem;
+    display: grid;
+    gap: 0.5rem;
+}
+
+:root:not(.dark) .research-telemetry-suggestions {
+    border-color: rgba(0, 0, 0, 0.15);
+    background: rgba(255, 255, 255, 0.78);
+}
+
+.research-telemetry-suggestions-header {
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin-bottom: 0.35rem;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+:root:not(.dark) .research-telemetry-suggestions-header {
+    color: rgba(20, 20, 20, 0.88);
+}
+
+.research-telemetry-suggestions-empty {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+:root:not(.dark) .research-telemetry-suggestions-empty {
+    color: rgba(30, 30, 30, 0.65);
+}
+
+.research-telemetry-suggestions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.research-telemetry-suggestion-item {
+    padding: 0.65rem 0.75rem;
+    border-radius: 0.65rem;
+    background: rgba(0, 0, 0, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root:not(.dark) .research-telemetry-suggestion-item {
+    background: rgba(255, 255, 255, 0.82);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+.research-telemetry-suggestion-prompt {
+    font-size: 0.9rem;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.92);
+    margin-bottom: 0.35rem;
+}
+
+:root:not(.dark) .research-telemetry-suggestion-prompt {
+    color: rgba(25, 25, 25, 0.9);
+}
+
+.research-telemetry-suggestion-meta {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+:root:not(.dark) .research-telemetry-suggestion-meta {
+    color: rgba(35, 35, 35, 0.68);
+}
+
+.research-telemetry-suggestion-memory {
+    margin-top: 0.2rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.01em;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+:root:not(.dark) .research-telemetry-suggestion-memory {
+    color: rgba(40, 40, 40, 0.5);
+}
+
+.telemetry-panel {
+    margin: 1.5rem 0 2rem;
+    padding: 1.5rem;
+    border-radius: 10px;
+    background: rgba(9, 15, 26, 0.65);
+    border: 1px solid rgba(124, 173, 255, 0.2);
+    display: grid;
+    gap: 1.25rem;
+}
+
+:root:not(.dark) .telemetry-panel {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(47, 83, 148, 0.25);
+}
+
+.telemetry-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.telemetry-header h2 {
+    font-size: 1.35rem;
+    margin: 0;
+}
+
+.telemetry-stage {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(124, 173, 255, 0.15);
+    color: rgba(216, 229, 255, 0.9);
+}
+
+.telemetry-message {
+    font-size: 0.95rem;
+    margin: 0;
+    color: rgba(236, 240, 255, 0.9);
+}
+
+:root:not(.dark) .telemetry-message {
+    color: rgba(13, 24, 45, 0.85);
+}
+
+.telemetry-detail {
+    font-size: 0.8rem;
+    margin: 0;
+    color: rgba(255, 142, 142, 0.95);
+}
+
+:root:not(.dark) .telemetry-detail {
+    color: #c00018;
+}
+
+.telemetry-progress {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.telemetry-progress-bar {
+    height: 8px;
+    width: 100%;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(21, 34, 54, 0.65);
+    border: 1px solid rgba(124, 173, 255, 0.15);
+}
+
+.telemetry-progress-fill {
+    height: 100%;
+    width: 0;
+    border-radius: inherit;
+    background: linear-gradient(90deg, rgba(79, 227, 193, 0.85), rgba(124, 173, 255, 0.85));
+    transition: width 0.3s ease;
+}
+
+.telemetry-progress-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    font-size: 0.78rem;
+    color: rgba(203, 217, 255, 0.82);
+}
+
+:root:not(.dark) .telemetry-progress-meta {
+    color: rgba(35, 55, 95, 0.75);
+}
+
+.telemetry-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.telemetry-empty {
+    font-size: 0.8rem;
+    font-style: italic;
+    color: rgba(180, 192, 224, 0.75);
+}
+
+:root:not(.dark) .telemetry-empty {
+    color: rgba(80, 95, 125, 0.75);
+}
+
+#telemetry-thoughts {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.5rem;
+}
+
+.telemetry-thought {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    line-height: 1.35;
+}
+
+.telemetry-thought-stage {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(124, 173, 255, 0.12);
+    color: rgba(205, 220, 255, 0.85);
+    flex-shrink: 0;
+}
+
+.telemetry-thought-text {
+    color: rgba(226, 234, 255, 0.88);
+}
+
+:root:not(.dark) .telemetry-thought-text {
+    color: rgba(32, 48, 78, 0.85);
+}
+
+.telemetry-memory-summary {
+    font-size: 0.82rem;
+    letter-spacing: 0.04em;
+    color: rgba(199, 214, 255, 0.9);
+}
+
+.telemetry-memory-records {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.telemetry-suggestions-meta {
+    font-size: 0.78rem;
+    color: rgba(189, 205, 247, 0.85);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+:root:not(.dark) .telemetry-suggestions-meta {
+    color: rgba(34, 56, 98, 0.7);
+}
+
+.telemetry-suggestions-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.65rem;
+}
+
+.telemetry-suggestion {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-radius: 8px;
+    background: rgba(10, 18, 30, 0.68);
+    border: 1px solid rgba(124, 173, 255, 0.18);
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.telemetry-suggestion:hover {
+    border-color: rgba(124, 173, 255, 0.35);
+    transform: translateY(-1px);
+}
+
+:root:not(.dark) .telemetry-suggestion {
+    background: rgba(255, 255, 255, 0.94);
+    border-color: rgba(47, 83, 148, 0.18);
+}
+
+.telemetry-suggestion-prompt {
+    margin: 0;
+    font-size: 0.92rem;
+    line-height: 1.4;
+    color: rgba(224, 234, 255, 0.9);
+}
+
+:root:not(.dark) .telemetry-suggestion-prompt {
+    color: rgba(26, 44, 76, 0.9);
+}
+
+.telemetry-suggestion-meta {
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: rgba(168, 189, 239, 0.7);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+:root:not(.dark) .telemetry-suggestion-meta {
+    color: rgba(55, 78, 122, 0.65);
+}
+
+.telemetry-suggestion-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.telemetry-suggestion-tag {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(79, 227, 193, 0.14);
+    color: rgba(180, 240, 222, 0.92);
+}
+
+:root:not(.dark) .telemetry-suggestion-tag {
+    background: rgba(53, 138, 112, 0.12);
+    color: rgba(26, 78, 62, 0.85);
+}
+
+.telemetry-suggestion-footer {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    font-size: 0.7rem;
+    color: rgba(170, 193, 241, 0.6);
+}
+
+:root:not(.dark) .telemetry-suggestion-footer {
+    color: rgba(65, 86, 126, 0.6);
+}
+
+.telemetry-suggestion-id {
+    font-family: "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    opacity: 0.75;
+}
+
+.telemetry-suggestion-action {
+    appearance: none;
+    border: 1px solid rgba(124, 173, 255, 0.35);
+    background: rgba(12, 24, 44, 0.9);
+    color: rgba(222, 235, 255, 0.95);
+    padding: 0.4rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.telemetry-suggestion-action:hover:not(:disabled) {
+    background: rgba(28, 52, 88, 0.95);
+    border-color: rgba(124, 173, 255, 0.5);
+    transform: translateY(-1px);
+}
+
+.telemetry-suggestion-action:disabled {
+    opacity: 0.65;
+    cursor: default;
+}
+
+:root:not(.dark) .telemetry-suggestion-action {
+    background: rgba(255, 255, 255, 0.96);
+    border-color: rgba(47, 83, 148, 0.24);
+    color: rgba(35, 55, 95, 0.85);
+}
+
+.telemetry-summary-meta {
+    margin: 0;
+    display: grid;
+    gap: 0.45rem;
+    font-size: 0.78rem;
+    color: rgba(194, 207, 242, 0.85);
+}
+
+.telemetry-summary-meta dt {
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.telemetry-summary-meta dd {
+    margin: 0;
+}
+
+@media (max-width: 768px) {
+    .telemetry-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .telemetry-progress-meta {
+        gap: 0.4rem;
+    }
+}

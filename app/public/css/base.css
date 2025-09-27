@@ -1,0 +1,61 @@
+/*
+ * Base stylesheet for BITcore web clients.
+ * Establishes reset rules, color variables, and shared typography/link behaviors
+ * that every surface (terminal, memory, prompts, research) relies on.
+ */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --bg: #fff;
+    --fg: #222;
+    --lnk: #0645ad;
+    --border: #a2a9b1;
+    --tab-bg: transparent;
+    --tab-active-bg: var(--bg);
+    --tab-border: transparent;
+    --subtle-border: #e9e9e9;
+}
+
+:root.dark {
+    --bg: #111;
+    --fg: #ddd;
+    --lnk: #88c0ff;
+    --border: #555;
+    --tab-bg: transparent;
+    --tab-active-bg: var(--bg);
+    --tab-border: transparent;
+    --subtle-border: #333;
+}
+
+body {
+    font-family: sans-serif;
+    line-height: 1.6;
+    color: var(--fg);
+    background: var(--bg);
+    padding: 0;
+}
+
+a {
+    color: var(--lnk);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+a:visited {
+    color: #5a3696;
+}
+
+:root.dark a:visited {
+    color: #b8a1e3;
+}
+
+.hidden {
+    display: none !important;
+}

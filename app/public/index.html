@@ -14,7 +14,12 @@
             <div class="wiki-nav">
                 <ul>
                     <li class="active"><a href="/">Research Terminal</a></li>
+                    <li><a href="/memory/">Memory Dashboard</a></li>
+                    <li><a href="/prompts/">Prompt Library</a></li>
+                    <li><a href="/organizer/">Self Organizer</a></li>
+                    <li><a href="/github-sync/">GitHub Sync</a></li>
                     <li><a href="/research/">My Research</a></li>
+                    <li><a href="/chat-history/">Chat History</a></li>
                     <li><a href="https://bitwiki.org/wiki/Main_Page">Main Wiki</a></li>
                     <li><a href="https://psychophilosophy.gitbook.io/corebit-systems/">Learn More</a></li>
                     <li><a href="https://hub.bitwiki.org/">Join The Community</a></li>
@@ -35,11 +40,66 @@
             <!-- Enhanced terminal interface -->
             <div class="terminal-container">
                 <div class="status-bar">
-                    <!-- Added ID for user status -->
-                    <span class="status-indicator active" id="user-status">User: public</span>
-                    <!-- Added ID for connection status -->
-                    <span class="status-indicator active" id="connection-status">Status: Disconnected</span>
-                    <span class="status-indicator">API: Provided</span>
+                    <div class="status-indicator-cluster">
+                        <span class="status-indicator" id="user-status">User: public</span>
+                        <span class="status-indicator" id="connection-status">Connection: Disconnected</span>
+                    </div>
+                    <div class="status-chip-row" aria-label="System status overview">
+                        <span class="status-chip status-unknown" data-status-key="venice" data-status-label="Venice LLM">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span class="status-chip-label" data-status-role="label">Venice LLM</span>
+                            <span class="status-chip-message" data-status-role="message">Checking…</span>
+                        </span>
+                        <span class="status-chip status-unknown" data-status-key="brave" data-status-label="Brave Search">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span class="status-chip-label" data-status-role="label">Brave Search</span>
+                            <span class="status-chip-message" data-status-role="message">Checking…</span>
+                        </span>
+                        <span class="status-chip status-unknown" data-status-key="github" data-status-label="GitHub Sync">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span class="status-chip-label" data-status-role="label">GitHub Sync</span>
+                            <span class="status-chip-message" data-status-role="message">Checking…</span>
+                        </span>
+                        <span class="status-chip status-unknown" data-status-key="memory" data-status-label="Memory Core">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span class="status-chip-label" data-status-role="label">Memory Core</span>
+                            <span class="status-chip-message" data-status-role="message">Checking…</span>
+                        </span>
+                        <span class="status-chip status-unknown" data-presence-key="telemetry" data-status-label="Telemetry Feed">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span class="status-chip-label" data-status-role="label">Telemetry Feed</span>
+                            <span class="status-chip-message" data-status-role="message">Idle</span>
+                        </span>
+                        <span class="status-chip status-unknown" data-presence-key="logs" data-status-label="Log Stream">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span class="status-chip-label" data-status-role="label">Log Stream</span>
+                            <span class="status-chip-message" data-status-role="message">Idle</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="memory-telemetry" id="memory-telemetry">
+                    <div class="memory-telemetry-header">
+                        <span>Memory Telemetry</span>
+                        <span class="memory-telemetry-status" id="memory-telemetry-status">Idle</span>
+                    </div>
+                    <div class="memory-telemetry-feed" id="memory-telemetry-feed"></div>
+                </div>
+                <div class="research-telemetry" id="research-telemetry">
+                    <div class="research-telemetry-header">
+                        <span>Research Telemetry</span>
+                        <span class="research-telemetry-stage" id="research-telemetry-stage">Idle</span>
+                    </div>
+                    <div class="research-telemetry-body">
+                        <div class="research-telemetry-status" id="research-telemetry-status">Waiting for telemetry…</div>
+                        <div class="research-telemetry-progress" id="research-telemetry-progress">Progress: 0%</div>
+                        <div class="research-telemetry-meta" id="research-telemetry-meta">
+                            <span id="research-telemetry-depth">Depth: —</span>
+                            <span id="research-telemetry-breadth">Breadth: —</span>
+                        </div>
+                        <div class="research-telemetry-memory" id="research-telemetry-memory"></div>
+                        <div class="research-telemetry-suggestions" id="research-telemetry-suggestions"></div>
+                        <div class="research-telemetry-thoughts" id="research-telemetry-thoughts"></div>
+                    </div>
                 </div>
                 <div class="terminal-screen">
                     <div class="screen-header">
@@ -86,6 +146,28 @@
                     <button class="control-button gradient-btn" id="system-status">System Status</button>
                     <button class="control-button gradient-btn" id="help-button">Help</button>
                 </div>
+                <div class="preferences-panel" id="terminal-preferences-panel" aria-label="Terminal preferences"></div>
+                <div class="model-browser" id="model-browser" aria-live="polite" aria-busy="false">
+                    <div class="model-browser-header">
+                        <div class="model-browser-heading">
+                            <h2>Model Browser</h2>
+                            <p class="model-browser-description">Review available Venice models, compare capabilities, and confirm defaults before kicking off missions.</p>
+                        </div>
+                        <div class="model-browser-status" id="model-browser-status">Loading model catalog…</div>
+                    </div>
+                    <div class="model-browser-controls" id="model-browser-controls" role="tablist" aria-label="Model filters">
+                        <button type="button" class="model-filter-chip is-active" data-filter="all" role="tab" aria-selected="true">All</button>
+                        <button type="button" class="model-filter-chip" data-filter="chat" role="tab" aria-selected="false">Chat</button>
+                        <button type="button" class="model-filter-chip" data-filter="research" role="tab" aria-selected="false">Research</button>
+                        <button type="button" class="model-filter-chip" data-filter="coding" role="tab" aria-selected="false">Coding</button>
+                        <button type="button" class="model-filter-chip" data-filter="vision" role="tab" aria-selected="false">Vision</button>
+                        <button type="button" class="model-filter-chip" data-filter="reasoning" role="tab" aria-selected="false">Reasoning</button>
+                        <button type="button" class="model-filter-chip" data-filter="uncensored" role="tab" aria-selected="false">Uncensored</button>
+                        <button type="button" class="model-filter-chip" data-filter="speed" role="tab" aria-selected="false">Speed</button>
+                    </div>
+                    <div class="model-browser-grid" id="model-browser-grid" role="list"></div>
+                    <div class="model-browser-footer" id="model-browser-footer"></div>
+                </div>
             </div>
 
             <div class="wiki-footer">
@@ -98,7 +180,20 @@
 
     <!-- Include backend communication scripts -->
     <script src="webcomm.js"></script>
-    <script src="terminal.js"></script>
+    <script src="status.js"></script>
+    <script src="terminal/terminal.core.js"></script>
+    <script src="terminal/terminal.core.output.js"></script>
+    <script src="terminal/terminal.core.events.js"></script>
+    <script src="terminal/terminal.core.handlers.js"></script>
+    <script src="terminal/terminal.memory.telemetry.js"></script>
+    <script src="terminal/terminal.prompts.js"></script>
+    <script src="terminal/terminal.research.state.js"></script>
+    <script src="terminal/terminal.research.render.js"></script>
+    <script src="terminal/terminal.research.handlers.js"></script>
+    <script src="terminal/terminal.model.browser.js"></script>
+    <script src="terminal/terminal.preferences.js"></script>
+    <script src="terminal/terminal.chat.persona.js"></script>
+    <script src="terminal/terminal.bootstrap.js"></script>
     <script src="command-processor.js"></script>
     <!-- Add script for fullscreen toggle and potentially other UI interactions if needed -->
     <script>

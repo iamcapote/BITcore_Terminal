@@ -1,8 +1,36 @@
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
 import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest';
 import { executeChat, exitMemory, generateResearchQueries, startResearchFromChat } from '../commands/chat.cli.mjs';
 import { output } from '../utils/research.output-manager.mjs';
 import { userManager } from '../features/auth/user-manager.mjs';
 import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
+import { resetChatPersonaController } from '../features/chat/index.mjs';
+let tempDir;
+let originalStorageDir;
+
+beforeEach(async () => {
+  if (!tempDir) {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'app-chat-tests-'));
+  }
+  originalStorageDir = process.env.BITCORE_STORAGE_DIR;
+  process.env.BITCORE_STORAGE_DIR = tempDir;
+  resetChatPersonaController();
+});
+
+afterEach(async () => {
+  resetChatPersonaController();
+  if (originalStorageDir === undefined) {
+    delete process.env.BITCORE_STORAGE_DIR;
+  } else {
+    process.env.BITCORE_STORAGE_DIR = originalStorageDir;
+  }
+  if (tempDir) {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    tempDir = undefined;
+  }
+});
 
 vi.mock('../features/auth/user-manager.mjs', () => ({
   userManager: {
@@ -45,7 +73,8 @@ describe('Chat Command', () => {
 
     expect(result.success).toBe(true);
     expect(result.session?.isChatActive).toBe(true);
-    expect(logSpy).toHaveBeenCalledWith('Chat session ready. Type /exit to leave.');
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Chat session ready'));
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('bitcore'));
   });
 
   it('sends a chat-ready event when used over WebSocket', async () => {

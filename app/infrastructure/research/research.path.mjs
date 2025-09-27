@@ -29,7 +29,8 @@ export class ResearchPath {
             error = console.error,
             debug = () => {},
             progressHandler = () => {},
-            searchProvider // <-- ADD: Accept searchProvider instance
+            searchProvider, // <-- ADD: Accept searchProvider instance
+            telemetry = null
         } = engineConfig; // Destructure from engineConfig
 
         // if (!query) throw new Error('Query is required for ResearchPath'); // Query passed later
@@ -50,6 +51,7 @@ export class ResearchPath {
         this.progressData = progressData; // Store reference to progress data object
         this.config = engineConfig; // Store original config which NOW includes the provider
         this.searchProvider = searchProvider; // <-- STORE the passed provider instance
+    this.telemetry = telemetry || null;
 
         // Pass handlers if LLMClient is used here (or create instance as needed)
         // this.llmClient = new LLMClient({ apiKey: this.veniceApiKey /*, other options */ });
@@ -81,6 +83,15 @@ export class ResearchPath {
     async research({ query, depth, breadth }) {
         const queryString = getQueryString(query); // Get the string part for searching/logging
         this.updateProgress({ status: 'Processing Query', currentAction: `Processing: ${queryString.substring(0, 50)}...` });
+        this.telemetry?.emitStatus({
+            stage: 'path-processing',
+            message: `Processing query at depth ${depth}.`,
+            meta: { query: queryString, depth, breadth }
+        });
+        this.telemetry?.emitThought({
+            text: `Exploring: ${queryString}`,
+            stage: 'path'
+        });
 
         try {
             this.output(`[ResearchPath D:${depth}] Processing query: "${queryString}"`);
@@ -146,10 +157,21 @@ export class ResearchPath {
                         completedQueries: (this.progressData.completedQueries || 0) + 1, // Increment completed count
                         currentAction: `Extracted ${currentLearnings.length} learnings for: ${queryString.substring(0, 50)}...`
                     });
+                    this.telemetry?.emitStatus({
+                        stage: 'path-processing',
+                        message: `Learnings extracted for query.` ,
+                        meta: { query: queryString, learnings: currentLearnings.length, depth }
+                    });
                 } catch (procError) {
                     this.error(`[ResearchPath D:${depth}] Error processing results for "${queryString}": ${procError.message}`);
                     currentLearnings.push(`Error processing search results for: ${queryString}`);
                     this.updateProgress({ completedQueries: (this.progressData.completedQueries || 0) + 1 }); // Still increment count on error
+                    this.telemetry?.emitStatus({
+                        stage: 'path-error',
+                        message: 'Error processing search results.',
+                        detail: procError.message,
+                        meta: { query: queryString, depth }
+                    });
                 }
             }
 
@@ -169,6 +191,11 @@ export class ResearchPath {
                     });
                     this.debug(`[ResearchPath D:${depth}] Generated ${followUpQueries.length} follow-up queries.`);
                     this.updateProgress({ currentAction: `Generated ${followUpQueries.length} follow-up queries...` });
+                    this.telemetry?.emitStatus({
+                        stage: 'path-followups',
+                        message: `Generated ${followUpQueries.length} follow-up queries.`,
+                        meta: { query: queryString, depth }
+                    });
                 } catch (genError) {
                     this.error(`[ResearchPath D:${depth}] Error generating follow-up queries for "${queryString}": ${genError.message}`);
                     currentLearnings.push(`Error generating follow-up queries for: ${queryString}`);
@@ -231,6 +258,12 @@ export class ResearchPath {
             this.error(`[ResearchPath D:${depth}] Error processing path for query "${queryString}": ${err.message}`);
             this.debug(err.stack); // Log stack trace for debugging
             this.updateProgress({ currentAction: `Path failed: ${err.message}` });
+            this.telemetry?.emitStatus({
+                stage: 'path-error',
+                message: 'Research path failed.',
+                detail: err.message,
+                meta: { query: queryString, depth }
+            });
             // Re-throw or return error structure
             // Return a structure indicating failure but allowing summary generation
             return {

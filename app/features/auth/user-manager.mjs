@@ -6,10 +6,35 @@ import { Octokit } from '@octokit/rest';
 import { ensureDir } from '../../utils/research.ensure-dir.mjs';
 
 
+const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+function coerceBoolean(value, fallback = false) {
+	if (value === undefined || value === null) {
+		return fallback;
+	}
+	if (typeof value === 'boolean') {
+		return value;
+	}
+	if (typeof value === 'number') {
+		return value !== 0;
+	}
+	const normalized = String(value).trim().toLowerCase();
+	if (TRUE_VALUES.has(normalized)) {
+		return true;
+	}
+	if (['0', 'false', 'no', 'off'].includes(normalized)) {
+		return false;
+	}
+	return fallback;
+}
+
 // Single-user, no-auth configuration
 const DEFAULT_USERNAME = process.env.BITCORE_USER || 'operator';
 const DEFAULT_ROLE = process.env.BITCORE_ROLE || 'admin';
 const DEFAULT_LIMITS = {};
+const DEFAULT_FEATURE_FLAGS = Object.freeze({
+	modelBrowser: coerceBoolean(process.env.TERMINAL_MODEL_BROWSER_PROFILE_DEFAULT, true),
+});
 const DEFAULT_STORAGE_DIR = process.env.BITCORE_STORAGE_DIR
   || path.join(os.homedir(), '.bitcore-terminal');
 const USER_FILE_NAME = 'global-user.json';
@@ -28,6 +53,7 @@ const DEFAULT_USER = {
     branch: process.env.GITHUB_BRANCH || 'main',
     token: process.env.GITHUB_TOKEN || null,
   },
+	features: { ...DEFAULT_FEATURE_FLAGS },
 };
 
 function mergeUserData(base, override = {}) {
@@ -42,6 +68,10 @@ function mergeUserData(base, override = {}) {
       ...base.github,
       ...(override.github || {}),
     },
+		features: {
+			...base.features,
+			...(override.features || {}),
+		},
   };
 }
 
@@ -60,11 +90,11 @@ class UserManager {
 			this.currentUser = mergeUserData(DEFAULT_USER, data);
 		} catch (err) {
 			if (err.code === 'ENOENT') {
-				this.currentUser = { ...DEFAULT_USER };
+				this.currentUser = mergeUserData(DEFAULT_USER);
 				await fs.writeFile(this.userFile, JSON.stringify(this.currentUser, null, 2));
 			} else {
 				console.warn(`[UserManager] Failed to read user file, using defaults: ${err.message}`);
-				this.currentUser = { ...DEFAULT_USER };
+				this.currentUser = mergeUserData(DEFAULT_USER);
 			}
 		}
 		return this.currentUser;
@@ -78,7 +108,7 @@ class UserManager {
 
 	getCurrentUser() {
 		if (!this.currentUser) {
-			this.currentUser = { ...DEFAULT_USER };
+			this.currentUser = mergeUserData(DEFAULT_USER);
 		}
 		return this.currentUser;
 	}
@@ -86,6 +116,34 @@ class UserManager {
 	async getUserData() {
 		if (!this.currentUser) await this.initialize();
 		return this.currentUser;
+	}
+
+	async getFeatureFlags() {
+		if (!this.currentUser) await this.initialize();
+		return { ...(this.currentUser.features || {}) };
+	}
+
+	async hasFeature(featureName) {
+		if (!featureName) {
+			return false;
+		}
+		const features = await this.getFeatureFlags();
+		return !!features[featureName];
+	}
+
+	async setFeatureFlag(featureName, value) {
+		if (!featureName) {
+			throw new Error('Feature name is required');
+		}
+		if (typeof value !== 'boolean') {
+			throw new Error('Feature flag value must be a boolean');
+		}
+		if (!this.currentUser) await this.initialize();
+		if (!this.currentUser.features) {
+			this.currentUser.features = { ...DEFAULT_FEATURE_FLAGS };
+		}
+		this.currentUser.features[featureName] = value;
+		await this.save();
 	}
 
 	// --- Compatibility (no-auth) helpers ---

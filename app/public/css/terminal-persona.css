@@ -1,0 +1,90 @@
+/*
+ * Persona selector styling for the terminal status bar.
+ */
+
+.persona-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    min-width: 12rem;
+}
+
+@media (min-width: 720px) {
+    .persona-selector {
+        flex-direction: row;
+        align-items: center;
+        gap: 0.5rem;
+    }
+}
+
+.persona-selector__label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(210, 224, 255, 0.82);
+}
+
+:root:not(.dark) .persona-selector__label {
+    color: rgba(40, 55, 80, 0.7);
+}
+
+.persona-selector__select {
+    appearance: none;
+    border: 1px solid rgba(124, 173, 255, 0.32);
+    background: rgba(12, 22, 38, 0.6);
+    color: rgba(220, 230, 255, 0.92);
+    font-size: 0.78rem;
+    padding: 0.35rem 2rem 0.35rem 0.6rem;
+    border-radius: 0.6rem;
+    line-height: 1.2;
+    cursor: pointer;
+    min-width: 8.5rem;
+    position: relative;
+}
+
+.persona-selector__select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+:root:not(.dark) .persona-selector__select {
+    border-color: rgba(68, 111, 165, 0.28);
+    background: rgba(255, 255, 255, 0.88);
+    color: rgba(32, 47, 66, 0.85);
+}
+
+.persona-selector__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid rgba(124, 173, 255, 0.35);
+    background: rgba(27, 40, 60, 0.55);
+    color: rgba(210, 224, 255, 0.85);
+    font-size: 0.65rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+:root:not(.dark) .persona-selector__badge {
+    border-color: rgba(68, 111, 165, 0.28);
+    background: rgba(228, 236, 255, 0.8);
+    color: rgba(40, 55, 80, 0.75);
+}
+
+.persona-selector__badge[hidden] {
+    display: none;
+}
+
+.persona-selector__description {
+    font-size: 0.7rem;
+    line-height: 1.3;
+    color: rgba(208, 220, 240, 0.78);
+    margin: 0;
+}
+
+:root:not(.dark) .persona-selector__description {
+    color: rgba(40, 55, 80, 0.68);
+}

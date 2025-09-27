@@ -1,3 +1,47 @@
+# OS & editor artifacts
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Icon?
+Desktop.ini
+.idea/
+.vs/
+.fleet/
+.history/
+.nova/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/snippets/
+*.code-workspace
+*.iml
+*.sublime-*
+*.swp
+*.swo
+*~
+*.orig
+*.rej
+
+# Local runtime data
+.data/
+tmp/
+temp/
+tmp-*/
+*.tmp
+*.temp
+
+# Credentials & secrets
+*.pem
+*.key
+*.crt
+*.cert
+*.pfx
+*.p12
+
 # Logs
 logs
 *.log

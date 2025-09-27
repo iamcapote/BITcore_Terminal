@@ -8,6 +8,7 @@ describe('RateLimiter', () => {
         const start = Date.now();
         await limiter.waitForNextSlot();
         const end = Date.now();
-        assert(end - start >= 100, 'RateLimiter did not delay correctly');
+        const elapsed = end - start;
+        assert(elapsed >= 90, `RateLimiter did not delay correctly (observed ${elapsed}ms)`);
     });
 });

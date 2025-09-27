@@ -161,6 +161,12 @@ class Chat {
     } else {
       this.terminal.appendOutput('Chat session started. Type /exit to end chat mode.');
     }
+
+    if (data.persona) {
+      const personaLabel = data.persona.name || data.persona.slug;
+      this.terminal.appendOutput(`Persona: ${personaLabel}`);
+      window.dispatchEvent(new CustomEvent('chat-persona-ready', { detail: data.persona }));
+    }
     
     // Show memory status if enabled
     if (data.memoryEnabled) {

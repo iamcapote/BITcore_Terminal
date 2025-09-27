@@ -1,0 +1,15 @@
+name: Weekly Research Digest
+slug: weekly-digest
+description: Aggregate top findings from the week and publish a digest to the knowledge base.
+schedule:
+  intervalMinutes: 10080  # 7 days
+  timezone: UTC
+priority: 6
+tags:
+  - research
+  - weekly
+payload:
+  type: summary
+  outputs:
+    - path: research/digests/latest.md
+    - path: memory/semantic

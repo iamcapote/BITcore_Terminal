@@ -44,14 +44,10 @@ This guide documents the current chat subsystem and memory integration implement
 
 `MemoryManager` supports three depth profiles defined in `app/infrastructure/memory/memory.manager.mjs`:
 
-| Depth | Max Memories | Retrieval Limit | Similarity Threshold | Summarise Every |
 | --- | --- | --- | --- | --- |
 | `short` | 10 | 2 | 0.7 | 10 turns |
 | `medium` | 50 | 5 | 0.5 | 20 turns |
 | `long` | 100 | 8 | 0.3 | 30 turns |
-
-Key behaviours:
-- **Storage**: Every turn is assigned an ID, timestamp, role, and score placeholder before entering the ephemeral store.
 - **Retrieval**: Semantic similarity heuristics prioritise relevant memories before LLM calls.
 - **Summarisation**: Periodic summarisation compacts stored memories; summaries are retained in the validated store.
 - **Stats**: `/memory stats` returns counters (stored, retrieved, validated, summarised) plus depth and store sizes.
@@ -70,7 +66,6 @@ GitHub integration (`GitHubMemoryIntegration`):
 | `/exitmemory` | CLI & Web (memory enabled) | Calls `MemoryManager.summarizeAndFinalize()`, clears memory manager from the session, and emits `memory_commit` if a GitHub commit occurs. |
 | `/memory stats` | CLI & Web (memory enabled) | Invokes `app/commands/memory.cli.mjs::executeMemoryStats` to display depth, counts, and GitHub status. |
 | `/research <query>` | CLI & Web | Uses `startResearchFromChat` to bridge into the research pipeline while preserving chat context. |
-
 Additional behaviours:
 - Password prompts for key decryption (if required) are routed through the existing prompt infrastructure (`promptHiddenFixed` for CLI, `wsPrompt` for Web).
 - Chat history is cleared when the session exits; Web clients receive `enable_input` to unlock the terminal.
@@ -89,10 +84,27 @@ If GitHub settings are missing or commit fails, the memory is still summarised l
 
 ---
 
-## 6. Testing & Validation
+## 6. Persona Management
+
+The chat stack now exposes Venice personas (a.k.a. characters) through both CLI and web surfaces. Persona selection influences the system prompt and Venice `character_slug` when running `/chat`.
+
+| Surface | Action | Notes |
+| --- | --- | --- |
+| CLI | `/chat persona list` | Shows available personas and marks the current default. `--json` emits machine-readable output. |
+| CLI | `/chat persona set <slug>` | Persists a new default. Use `/chat persona reset` to return to `bitcore`. |
+| CLI | `/chat --character=<slug>` | Overrides the persona for a single session without changing the persisted default. |
+| Web | Status bar selector | Dropdown reads/writes `/api/chat/personas` endpoints. Changes propagate to CLI via shared storage. |
+| Web & CLI | Chat bootstrap output | Displays the active persona name and slug when `/chat` starts. |
+
+Persona metadata is stored in `~/.bitcore-terminal/chat-persona.json` (overridable via `BITCORE_STORAGE_DIR`). Route handlers live in `app/features/chat/chat-persona.routes.mjs`; CLI controls reside in `app/commands/chat.cli.mjs`.
+
+---
+
+## 7. Testing & Validation
 
 Automated coverage:
 - `tests/chat.test.mjs` – Core chat flow smoke tests.
+- `tests/chat-persona.service.test.mjs`, `tests/chat-persona.cli.test.mjs` – Persona persistence and CLI coverage.
 - `tests/token-classifier.test.mjs` – Classifier integration used in chat-to-research handoff.
 - `tests/memory.test.mjs`, `tests/github-memory.test.mjs` – Memory manager and GitHub integration behaviour.
 
@@ -115,7 +127,7 @@ Verify `/memory stats`, `/exitmemory`, and `/research <query>` inside the chat s
 
 ---
 
-## 7. Extensibility Notes
+## 8. Extensibility Notes
 
 - **Custom Prompts**: Extend persona definitions in `app/infrastructure/ai/venice.characters.mjs` and expose via CLI/Web prompts.
 - **Memory Scoring**: Refine `calculateSimilarity` or integrate a vector store if higher fidelity relevance is required.

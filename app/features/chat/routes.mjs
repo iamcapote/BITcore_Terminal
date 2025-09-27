@@ -3,6 +3,7 @@ import { safeSend } from '../../utils/websocket.utils.mjs';
 import { cleanChatResponse } from '../../infrastructure/ai/venice.response-processor.mjs';
 import { wsErrorHelper } from '../research/error-helper.mjs';
 import { getDefaultChatCharacterSlug } from '../../infrastructure/ai/venice.characters.mjs';
+import { getChatHistoryController } from '../chat-history/index.mjs';
 
 /**
  * Handle incoming chat messages from WebSocket clients.
@@ -38,6 +39,17 @@ export async function handleChatMessage(ws, message, session) {
         }
         
         session.chatHistory.push({ role: 'user', content: userMessage });
+        if (session.chatHistoryConversationId) {
+            try {
+                const chatHistoryController = getChatHistoryController();
+                await chatHistoryController.recordMessage(session.chatHistoryConversationId, {
+                    role: 'user',
+                    content: userMessage
+                });
+            } catch (error) {
+                quietError(`Failed to persist user message: ${error.message}`);
+            }
+        }
         
         // Initialize LLM client
         const llm = new LLMClient();
@@ -77,6 +89,17 @@ export async function handleChatMessage(ws, message, session) {
         
         // Store assistant response in history
         session.chatHistory.push({ role: 'assistant', content: assistantResponse });
+        if (session.chatHistoryConversationId) {
+            try {
+                const chatHistoryController = getChatHistoryController();
+                await chatHistoryController.recordMessage(session.chatHistoryConversationId, {
+                    role: 'assistant',
+                    content: assistantResponse
+                });
+            } catch (error) {
+                quietError(`Failed to persist assistant message: ${error.message}`);
+            }
+        }
         
         // Send response back to client
         safeSend(ws, {

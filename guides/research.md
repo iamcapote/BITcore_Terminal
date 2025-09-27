@@ -14,6 +14,7 @@ This document is the source of truth for how the current Deep Research pipeline 
 | **Path Execution** | `app/infrastructure/research/research.path.mjs` | Executes a single breadth/depth branch: query scheduling, Brave API calls, follow-up generation, and progress reporting. |
 | **Providers** | `app/features/ai/research.providers.mjs`, `app/infrastructure/search/search.providers.mjs`, `app/utils/token-classifier.mjs` | LLM prompts (Venice) for query generation, summarisation, follow-ups, and Brave search integration. |
 | **Output Plumbing** | `app/utils/research.output-manager.mjs`, `app/utils/websocket.utils.mjs` | Broadcasts progress/outputs to CLI stdout and active WebSocket sessions. |
+| **GitHub Sync Surface** | `app/commands/research.github-sync.cli.mjs`, `app/features/research/github-sync/service.mjs`, `app/infrastructure/research/github-sync.mjs`, `/app/public/github-sync/*` | Verify, pull, push, and upload research repositories with CLI parity and dashboard instrumentation. |
 
 ---
 
@@ -129,7 +130,36 @@ npm start
 
 ---
 
-## 7. Extension Points & Future Work
+## 7. GitHub Research Sync Surfaces
+
+The hardened GitHub workflow gives operators a single surface to validate connectivity, move research artifacts, and recover from drift without leaving BITcore.
+
+### 7.1 Service Contracts
+- `GithubResearchSyncService` (`app/features/research/github-sync/service.mjs`) accepts `{ action: 'verify' | 'pull' | 'push' | 'upload', repo, files? }` and returns `{ success, message, details? }`.
+- The adapter (`app/infrastructure/research/github-sync.mjs`) shells out through guarded `git` commands (`git ls-remote`, `git -C <path> pull/push`, staged commits for uploads). Exit codes and stderr are preserved in `details` for operator visibility.
+- REST entrypoint: `POST /api/research/github-sync` via `setupGithubSyncRoutes(app)`; responses mirror the service contract for easy wiring to dashboards.
+
+### 7.2 CLI Workflow (`/github-sync`)
+```bash
+/github-sync verify --repo=https://github.com/org/research-repo.git
+/github-sync pull --repo=/data/repos/research
+/github-sync upload --repo=/data/repos/research --files=reports/new-findings.md
+```
+`/github-sync upload` stages the provided files, commits with the default message (`"Upload via BITcore"`), and pushes upstream. All commands stream structured success/failure output to console and WebSocket clients.
+
+### 7.3 Dashboard Surface (`/github-sync/`)
+- Page: `/app/public/github-sync/index.html` with controller logic in `/app/public/github-sync/github-sync.js` and scoped styles in `/app/public/css/github-sync.css` (pulled in via `public/style.css`).
+- Features: action selector (verify/pull/push/upload), repo/working-directory input, optional file list, and a streaming result pane. Responses render with ✅/❌ glyphs and include stderr when available.
+- Navigation: The GitHub Sync link is present across the terminal, memory, prompts, research, and organizer dashboards for parity.
+
+### 7.4 Testing & Telemetry
+- Unit coverage: `app/tests/github-sync.test.mjs` mocks the infrastructure adapter to assert happy paths and validation failures.
+- `npm test -- github-sync` exercises the new suite in isolation; full `npm test` remains under ~11 seconds.
+- The CLI leverages the shared `cli-error-handler` so sync events flow into the same telemetry/logging pipeline as research operations.
+
+---
+
+## 8. Extension Points & Future Work
 
 - **Alternate Search Providers**: Add new providers to `app/infrastructure/search/` and plug them into `research.providers.mjs` via dependency injection.
 - **Custom Post-Actions**: Extend `ResearchController.handlePostResearchAction` to add new export targets (e.g., S3, email).

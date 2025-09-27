@@ -1,0 +1,92 @@
+/*
+ * Wiki shell layout shared by every public-facing BITcore page.
+ * Handles container sizing, header navigation, article framing, and footer styling.
+ */
+.wiki-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-top: none;
+    padding: 1.5rem 2rem 2.5rem;
+    background-color: var(--tab-active-bg);
+}
+
+.wiki-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.5rem;
+}
+
+.wiki-logo,
+.wiki-logo a {
+    font-family: 'Linux Libertine', 'Georgia', 'Times', serif;
+    font-size: 1.8rem;
+    color: var(--fg);
+}
+
+.wiki-nav ul {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+    margin: 0;
+    padding: 0;
+}
+
+.wiki-nav li {
+    font-size: 0.95rem;
+}
+
+.wiki-nav li.active a {
+    font-weight: 600;
+}
+
+.wiki-content {
+    display: grid;
+    gap: 1.25rem;
+}
+
+.wiki-article-info {
+    font-size: 0.95rem;
+    color: #666;
+}
+
+:root.dark .wiki-article-info {
+    color: #bbb;
+}
+
+.wiki-intro {
+    background: rgba(0, 0, 0, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+}
+
+:root.dark .wiki-intro {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.wiki-footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: #555;
+}
+
+:root.dark .wiki-footer {
+    color: #aaa;
+}
+
+.wiki-footer p {
+    margin-bottom: 0.5rem;
+}
+
+.wiki-footer a {
+    color: var(--lnk);
+}

@@ -1,0 +1,254 @@
+/*
+ * Terminal core presentation layer for the BITcore research console.
+ * Styles layout, input/output chrome, fullscreen affordances, and
+ * default typographic treatment of streamed research text.
+ */
+.terminal-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.5rem;
+    border: 1px solid rgba(68, 68, 68, 0.8);
+    border-radius: 10px;
+    background: radial-gradient(circle at top left, rgba(22, 34, 56, 0.6), rgba(12, 16, 24, 0.92));
+    box-shadow: 0 18px 32px rgba(8, 12, 22, 0.4);
+}
+
+.terminal-screen {
+    background-color: #1e1e1e;
+    border: 4px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 1rem 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    min-height: 420px;
+    overflow: hidden;
+    position: relative;
+}
+
+.screen-header {
+    text-align: center;
+    margin-bottom: 1rem;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.ascii-art {
+    font-family: 'Fira Code', 'Source Code Pro', monospace;
+    font-size: 0.68rem;
+    line-height: 1.1;
+    color: #9bd5ff;
+    white-space: pre;
+    letter-spacing: 0.05em;
+}
+
+.fullscreen-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: #2d2d2d;
+    color: #ddd;
+    border: 1px solid #4c4c4c;
+    border-radius: 4px;
+    padding: 0.3rem 0.8rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+    z-index: 5;
+}
+
+.fullscreen-btn:hover {
+    background-color: #3c3c3c;
+    transform: scale(1.05);
+}
+
+.terminal-output {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+    margin-bottom: 0.75rem;
+    font-family: 'Fira Code', 'Source Code Pro', monospace;
+    color: #e8e8e8;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    display: grid;
+    gap: 0.25rem;
+}
+
+.terminal-line {
+    color: inherit;
+}
+
+.semantic-decorator {
+    color: #7a7a7a;
+    text-align: center;
+    letter-spacing: 0.4em;
+}
+
+#progress-bar {
+    display: flex;
+    align-items: center;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+}
+
+#progress-bar span {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #4fe3c1, #8ac8ff);
+    transition: width 0.2s ease;
+}
+
+.terminal-input-wrapper {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 0.6rem;
+    background: rgba(12, 18, 32, 0.8);
+    border: 1px solid rgba(118, 185, 255, 0.28);
+    border-radius: 999px;
+    padding: 0.55rem 0.9rem;
+}
+
+.prompt {
+    font-family: 'Fira Code', 'Source Code Pro', monospace;
+    color: #88c8ff;
+}
+
+#terminal-input {
+    background: transparent;
+    border: none;
+    outline: none;
+    font: inherit;
+    color: #fdfdff;
+    padding: 0;
+}
+
+.blinking-cursor {
+    width: 0.35rem;
+    height: 1rem;
+    border-radius: 1px;
+    background-color: #fdfdff;
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+.control-panel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.control-button {
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.gradient-btn {
+    background: linear-gradient(135deg, #555, #333);
+    color: #fff;
+    border: 1px solid #666;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    transition: background 0.3s ease, transform 0.2s ease, box-shadow 0.3s ease;
+}
+
+.gradient-btn:hover {
+    background: linear-gradient(135deg, #666, #444);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+}
+
+.terminal-container.fullscreen {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #111;
+    padding: 2rem;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+.terminal-container:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    background: #10141f;
+    padding: 1rem;
+    margin: 0;
+    border: none;
+    display: flex;
+    flex-direction: column;
+}
+
+.terminal-container:fullscreen .terminal-screen {
+    flex-grow: 1;
+    margin: 0;
+    border: none;
+    padding: 1rem;
+}
+
+.terminal-container:fullscreen .terminal-output {
+    flex-grow: 1;
+    margin: 0 0 0.75rem;
+    border: none;
+}
+
+.terminal-container:fullscreen #progress-bar {
+    margin: 0 0 0.75rem;
+}
+
+.terminal-container:fullscreen .terminal-input-wrapper {
+    border: none;
+    padding: 0.75rem 1.1rem;
+}
+
+.terminal-container:fullscreen .control-panel {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    border: none;
+}
+
+.terminal-container:fullscreen .fullscreen-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 1001;
+}
+
+.terminal-screen.focus {
+    border-color: #6262ff;
+    box-shadow: 0 0 0 1px rgba(120, 140, 255, 0.4);
+}
+
+.ai-thinking-output {
+    color: #61affe;
+    margin-bottom: 0.6rem;
+    font-style: italic;
+    padding-left: 0.75rem;
+    border-left: 2px solid #61affe;
+}
+
+.thinking-header {
+    font-weight: 600;
+    color: #61affe;
+}
+
+.ai-response-output {
+    color: #39cc8f;
+    margin-bottom: 0.75rem;
+}

@@ -7,7 +7,7 @@ class WebComm {
     constructor(url) {
         this.url = url;
         this.ws = null;
-        this.handlers = {}; // Store handlers for different message types
+    this.handlers = new Map(); // Store handlers for different message types (multiple allowed)
         this.reconnectInterval = 5000; // Reconnect every 5 seconds
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 10;
@@ -254,8 +254,34 @@ class WebComm {
      * @param {function} handler - The function to call when a message of this type is received.
      */
     registerHandler(type, handler) {
-        this.handlers[type] = handler;
-        console.log(`Registered handler for type: ${type}`); // Add log
+        if (!type || typeof handler !== 'function') {
+            console.warn(`[WebComm] Ignoring invalid handler registration for type: ${type}`);
+            return () => {};
+        }
+
+        const normalizedType = String(type);
+        if (!this.handlers.has(normalizedType)) {
+            this.handlers.set(normalizedType, new Set());
+        }
+
+        const handlerSet = this.handlers.get(normalizedType);
+        handlerSet.add(handler);
+        console.log(`Registered handler for type: ${normalizedType} (total ${handlerSet.size})`);
+
+        return () => this.unregisterHandler(normalizedType, handler);
+    }
+
+    unregisterHandler(type, handler) {
+        const normalizedType = String(type);
+        const handlerSet = this.handlers.get(normalizedType);
+        if (!handlerSet) {
+            return;
+        }
+
+        handlerSet.delete(handler);
+        if (handlerSet.size === 0) {
+            this.handlers.delete(normalizedType);
+        }
     }
 
     /**
@@ -264,19 +290,29 @@ class WebComm {
      * @param {object} message - The message data.
      */
     triggerHandler(type, message) {
-        if (this.handlers[type]) {
+        const handlers = this.handlers.get(type);
+        if (!handlers || handlers.size === 0) {
+            return;
+        }
+
+        for (const handler of handlers) {
             try {
-                this.handlers[type](message);
+                handler(message);
             } catch (error) {
                 console.error(`Error in handler for message type "${type}":`, error);
-                // Avoid triggering the 'error' handler for an error *within* a handler
-                // to prevent potential infinite loops if the error handler itself fails.
-                if (type !== 'error' && this.handlers['error']) {
-                    this.handlers['error']({ error: `Client-side handler error: ${error.message}` });
+                if (type !== 'error') {
+                    const errorHandlers = this.handlers.get('error');
+                    if (errorHandlers && errorHandlers.size > 0) {
+                        for (const errorHandler of errorHandlers) {
+                            try {
+                                errorHandler({ error: `Client-side handler error: ${error.message}` });
+                            } catch (innerError) {
+                                console.error('[WebComm] Nested error handler failure:', innerError);
+                            }
+                        }
+                    }
                 }
             }
-        } else {
-            // console.warn(`No handler registered for message type: ${type}`); // Can be noisy
         }
     }
 

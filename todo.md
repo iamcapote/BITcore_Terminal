@@ -1,8 +1,9 @@
-# MCP Application - ToDo List
+# BITcore Terminal Application - To Do List
 
-This list tracks specific tasks to be implemented or fixed.
+> **Note:** Treat this plan as additive context. Engineers should feel empowered to iterate, split, or parallelize tasks as bandwidth allows while preserving BITcore’s architectural standards and security posture.
 
-## High Priority
+
+## Completed
 
 *   [COMPLETED] Fix `effectiveError is not a function` in `executeResearch` catch block.
 *   [COMPLETED] Fix `cmdOutput is not a function` in `executeChat` for public users.
@@ -16,25 +17,8 @@ This list tracks specific tasks to be implemented or fixed.
     *   [COMPLETED] Handle nested password prompt for GitHub token if needed.
 *   [COMPLETED] Ensure `promptData` (like `suggestedFilename`) is correctly set in `executeResearch` before prompting for post-research action.
 
-## Medium Priority
+---
 
-*   [COMPLETED] Refresh architecture documentation (README, research, chat, auth, token-classifier guides).
-*   Implement persistent storage for research results beyond session/GitHub (e.g., local DB or files tied to user).
-    *   Add `/research list` command.
-    *   Add `/research download <id>` command.
-*   Refactor `executeResearch` to reduce complexity.
-*   Add more robust input validation for command arguments (e.g., depth/breadth ranges).
-*   Implement basic API token usage tracking (e.g., count calls per session).
-*   Review and enhance security aspects (input sanitization, rate limiting).
-
-## Low Priority
-
-*   Implement streaming responses for LLM calls and research steps.
-*   Abstract `LLMClient` further to support multiple providers.
-*   Develop a comprehensive automated testing suite.
-*   Enhance web terminal UI (command history, better formatting).
-*   Explore concurrency models for WebSocket message handling if needed.
-*   Add more user commands for memory interaction (`/memory search`, `/memory delete`).
 
 ## High-Priority Bug Backlog
 
@@ -54,13 +38,30 @@ This list tracks specific tasks to be implemented or fixed.
 - [ ] **(Testing)** Verify public profile restrictions for `/research`, `/keys`, and `/chat`.
 - [ ] **(Testing)** Verify `/chat` command works correctly for logged-in users in Web-CLI.
 
-### 3.1 Chat & Memory
+
+---
+
+## Medium Priority
+
+*   Implement persistent storage for research results beyond session/GitHub (e.g., local DB or files tied to user).
+    *   Add `/research list` command.
+    *   Add `/research download <id>` command.
+*   Refactor `executeResearch` to reduce complexity.
+*   Add more robust input validation for command arguments (e.g., depth/breadth ranges).
+*   Implement basic API token usage tracking (e.g., count calls per session).
+*   Review and enhance security aspects (input sanitization, rate limiting).
+
+---
+
+
+### Chat & Memory
 - [ ] Retrieve relevant memories before LLM call; store after each turn (CLI & Web).
 - [ ] `/memory stats`, `/exitmemory`, flag `--memory` end-to-end in Web-CLI.
 - [ ] Persist sessions beyond memory-store (DB/kv).
 
-### 3.4 Configuration
-- [ ] Move hard-coded ports, paths, timeouts to env/config.
+
+---
+
 
 ### Infrastructure / Refactor
 
@@ -83,3 +84,37 @@ This list tracks specific tasks to be implemented or fixed.
 - [ ] **Configuration Management:** Consider a more robust way to manage API keys and GitHub settings beyond simple environment variables or user prompts (e.g., encrypted config file).
 - [ ] **Testing:** Add unit and integration tests for the research engine, command handlers, and WebSocket interactions.
 - [ ] **Documentation:** Update `/help` command text to mirror current docs/features.
+
+
+---
+
+
+###  Scheduler for Research Missions
+
+-[ ] ##  Research Scheduling
+- **Task**: Use node-cron to fetch research requests from GitHub.
+- **Installation**: Run `npm install node-cron` if not installed.
+
+---
+
+```javascript
+const cron = require('node-cron');
+const { fetchResearchRequests } = require('./path/to/github/api'); // Adjust path accordingly
+// Set up the scheduler
+cron.schedule('0 * * * *', async () => {
+    const requests = await fetchResearchRequests();
+    for (const request of requests) {
+        await feedToAI(request); // Adjust with your function implementation
+    }
+});
+```
+
+# Future
+
+- [ ] Length of files. According to #AGENTS.md , the max size for files should be 300-500 LoC . We need to review file by file for the entire codebase to verify it is following this rule. the more modular and micro-architecture structure the better it is for the developers that debug. First start by identifying the files to fix and then related files that are connectedd to this long file. since files are connected and reference each other you have to edit meticulously and intelligently. You can separate files by nodes and modules and divide everything into micro structures (routers, orchestrators, managers, systems) . One big example file that needs a lot of tender love and care is the terminal file... we should be dividing this into several nodes so that this function is better displayed. 
+
+- [ ] Related to the last item -> each file in our codebase should have at the top a descriptive and comprehensive comments written in a precise brief and accurate way that describes at a glance what each file does. Additionally each sections should have their own comments to explain and expandd what each functiion is doing . The text should be as short as possible to be clear but as long as poossible to be precise. Information must be condensed. Comments should be timeless and not hard to undertstand. Comments should not be meta-commentary. signal-posting or similar. It must be straight forward to the point and assume the reader is intelligent. Short precise sentences. Posting fixes and to dos in comments is prohibited, there are files for this. use the appropriate channels. comments are there to explain and describe the code architecture structure functional systemic behaviors and similar. After reading this include a summarized version of this philosophy described in this paragraph in the #AGENTS.md 
+
+- [ ] Every function and every setting should be displayed and easily accessed from both the terminal and the web-cli display . This creates power users that understand EXACTLY what is under the hood. 
+
+> **Note:** Treat this plan as additive context. Engineers should feel empowered to iterate, split, or parallelize tasks as bandwidth allows while preserving BITcore’s architectural standards and security posture.

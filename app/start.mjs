@@ -9,6 +9,17 @@ import { output } from './utils/research.output-manager.mjs';
 import { interactiveCLI } from './utils/cli-runner.mjs'; // Correctly import interactiveCLI
 import { handleWebSocketConnection } from './features/research/routes.mjs';
 import { commands, parseCommandArgs, getHelpText } from './commands/index.mjs'; // Import commands and parser
+import { setupRoutes as setupMemoryRoutes } from './features/memory/routes.mjs';
+import { setupPromptRoutes } from './features/prompts/routes.mjs';
+import { getMissionScheduler, getMissionConfig } from './features/missions/index.mjs';
+import { setupMissionRoutes } from './features/missions/routes.mjs';
+import { setupStatusRoutes } from './features/status/routes.mjs';
+import { setupGithubSyncRoutes } from './features/research/github-sync/routes.mjs';
+import { setupTerminalPreferencesRoutes } from './features/preferences/terminal-preferences.routes.mjs';
+import { setupModelBrowserRoutes } from './features/ai/model-browser/index.mjs';
+import { setupChatHistoryRoutes } from './features/chat-history/routes.mjs';
+import { setupLogRoutes } from './features/logs/routes.mjs';
+import { setupChatPersonaRoutes } from './features/chat/chat-persona.routes.mjs';
 
 dotenv.config();
 
@@ -23,6 +34,18 @@ const WEBSOCKET_PATH = '/api/research/ws'; // Define the WebSocket path
 // --- Middleware ---
 app.use(express.json()); // For parsing application/json
 app.use(express.static(path.join(__dirname, 'public'))); // Serve static files
+
+// --- Feature Routes ---
+setupMemoryRoutes(app);
+setupPromptRoutes(app);
+setupMissionRoutes(app, { logger: console });
+setupStatusRoutes(app, { logger: console });
+setupGithubSyncRoutes(app);
+setupTerminalPreferencesRoutes(app, { logger: console });
+setupModelBrowserRoutes(app, { logger: console });
+setupChatHistoryRoutes(app, { logger: console });
+setupLogRoutes(app, { logger: console });
+setupChatPersonaRoutes(app, { logger: console });
 
 // --- WebSocket Setup ---
 // Ensure the server object is correctly passed
@@ -48,6 +71,39 @@ app.get('/research', (req, res) => {
   res.redirect('/research/');
 });
 
+// --- Self Organizer Route ---
+
+// --- Self Organizer Route ---
+app.get('/organizer/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'organizer', 'index.html'));
+});
+app.get('/organizer', (req, res) => {
+  res.redirect('/organizer/');
+});
+
+// --- GitHub Research Sync Dashboard Route ---
+app.get('/github-sync/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'github-sync', 'index.html'));
+});
+app.get('/github-sync', (req, res) => {
+  res.redirect('/github-sync/');
+});
+
+app.get('/chat-history/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'chat-history', 'index.html'));
+});
+app.get('/chat-history', (req, res) => {
+  res.redirect('/chat-history/');
+});
+
+app.get('/logs/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'logs', 'index.html'));
+});
+app.get('/logs', (req, res) => {
+  res.redirect('/logs/');
+});
+
+
 // --- Error Handling Middleware (Basic) ---
 app.use((err, req, res, next) => {
   console.error("Unhandled Error:", err.stack || err);
@@ -64,6 +120,14 @@ async function startServer() {
     await userManager.initialize();
     const currentUser = userManager.getCurrentUser();
     console.log(`[Server] Operating in single-user mode as ${currentUser.username} (${currentUser.role}).`);
+
+  const missionConfig = getMissionConfig();
+  if (missionConfig.schedulerEnabled) {
+    const missionScheduler = getMissionScheduler({ logger: console, intervalMs: missionConfig.pollingIntervalMs });
+    missionScheduler.start();
+  } else {
+    console.log('[Server] Mission scheduler disabled via feature flag.');
+  }
   // Use the HTTP server instance directly for listening
     server.listen(PORT, '0.0.0.0', () => {
     console.log(`[Server] Express server running on http://0.0.0.0:${PORT}`);
@@ -112,6 +176,14 @@ async function startCli() {
         const currentUser = userManager.getCurrentUser();
         console.log(`[CLI] Operating in single-user mode as ${currentUser.username} (${currentUser.role}).`);
         console.log("Welcome to MCP Console CLI. Type /help for commands, /exit to quit.");
+
+  const missionConfig = getMissionConfig();
+  if (missionConfig.schedulerEnabled) {
+    const missionScheduler = getMissionScheduler({ logger: console, intervalMs: missionConfig.pollingIntervalMs });
+    missionScheduler.start();
+  } else {
+    console.log('[CLI] Mission scheduler disabled via feature flag.');
+  }
 
         // Use interactiveCLI, passing the command map and output function
         interactiveCLI({ // Ensure this calls interactiveCLI

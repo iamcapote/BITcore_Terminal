@@ -1,0 +1,78 @@
+.conversation-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0.5rem 0;
+}
+
+.conversation-message {
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--wiki-surface-elevated, #161823);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.conversation-message header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.conversation-message-role {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.conversation-message-user {
+  background: rgba(56, 158, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(56, 158, 255, 0.35);
+}
+
+.conversation-message-assistant {
+  background: rgba(120, 224, 143, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(120, 224, 143, 0.3);
+}
+
+.conversation-message-system {
+  background: rgba(255, 174, 66, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 174, 66, 0.3);
+}
+
+.conversation-message p {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.conversation-metadata {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 1rem;
+}
+
+.conversation-metadata dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.25rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.conversation-metadata dd {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.9);
+  word-break: break-word;
+}
+
+.organizer-list-item.is-selected {
+  background: rgba(95, 134, 255, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(95, 134, 255, 0.45);
+}

@@ -31,7 +31,8 @@ export class ResearchEngine {
       progressHandler = () => {},    // <= NEW: Add progressHandler destructuring with default
       isWebSocket = false,
       webSocketClient = null,
-      overrideQueries = null // --- NEW: Accept overrideQueries in config ---
+      overrideQueries = null, // --- NEW: Accept overrideQueries in config ---
+      telemetry = null
     } = config;
 
     // --- store config ---
@@ -51,6 +52,7 @@ export class ResearchEngine {
     this.isWebSocket   = isWebSocket;
     this.webSocketClient = webSocketClient;
     this.overrideQueries = overrideQueries; // --- Store overrideQueries ---
+  this.telemetry = telemetry || null;
 
     // --- NEW: Add convenience aliases using the correctly assigned handlers ---
     this.output = this.outputHandler;
@@ -166,6 +168,19 @@ export class ResearchEngine {
 
     this.outputHandler('\n[ResearchEngine] Starting research...');
     this.outputHandler(`[ResearchEngine] Context query: "${contextQuery.original}"`);
+    this.telemetry?.emitStatus({
+      stage: 'engine-start',
+      message: 'Research engine initialized.',
+      meta: {
+        query: contextQuery.original,
+        depth: currentDepth,
+        breadth: currentBreadth
+      }
+    });
+    this.telemetry?.emitThought({
+      text: `Exploring root query: "${contextQuery.original}"`,
+      stage: 'engine'
+    });
     if (contextQuery.metadata) { // Check metadata on contextQuery
         this.outputHandler('[ResearchEngine] Metadata attached to context query:');
         this.outputHandler(typeof contextQuery.metadata === 'object'
@@ -197,7 +212,8 @@ export class ResearchEngine {
       // Pass the engine's config object, the progressData object, AND the shared searchProvider instance
       const pathConfig = {
           ...this.config, // Pass original config (keys, user, handlers)
-          searchProvider: this.searchProvider // Pass the shared provider instance
+      searchProvider: this.searchProvider, // Pass the shared provider instance
+      telemetry: this.telemetry
       };
       const pathInstance = new ResearchPath(pathConfig, progressData); // Pass combined config and progressData object
 
@@ -209,6 +225,10 @@ export class ResearchEngine {
       // --- FIX: Use this.overrideQueries stored during construction ---
       if (this.overrideQueries && Array.isArray(this.overrideQueries) && this.overrideQueries.length > 0) {
         this.output(`[ResearchEngine] Using ${this.overrideQueries.length} override queries.`);
+        this.telemetry?.emitStatus({
+          stage: 'engine-override',
+          message: `Executing override queries (${this.overrideQueries.length}).`
+        });
         // --- FIX: Update totalQueries based on overrideQueries ---
         // Estimate: Each override query might go down 'depth' levels, generating 'breadth' sub-queries.
         // Simpler estimate: Just count the override queries as the main tasks.
@@ -224,6 +244,10 @@ export class ResearchEngine {
       } else {
         // Execute standard research flow using the path instance
         this.output(`[ResearchEngine] Starting standard research flow for query: "${contextQuery.original}" (Depth: ${currentDepth}, Breadth: ${currentBreadth})`);
+        this.telemetry?.emitStatus({
+          stage: 'engine-flow',
+          message: 'Starting standard research flow.'
+        });
         // Estimate total queries for standard flow
         // A more accurate estimate considering recursion: Sum(breadth^i for i from 0 to depth)
         let estimatedTotal = 0;
@@ -249,6 +273,10 @@ export class ResearchEngine {
       progressData.status = 'Generating Summary';
       progressData.currentAction = 'Generating final summary...';
       progressFn(progressData);
+      this.telemetry?.emitStatus({
+        stage: 'summary',
+        message: 'Generating final research summary.'
+      });
 
       const summary = await generateSummary({
         query: contextQuery.original, // Use original context query text
@@ -267,6 +295,10 @@ export class ResearchEngine {
       progressData.status = 'Generating Result';
       progressData.currentAction = 'Formatting final report...';
       progressFn(progressData);
+      this.telemetry?.emitStatus({
+        stage: 'finalizing',
+        message: 'Formatting final research report.'
+      });
 
       const resultData = await this.generateMarkdownResult(
         contextQuery.original, // Save using the original context query
@@ -281,6 +313,10 @@ export class ResearchEngine {
       progressData.status = 'Complete';
       progressData.currentAction = 'Research complete.';
       progressFn(progressData);
+      this.telemetry?.emitStatus({
+        stage: 'engine-complete',
+        message: 'Research engine completed successfully.'
+      });
 
       // --- FIX: Include unique learnings/sources in the final result ---
       this.output(`[ResearchEngine] Research complete. Suggested Filename: ${resultData.suggestedFilename}`);
@@ -306,6 +342,11 @@ export class ResearchEngine {
            currentAction: `Error: ${error.message}`
        };
        progressFn(errorProgress);
+      this.telemetry?.emitStatus({
+        stage: 'engine-error',
+        message: 'Research engine encountered an error.',
+        detail: error.message
+      });
       // Return a minimal error structure
       return {
         learnings: [`Research failed for query: ${contextQuery?.original || 'N/A'}`],
@@ -341,6 +382,11 @@ export class ResearchEngine {
       }
 
       this.output(`[ResearchEngine] Processing override query ${i+1}/${overrideQueries.length}: "${queryObj.original}"`);
+      this.telemetry?.emitThought({
+        text: `Override query ${i + 1}: ${queryObj.original}`,
+        stage: 'engine-override',
+        meta: { index: i + 1, total: overrideQueries.length }
+      });
 
       // Use the path instance's research method for each override query
       // This will handle the recursive search for each starting query.
@@ -353,6 +399,10 @@ export class ResearchEngine {
       // Accumulate results
       learnings.push(...pathResult.learnings);
       pathResult.sources.forEach(source => sources.add(source));
+      this.telemetry?.emitStatus({
+        stage: 'engine-override',
+        message: `Completed override query ${i + 1} of ${overrideQueries.length}.`
+      });
 
       // Results are accumulated directly in learnings/sources by processQuery
     }

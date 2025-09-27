@@ -18,19 +18,25 @@ import { cleanChatResponse } from '../../infrastructure/ai/venice.response-proce
 import { executeResearch } from '../../commands/research.cli.mjs';
 // --- FIX: Removed incorrect import ---
 // import { wsPrompt } from './ws-prompt.util.mjs'; // wsPrompt is defined in this file
-import { uploadToGitHub } from '../../utils/github.utils.mjs'; // Import the new utility
 import { outputManager } from '../../utils/research.output-manager.mjs'; // Use outputManager for logging
+import { createResearchTelemetry } from './research.telemetry.mjs';
+import { getGitHubResearchSyncController } from './research.github-sync.controller.mjs';
+import { getStatusController } from '../status/index.mjs';
+import { getChatHistoryController } from '../chat-history/index.mjs';
+import { logChannel } from '../../utils/log-channel.mjs';
 
 const router = express.Router();
 
 // Store active chat sessions with their memory managers
 const activeChatSessions = new Map();
 const wsSessionMap = new WeakMap(); // Maps WebSocket instance to Session ID
+const telemetryRegistry = new Map(); // Maps username to shared research telemetry channel
 
 // Timeout for inactive sessions (e.g., 1 hour)
 const SESSION_INACTIVITY_TIMEOUT = 60 * 60 * 1000;
 // Timeout for pending prompts (e.g., 2 minutes)
 const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
+const STATUS_REFRESH_INTERVAL_MS = 60 * 1000;
 
 // --- NEW: Helper to explicitly control client input state ---
 function enableClientInput(ws) {
@@ -53,6 +59,81 @@ function disableClientInput(ws) {
   }
 }
 // ---
+
+function respondWithGitHubError(res, error) {
+    const status = typeof error?.status === 'number'
+        ? error.status
+        : (/404/.test(error?.message || '') ? 404 : (error instanceof RangeError ? 412 : 500));
+    outputManager.error?.(`[GitHubResearch] ${error?.message || 'unknown error'} (status ${status})`);
+    res.status(status).json({ error: error.message });
+}
+
+router.get('/github/verify', async (req, res) => {
+    try {
+        const controller = getGitHubResearchSyncController();
+        const result = await controller.verify();
+        outputManager.log?.(`[GitHubResearch] Verified ${result.config.owner}/${result.config.repo} on branch ${result.config.branch}`);
+        res.json(result);
+    } catch (error) {
+        respondWithGitHubError(res, error);
+    }
+});
+
+router.get('/github/files', async (req, res) => {
+    try {
+        const controller = getGitHubResearchSyncController();
+        const result = await controller.listEntries({ path: req.query.path || '', ref: req.query.ref });
+        outputManager.log?.(`[GitHubResearch] Listed ${result.entries.length} entries at ${result.path || '/'} (${result.ref || 'default'})`);
+        res.json(result);
+    } catch (error) {
+        respondWithGitHubError(res, error);
+    }
+});
+
+router.get('/github/file', async (req, res) => {
+    const { path, ref } = req.query;
+    if (!path) {
+        return res.status(400).json({ error: 'query parameter "path" is required' });
+    }
+    try {
+        const controller = getGitHubResearchSyncController();
+        const file = await controller.fetchFile({ path, ref });
+        outputManager.log?.(`[GitHubResearch] Fetched ${path}${ref ? `@${ref}` : ''}`);
+        res.json(file);
+    } catch (error) {
+        respondWithGitHubError(res, error);
+    }
+});
+
+router.post('/github/push', async (req, res) => {
+    const { files, message, branch } = req.body || {};
+    if (!Array.isArray(files) || files.length === 0) {
+        return res.status(400).json({ error: 'Request body must include a non-empty "files" array.' });
+    }
+    try {
+        const controller = getGitHubResearchSyncController();
+        const result = await controller.pushBatch({ files, message, branch });
+        outputManager.log?.(`[GitHubResearch] Pushed ${files.length} file(s)${branch ? ` to ${branch}` : ''}`);
+        res.json(result);
+    } catch (error) {
+        respondWithGitHubError(res, error);
+    }
+});
+
+router.post('/github/upload', async (req, res) => {
+    const { path, content, message, branch } = req.body || {};
+    if (!path || typeof content !== 'string') {
+        return res.status(400).json({ error: 'Body must include "path" and string "content".' });
+    }
+    try {
+        const controller = getGitHubResearchSyncController();
+        const result = await controller.uploadFile({ path, content, message, branch });
+        outputManager.log?.(`[GitHubResearch] Uploaded ${path}${branch ? ` to ${branch}` : ''}`);
+        res.json(result);
+    } catch (error) {
+        respondWithGitHubError(res, error);
+    }
+});
 
 router.post('/', async (req, res) => {
   try {
@@ -84,10 +165,49 @@ router.post('/', async (req, res) => {
 export function handleWebSocketConnection(ws, req) {
   console.log('[WebSocket] New connection established');
 
+    const statusController = getStatusController();
+    let statusIntervalId = null;
+
+    const pushStatusSummary = async ({ validate = false, reason = 'interval' } = {}) => {
+        try {
+            const summary = await statusController.summary({ validateGitHub: Boolean(validate) });
+            safeSend(ws, { type: 'status-summary', data: summary, meta: { reason } });
+        } catch (error) {
+            console.error(`[WebSocket] Failed to emit status summary (${reason}): ${error.message}`);
+            safeSend(ws, { type: 'status-summary', error: error.message, meta: { reason, failed: true } });
+        }
+    };
+
   // --- Start: Added Try/Catch for Initial Setup ---
   try {
-    const sessionId = crypto.randomUUID();
+        const sessionId = crypto.randomUUID();
         const current = userManager.getCurrentUser();
+        const telemetryKey = current?.username || 'operator';
+
+        let telemetryChannel = telemetryRegistry.get(telemetryKey);
+        if (!telemetryChannel) {
+            telemetryChannel = createResearchTelemetry({
+                send: (type, payload) => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        safeSend(ws, { type, data: payload });
+                    }
+                }
+            });
+            telemetryRegistry.set(telemetryKey, telemetryChannel);
+        } else {
+            telemetryChannel.updateSender((type, payload) => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    safeSend(ws, { type, data: payload });
+                }
+            });
+            telemetryChannel.replay((type, payload) => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    safeSend(ws, { type, data: payload });
+                }
+            });
+            telemetryChannel.emitStatus({ stage: 'reconnected', message: 'Telemetry channel resumed after reconnect.' });
+        }
+
         const sessionData = {
       sessionId: sessionId,
       webSocketClient: ws,
@@ -111,6 +231,7 @@ export function handleWebSocketConnection(ws, req) {
       sessionCharacter: null,  // To store the character for the session (chat/research)
       // Classifier model/character are handled by the classifier utility itself or ResearchEngine
       // --- END ADDED ---
+    researchTelemetry: telemetryChannel,
     };
     activeChatSessions.set(sessionId, sessionData);
     wsSessionMap.set(ws, sessionId);
@@ -125,7 +246,18 @@ export function handleWebSocketConnection(ws, req) {
     safeSend(ws, { type: 'output', data: 'Welcome to MCP Terminal!' });
     safeSend(ws, { type: 'output', data: `Single-user mode active as ${sessionData.username} (${sessionData.role}). No login required.` });
     safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
+        const initialLogSnapshot = logChannel.getSnapshot({ limit: 120 });
+        if (initialLogSnapshot.length) {
+            safeSend(ws, { type: 'log-snapshot', logs: initialLogSnapshot });
+        }
     enableClientInput(ws); // Explicitly enable input after initial setup
+
+    telemetryChannel.emitStatus({ stage: 'connected', message: 'Research telemetry channel ready.' });
+
+        pushStatusSummary({ reason: 'initial' });
+        statusIntervalId = setInterval(() => {
+            pushStatusSummary({ reason: 'scheduled' });
+        }, STATUS_REFRESH_INTERVAL_MS);
 
     console.log(`[WebSocket] Initial setup complete for session ${sessionId}.`);
 
@@ -133,6 +265,10 @@ export function handleWebSocketConnection(ws, req) {
     console.error(`[WebSocket] CRITICAL ERROR during initial connection setup: ${setupError.message}`, setupError.stack);
     // Attempt to send an error message before closing, but it might fail
     safeSend(ws, { type: 'error', error: `Server setup error: ${setupError.message}` });
+        if (statusIntervalId) {
+            clearInterval(statusIntervalId);
+            statusIntervalId = null;
+        }
     // Close the connection immediately due to setup failure
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
       ws.close(1011, "Server setup error"); // 1011: Internal Error
@@ -208,7 +344,14 @@ export function handleWebSocketConnection(ws, req) {
 
       // --- Route message based on session state and message type ---
       // --- FIX: Modified routing logic ---
-      if (message.type === 'command') {
+            if (message.type === 'status-refresh') {
+                    const validateFlag = message.validate;
+                    const shouldValidate = validateFlag === true
+                        || validateFlag === 1
+                        || (typeof validateFlag === 'string' && ['1', 'true', 'yes', 'on'].includes(validateFlag.toLowerCase()));
+                    pushStatusSummary({ validate: shouldValidate, reason: 'client' });
+                    enableInputAfterProcessing = true;
+            } else if (message.type === 'command') {
           // If in chat mode, let handleChatMessage decide how to process the command
           if (currentSession.isChatActive) {
               console.log("[WebSocket] Routing command message to handleChatMessage (chat active).");
@@ -279,16 +422,23 @@ export function handleWebSocketConnection(ws, req) {
     }
   });
 
-  ws.on('close', (code, reason) => {
+    ws.on('close', async (code, reason) => {
     const closedSessionId = wsSessionMap.get(ws);
     const reasonString = reason ? reason.toString() : 'N/A';
     console.log(`[WebSocket] Connection closed (Session ${closedSessionId}, Code: ${code}, Reason: ${reasonString})`);
+        if (statusIntervalId) {
+            clearInterval(statusIntervalId);
+            statusIntervalId = null;
+        }
     output.removeWebSocketClient(ws);
     // --- ADD: Clear ping/pong timers associated with the session if any (though client manages its own) ---
     // No server-side ping interval per session in this design, client initiates.
 
     if (closedSessionId && activeChatSessions.has(closedSessionId)) {
       const session = activeChatSessions.get(closedSessionId);
+            if (session.researchTelemetry) {
+                session.researchTelemetry.updateSender(null);
+            }
       // Ensure pending prompt is rejected if connection closes unexpectedly
       if (session.pendingPromptReject) {
         console.log(`[WebSocket] Rejecting pending server-side prompt for closed session ${closedSessionId}.`);
@@ -303,10 +453,18 @@ export function handleWebSocketConnection(ws, req) {
         // Reject the promise to unblock any waiting async function
         rejectFn(new Error("WebSocket connection closed during prompt."));
       }
-      if (session.memoryManager) {
-        console.log(`[WebSocket] Nullifying memory manager for closed session ${closedSessionId}`);
-        session.memoryManager = null; // Release memory manager resources if any
-      }
+            if (session.memoryManager) {
+                console.log(`[WebSocket] Nullifying memory manager for closed session ${closedSessionId}`);
+                session.memoryManager = null; // Release memory manager resources if any
+            }
+            if (session.chatHistoryConversationId) {
+                try {
+                    const chatHistoryController = getChatHistoryController();
+                    await chatHistoryController.closeConversation(session.chatHistoryConversationId, { reason: `socket-close-${code}` });
+                } catch (error) {
+                    outputManager.warn(`[WebSocket] Failed to finalize chat conversation for closed session ${closedSessionId}: ${error.message}`);
+                }
+            }
       // --- FIX: Clear currentUser and lastResearchResult on close ---
       session.currentUser = null;
       session.currentResearchResult = null;
@@ -319,7 +477,7 @@ export function handleWebSocketConnection(ws, req) {
     }
   });
 
-  ws.on('error', (error) => {
+    ws.on('error', async (error) => {
     const errorSessionId = wsSessionMap.get(ws);
     // --- Start: Enhanced Error Logging ---
     console.error(`[WebSocket] Connection error (Session ${errorSessionId || 'N/A'}):`, error.message, error.stack);
@@ -356,6 +514,17 @@ export function handleWebSocketConnection(ws, req) {
             console.log(`[WebSocket] Releasing memory manager for session ${errorSessionId}.`);
             session.memoryManager = null; // Release memory manager resources
         }
+        if (session.chatHistoryConversationId) {
+            try {
+                const chatHistoryController = getChatHistoryController();
+                await chatHistoryController.closeConversation(session.chatHistoryConversationId, { reason: 'socket-error' });
+            } catch (closeError) {
+                outputManager.warn(`[WebSocket] Failed to finalize chat conversation after error for session ${errorSessionId}: ${closeError.message}`);
+            }
+        }
+        if (session.researchTelemetry) {
+                    session.researchTelemetry.updateSender(null);
+                }
         // --- FIX: Clear currentUser and lastResearchResult on error ---
         session.currentUser = null;
         session.currentResearchResult = null;
@@ -608,6 +777,17 @@ async function handleCommandMessage(ws, message, session) {
         }
         // Add progress handler specifically for research
         if (commandName === 'research') {
+            const telemetry = session.researchTelemetry;
+            if (telemetry) {
+                telemetry.updateSender((type, payload) => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        safeSend(ws, { type, data: payload });
+                    }
+                });
+                telemetry.clearHistory();
+                telemetry.emitStatus({ stage: 'preparing', message: 'Preparing research command.' });
+                options.telemetry = telemetry;
+            }
             if (!options.query) { // Ensure query exists after potential interactive flow
                 commandError('Research query is missing. Please provide a query or use interactive mode.');
                 return false; // commandError enables input
@@ -722,12 +902,32 @@ async function handleChatMessage(ws, message, session) {
             session.isChatActive = false;
             session.chatHistory = [];
             if (session.memoryManager) session.memoryManager = null;
+            if (session.chatHistoryConversationId) {
+                try {
+                    const chatHistoryController = getChatHistoryController();
+                    await chatHistoryController.closeConversation(session.chatHistoryConversationId, { reason: 'exit' });
+                } catch (error) {
+                    outputManager.warn(`[WebSocket][Chat] Failed to finalize conversation on exit: ${error.message}`);
+                } finally {
+                    delete session.chatHistoryConversationId;
+                }
+            }
             safeSend(ws, { type: 'chat-exit' });
             safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
             return true;
         }
         // --- ADD: Handle /exitresearch ---
         if (command === 'exitresearch') {
+            const telemetry = session.researchTelemetry;
+            if (telemetry) {
+                telemetry.updateSender((type, payload) => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        safeSend(ws, { type, data: payload });
+                    }
+                });
+                telemetry.clearHistory();
+                telemetry.emitStatus({ stage: 'preparing', message: 'Preparing research from chat history.' });
+            }
             // Call the new exitResearch logic from chat.cli.mjs
             const result = await executeExitResearch({
                 session,
@@ -738,6 +938,7 @@ async function handleChatMessage(ws, message, session) {
                 isWebSocket: true,
                 webSocketClient: ws,
                 wsPrompt,
+                telemetry,
                 progressHandler: (progressData) => {
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         safeSend(ws, { type: 'progress', data: progressData });
@@ -756,6 +957,17 @@ async function handleChatMessage(ws, message, session) {
     // store user line
     session.chatHistory ??= [];
     session.chatHistory.push({ role: 'user', content: userMsg });
+    if (session.chatHistoryConversationId) {
+        try {
+            const chatHistoryController = getChatHistoryController();
+            await chatHistoryController.recordMessage(session.chatHistoryConversationId, {
+                role: 'user',
+                content: userMsg
+            });
+        } catch (error) {
+            outputManager.warn(`[WebSocket][Chat] Failed to persist user message: ${error.message}`);
+        }
+    }
 
     try {
         let veniceApiKey = null;
@@ -795,6 +1007,17 @@ async function handleChatMessage(ws, message, session) {
         const clean = cleanChatResponse(res.content);
 
         session.chatHistory.push({ role: 'assistant', content: clean });
+        if (session.chatHistoryConversationId) {
+            try {
+                const chatHistoryController = getChatHistoryController();
+                await chatHistoryController.recordMessage(session.chatHistoryConversationId, {
+                    role: 'assistant',
+                    content: clean
+                });
+            } catch (error) {
+                outputManager.warn(`[WebSocket][Chat] Failed to persist assistant message: ${error.message}`);
+            }
+        }
 
         safeSend(ws, { type: 'chat-response', message: clean });
     } catch (err) {
@@ -861,8 +1084,6 @@ async function handleInputMessage(ws, message, session) {
         const suggestedFilename = promptData?.suggestedFilename || session.currentResearchFilename || 'research-result.md';
 
         try {
-            let userPassword = session.password; // <-- FIX: Always start with session.password
-
             switch (action) {
                 case 'download':
                     wsOutputHelper(ws, "Preparing download...");
@@ -874,36 +1095,27 @@ async function handleInputMessage(ws, message, session) {
                     // Input enabled by default
                     break;
 
-                case 'upload':
+                case 'upload': {
                     wsOutputHelper(ws, "Attempting to upload to GitHub...");
                     enableInputAfter = false;
-                    const githubConfig = await userManager.getDecryptedGitHubConfig();
-                    if (!githubConfig || !githubConfig.owner || !githubConfig.repo) {
-                        let errorDetail = "Unknown reason";
-                        if (!githubConfig) errorDetail = "Config object is null/undefined (configure owner/repo)";
-                        else if (!githubConfig.owner) errorDetail = "GitHub owner not configured";
-                        else if (!githubConfig.repo) errorDetail = "GitHub repo not configured";
-                        console.error(`[WebSocket] GitHub Upload Check Failed: ${errorDetail}`);
-                        throw new Error(`GitHub owner/repo not configured. Use /keys set github... (${errorDetail})`);
-                    }
-                    if (!githubConfig.token) {
-                        console.warn(`[WebSocket] GitHub token is missing. Upload will likely fail.`);
-                    }
                     const repoPath = suggestedFilename;
                     const commitMessage = `Research results for query: ${session.currentResearchQuery || 'Unknown Query'}`;
-                    const uploadResult = await uploadToGitHub(
-                        githubConfig,
-                        repoPath,
-                        markdownContent,
-                        commitMessage,
-                        wsOutputHelper.bind(null, ws),
-                        wsErrorHelper.bind(null, ws)
-                    );
+                    const controller = getGitHubResearchSyncController();
+                    const { summary } = await controller.uploadFile({
+                        path: repoPath,
+                        content: markdownContent,
+                        message: commitMessage
+                    });
                     wsOutputHelper(ws, `Upload successful!`);
-                    wsOutputHelper(ws, `Commit: ${uploadResult.commitUrl}`);
-                    wsOutputHelper(ws, `File: ${uploadResult.fileUrl}`);
+                    if (summary?.commitUrl) {
+                        wsOutputHelper(ws, `Commit: ${summary.commitUrl}`);
+                    }
+                    if (summary?.fileUrl) {
+                        wsOutputHelper(ws, `File: ${summary.fileUrl}`);
+                    }
                     enableInputAfter = true;
                     break;
+                }
 
                 case 'keep':
                     wsOutputHelper(ws, "Research result kept in session (will be lost on disconnect/logout).");

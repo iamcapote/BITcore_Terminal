@@ -1,18 +1,5 @@
-/* Add these styles to terminal.css */
-.ai-thinking-output {
-  color: #61affe;
-  margin-bottom: 8px;
-  font-style: italic;
-  padding-left: 12px;
-  border-left: 2px solid #61affe;
-}
-
-.thinking-header {
-  font-weight: bold;
-  color: #61affe;
-}
-
-.ai-response-output {
-  color: #39cc8f;
-  margin-bottom: 12px;
-}
+/*
+ * Legacy shim: terminal styles now live in /css/terminal-core.css.
+ * This file remains to avoid broken imports during migration. Do not add
+ * rules here—import the modular bundle instead.
+ */

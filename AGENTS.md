@@ -13,7 +13,10 @@ Pragmatic guidance for building, extending, and maintaining agents and modules i
 - Improve code health with every change: naming, docs, tests, and structure.
 - Read top-down: Guard → Do → Verify. Make the code tell a story.
 - Scalability by design: design for future growth without rewrites.
-- Keep files small: target 300–500 lines per file (hard ceiling 500). Split earlier if clarity improves.
+- Keep files small: target 300–500 lines per file (soft ceiling 500). Split earlier if clarity improves.
+- Agent is autopoeitic, indendependent and self-evolving.
+- Ideally, you always try to min-max.
+- Every feature, setting, option and similar toggles should be included in the terminal cli and in the web gui as well. Users must be able to use the ENTIRE app from the CLI and be able to use the ENTIRE app from the web gui.
 
 ## Repository Conventions (Context-aware)
 
@@ -151,6 +154,7 @@ Test checklist:
 - Public functions have JSDoc with param/return/error docs and invariants.
 - Reference related guides in `guides/` when helpful.
 - Keep examples updated and runnable.
+- Summarize architecture and behavior only; keep comments concise, precise, timeless, and never use them for TODOs or meta-notes.
 
 ## Coding Standards (ESM + async)
 

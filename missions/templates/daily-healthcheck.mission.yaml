@@ -1,0 +1,16 @@
+name: Daily System Healthcheck
+slug: daily-healthcheck
+description: Perform daily diagnostics across external integrations and report anomalies.
+schedule:
+  intervalMinutes: 1440
+priority: 4
+tags:
+  - ops
+  - monitoring
+payload:
+  type: diagnostics
+  endpoints:
+    - name: github
+      check: tokens
+    - name: venice
+      check: latency

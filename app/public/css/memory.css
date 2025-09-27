@@ -1,0 +1,666 @@
+/*
+ * Memory dashboard styles: metrics, workbench tabs, recall results, and
+ * supporting console widgets powering the BITcore memory experience.
+ */
+.memory-dashboard {
+    margin-top: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.memory-dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.dashboard-title {
+    font-size: 1.4rem;
+    font-family: 'Linux Libertine', 'Georgia', 'Times', serif;
+}
+
+.dashboard-subtitle {
+    margin-top: 0.35rem;
+    font-size: 0.9rem;
+    color: #555;
+}
+
+:root.dark .dashboard-subtitle {
+    color: #bbb;
+}
+
+.memory-secondary-btn,
+.memory-primary-btn {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    padding: 0.45rem 1rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.memory-primary-btn {
+    background: linear-gradient(135deg, #444, #111);
+    color: #f5f5f5;
+    border: 1px solid #222;
+}
+
+.memory-primary-btn:hover {
+    background: linear-gradient(135deg, #555, #222);
+}
+
+.memory-secondary-btn:hover {
+    background: var(--subtle-border);
+}
+
+.memory-metrics {
+    border: 1px solid var(--border);
+    padding: 1rem;
+    background: var(--bg);
+    border-radius: 6px;
+    display: grid;
+    gap: 1rem;
+}
+
+.metrics-placeholder {
+    text-align: center;
+    font-style: italic;
+    color: #666;
+}
+
+:root.dark .metrics-placeholder {
+    color: #aaa;
+}
+
+.metric-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+}
+
+.metric-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem;
+    background: rgba(0, 0, 0, 0.03);
+}
+
+:root.dark .metric-card {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.metric-label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: #777;
+}
+
+:root.dark .metric-label {
+    color: #aaa;
+}
+
+.metric-value {
+    display: block;
+    font-size: 2rem;
+    margin-top: 0.25rem;
+}
+
+.metric-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.9rem;
+}
+
+.metric-table th,
+.metric-table td {
+    border: 1px solid var(--border);
+    padding: 0.45rem 0.6rem;
+    text-align: left;
+}
+
+.metrics-updated {
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: #666;
+}
+
+:root.dark .metrics-updated {
+    color: #bbb;
+}
+
+.memory-layout {
+    display: grid;
+    gap: 1.5rem;
+    grid-template-columns: 1fr 280px;
+}
+
+@media (max-width: 1024px) {
+    .memory-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+.memory-workbench {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+}
+
+.memory-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+}
+
+.memory-tab {
+    padding: 0.75rem 1.25rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 0.95rem;
+    border-bottom: 2px solid transparent;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.memory-tab.active {
+    border-bottom-color: var(--lnk);
+    background: rgba(0, 0, 0, 0.04);
+}
+
+:root.dark .memory-tab.active {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.memory-panels {
+    padding: 1.25rem;
+}
+
+.memory-panel {
+    display: none;
+}
+
+.memory-panel.active {
+    display: block;
+}
+
+.memory-panel[hidden] {
+    display: none !important;
+}
+
+.memory-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.memory-form h3 {
+    font-size: 1.2rem;
+}
+
+.memory-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.95rem;
+}
+
+.memory-field input,
+.memory-field textarea,
+.memory-field select {
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+}
+
+.memory-field textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+.memory-field-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.memory-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.memory-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.memory-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.form-status {
+    font-size: 0.85rem;
+    color: #555;
+}
+
+:root.dark .form-status {
+    color: #bbb;
+}
+
+.panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.memory-results {
+    display: grid;
+    gap: 1rem;
+}
+
+.memory-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.02);
+}
+
+:root.dark .memory-card {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.memory-card-header {
+    display: flex;
+    justify-content: space-between;
+    font-weight: bold;
+    margin-bottom: 0.6rem;
+}
+
+.memory-card-content {
+    margin-bottom: 0.75rem;
+    white-space: pre-wrap;
+}
+
+.memory-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.memory-tag-chip {
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.08);
+    font-size: 0.8rem;
+}
+
+:root.dark .memory-tag-chip {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.memory-tag-empty {
+    opacity: 0.6;
+}
+
+.memory-metadata {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    margin-top: 0.75rem;
+    color: #666;
+}
+
+:root.dark .memory-metadata {
+    color: #bbb;
+}
+
+.memory-empty {
+    text-align: center;
+    padding: 1rem;
+    font-style: italic;
+    color: #666;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.02);
+}
+
+:root.dark .memory-empty {
+    color: #aaa;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.memory-side-panel {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.memory-side-panel h3 {
+    font-size: 1.05rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.4rem;
+}
+
+.layer-breakdown,
+.activity-feed {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+}
+
+.layer-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9rem;
+}
+
+.layer-ratio {
+    height: 6px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 0.35rem;
+}
+
+:root.dark .layer-ratio {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.layer-ratio-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3478f6, #34c2f6);
+}
+
+.activity-title {
+    font-weight: 600;
+}
+
+.activity-detail {
+    font-size: 0.85rem;
+    color: #555;
+    margin-top: 0.2rem;
+}
+
+:root.dark .activity-detail {
+    color: #bbb;
+}
+
+.activity-meta {
+    font-size: 0.75rem;
+    margin-top: 0.2rem;
+    color: #777;
+}
+
+:root.dark .activity-meta {
+    color: #aaa;
+}
+
+.memory-console {
+    background: rgba(17, 26, 39, 0.92);
+    border: 1px solid rgba(124, 173, 255, 0.22);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 0.9rem;
+    color: #dce8ff;
+    box-shadow: 0 12px 24px rgba(5, 12, 28, 0.25);
+}
+
+:root:not(.dark) .memory-console {
+    background: rgba(245, 250, 255, 0.85);
+    border-color: rgba(47, 83, 148, 0.28);
+    color: #1b2837;
+    box-shadow: none;
+}
+
+.memory-console-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.6rem;
+}
+
+.memory-console-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.memory-console-refresh {
+    background: transparent;
+    color: inherit;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    padding: 0.3rem 0.75rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.memory-console-refresh:hover {
+    background: rgba(132, 182, 255, 0.18);
+}
+
+:root:not(.dark) .memory-console-refresh:hover {
+    background: rgba(47, 83, 148, 0.12);
+}
+
+.memory-console-stats {
+    background: rgba(10, 17, 26, 0.55);
+    border: 1px solid rgba(124, 173, 255, 0.25);
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+    display: grid;
+    gap: 0.45rem;
+}
+
+:root:not(.dark) .memory-console-stats {
+    background: rgba(255, 255, 255, 0.75);
+    border-color: rgba(47, 83, 148, 0.2);
+}
+
+.memory-console-stats.loading {
+    opacity: 0.6;
+}
+
+.memory-console-stats-empty {
+    font-style: italic;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+:root:not(.dark) .memory-console-stats-empty {
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.memory-console-stats-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+}
+
+.memory-console-stats-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: rgba(59, 130, 246, 0.22);
+    border-radius: 999px;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+}
+
+:root:not(.dark) .memory-console-stats-chip {
+    background: rgba(59, 130, 246, 0.18);
+}
+
+.memory-console-layer-list {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.memory-console-layer {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+}
+
+.memory-console-meta {
+    margin-top: 0.35rem;
+    font-size: 0.75rem;
+}
+
+.memory-console-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.memory-field-group {
+    display: flex;
+    gap: 0.6rem;
+}
+
+.memory-field-group.memory-checkbox-row {
+    flex-wrap: wrap;
+}
+
+.memory-submit {
+    background: linear-gradient(135deg, rgba(124, 173, 255, 0.65), rgba(79, 227, 193, 0.6));
+    border: none;
+    color: #041321;
+    font-weight: 600;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: filter 0.2s ease;
+}
+
+.memory-submit:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.memory-submit:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.memory-form-status {
+    min-height: 18px;
+    font-size: 0.75rem;
+}
+
+.memory-form-status.success {
+    color: #4fe3c1;
+}
+
+.memory-form-status.error {
+    color: #ff8a8a;
+}
+
+:root:not(.dark) .memory-form-status.success {
+    color: #0a7d58;
+}
+
+:root:not(.dark) .memory-form-status.error {
+    color: #c00018;
+}
+
+.memory-recall-results {
+    background: rgba(8, 14, 24, 0.45);
+    border: 1px solid rgba(124, 173, 255, 0.22);
+    border-radius: 6px;
+    padding: 0.75rem;
+    display: grid;
+    gap: 0.6rem;
+}
+
+:root:not(.dark) .memory-recall-results {
+    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(47, 83, 148, 0.18);
+}
+
+.memory-recall-results-empty {
+    font-style: italic;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+:root:not(.dark) .memory-recall-results-empty {
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.memory-recall-card {
+    background: rgba(13, 21, 32, 0.75);
+    border: 1px solid rgba(124, 173, 255, 0.3);
+    border-radius: 6px;
+    padding: 0.6rem;
+    display: grid;
+    gap: 0.45rem;
+}
+
+:root:not(.dark) .memory-recall-card {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(47, 83, 148, 0.22);
+}
+
+.memory-recall-card-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.memory-recall-card-content {
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.memory-recall-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    font-size: 0.7rem;
+}
+
+.memory-recall-card-tags .memory-tag-chip {
+    background: rgba(59, 130, 246, 0.25);
+}
+
+.memory-recall-card-footer {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+:root:not(.dark) .memory-recall-card-footer {
+    color: rgba(0, 0, 0, 0.55);
+}

@@ -1,0 +1,83 @@
+.preferences-panel {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid rgba(0, 255, 127, 0.25);
+  border-radius: 12px;
+  background: rgba(2, 14, 32, 0.6);
+  box-shadow: 0 18px 35px rgba(0, 0, 0, 0.4);
+  color: #e6fcef;
+}
+
+.preferences-panel h2 {
+  font-size: 1.1rem;
+  margin: 0 0 0.35rem 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7fffd4;
+}
+
+.preferences-description {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.9rem;
+  color: rgba(230, 252, 239, 0.75);
+}
+
+.preferences-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.65rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.preferences-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 8px;
+  background: rgba(6, 24, 48, 0.55);
+  border: 1px solid rgba(0, 255, 127, 0.15);
+  transition: border-color 0.2s ease, background 0.2s ease;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.preferences-toggle:hover {
+  border-color: rgba(0, 255, 127, 0.35);
+  background: rgba(8, 32, 62, 0.7);
+}
+
+.preferences-toggle input[type="checkbox"] {
+  accent-color: #00ff7f;
+  width: 18px;
+  height: 18px;
+}
+
+.preferences-status {
+  min-height: 1rem;
+  font-size: 0.85rem;
+  color: #ffdf80;
+  margin-top: 0.25rem;
+}
+
+.preferences-reset-btn {
+  margin-top: 0.75rem;
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+.model-browser-placeholder {
+  display: none;
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px dashed rgba(0, 255, 127, 0.35);
+  color: rgba(230, 252, 239, 0.8);
+  font-size: 0.9rem;
+}
+
+.model-browser-enabled .model-browser-placeholder {
+  display: block;
+}

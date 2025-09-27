@@ -2,11 +2,18 @@ import * as researchCli from './research.cli.mjs';
 import * as keysCli from './keys.cli.mjs';
 import * as statusCli from './status.cli.mjs';
 import * as chatCli from './chat.cli.mjs';
+import * as chatHistoryCli from './chat-history.cli.mjs';
 import * as memoryCli from './memory.cli.mjs';
 import * as diagnoseCli from './diagnose.cli.mjs';
 import * as loginCli from './login.cli.mjs';
 import * as logoutCli from './logout.cli.mjs';
 import * as passwordCli from './password.cli.mjs';
+import * as missionsCli from './missions.cli.mjs';
+import * as promptsCli from './prompts.cli.mjs';
+import * as researchGitHubCli from './research-github.cli.mjs';
+import * as githubSyncCli from './research.github-sync.cli.mjs';
+import * as terminalCli from './terminal.cli.mjs';
+import * as logsCli from './logs.cli.mjs';
 
 // Map command names (lowercase) to their execution functions
 export const commands = {
@@ -14,6 +21,7 @@ export const commands = {
     keys: keysCli.executeKeys,
     status: statusCli.executeStatus,
     chat: chatCli.executeChat,
+    'chat-history': chatHistoryCli.executeChatHistory,
     exitmemory: chatCli.executeExitMemory, // Assuming exitmemory is handled by chat.cli.mjs
     exitresearch: chatCli.executeExitResearch, // Assuming exitresearch is handled by chat.cli.mjs
     memory: memoryCli.executeMemory, // Handles subcommands like 'stats' via positionalArgs
@@ -21,6 +29,12 @@ export const commands = {
     login: loginCli.executeLogin,
     logout: logoutCli.executeLogout,
     'password-change': passwordCli.executePasswordChange,
+    missions: missionsCli.executeMissions,
+    prompts: promptsCli.executePrompts,
+    'research-github': researchGitHubCli.executeResearchGitHub,
+    'github-sync': githubSyncCli.executeGithubSync,
+    terminal: terminalCli.executeTerminal,
+    logs: logsCli.executeLogs,
     // Add other commands here
 };
 
@@ -97,11 +111,18 @@ export function getHelpText() {
     if (keysCli.getKeysHelpText) help += keysCli.getKeysHelpText() + '\n\n';
     if (statusCli.getStatusHelpText) help += statusCli.getStatusHelpText() + '\n\n';
     if (chatCli.getChatHelpText) help += chatCli.getChatHelpText() + '\n\n'; // Assumes chat provides combined help
+    if (chatHistoryCli.getChatHistoryHelpText) help += chatHistoryCli.getChatHistoryHelpText() + '\n\n';
     if (memoryCli.getMemoryHelpText) help += memoryCli.getMemoryHelpText() + '\n\n';
     if (diagnoseCli.getDiagnoseHelpText) help += diagnoseCli.getDiagnoseHelpText() + '\n\n';
     if (loginCli.getLoginHelpText) help += loginCli.getLoginHelpText() + '\n\n';
     if (logoutCli.getLogoutHelpText) help += logoutCli.getLogoutHelpText() + '\n\n';
     if (passwordCli.getPasswordChangeHelpText) help += passwordCli.getPasswordChangeHelpText() + '\n\n';
+    if (missionsCli.getMissionsHelpText) help += missionsCli.getMissionsHelpText() + '\n\n';
+    if (promptsCli.getPromptsHelpText) help += promptsCli.getPromptsHelpText() + '\n\n';
+    if (researchGitHubCli.getResearchGitHubHelpText) help += researchGitHubCli.getResearchGitHubHelpText() + '\n\n';
+    if (githubSyncCli.getGithubSyncHelpText) help += githubSyncCli.getGithubSyncHelpText() + '\n\n';
+    if (terminalCli.getTerminalHelpText) help += terminalCli.getTerminalHelpText() + '\n\n';
+    if (logsCli.getLogsHelpText) help += logsCli.getLogsHelpText() + '\n\n';
 
     // Add a general help command usage
     help += '/help                     Show this help message.\n';

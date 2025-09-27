@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt Library | BITwiki</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="wiki-container">
+        <div class="wiki-header">
+            <div class="wiki-logo"><a href="/">BITwiki</a></div>
+            <div class="wiki-nav">
+                <ul>
+                    <li><a href="/">Research Terminal</a></li>
+                    <li><a href="/memory/">Memory Dashboard</a></li>
+                    <li class="active"><a href="/prompts/">Prompt Library</a></li>
+                <li><a href="/organizer/">Self Organizer</a></li>
+                <li><a href="/github-sync/">GitHub Sync</a></li>
+                <li><a href="/research/">My Research</a></li>
+                    <li><a href="/chat-history/">Chat History</a></li>
+                    <li><a href="https://bitwiki.org/wiki/Main_Page">Main Wiki</a></li>
+                    <li><a href="https://psychophilosophy.gitbook.io/corebit-systems/">Learn More</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="wiki-content">
+            <h1>Prompt Library</h1>
+            <p class="wiki-article-info">View, search, and curate reusable prompt blueprints for the research swarm.</p>
+
+            <div class="prompt-dashboard">
+                <aside class="prompt-sidebar" aria-label="Prompt Summaries">
+                    <div class="prompt-sidebar-header">
+                        <input type="search" id="prompt-search" placeholder="Search prompts" aria-label="Search prompts">
+                        <button type="button" id="prompt-refresh" class="memory-secondary-btn">Refresh</button>
+                    </div>
+                    <ul id="prompt-list" class="prompt-list" aria-live="polite"></ul>
+                </aside>
+
+                <section class="prompt-main" aria-label="Prompt Details">
+                    <header class="prompt-main-header">
+                        <h2 id="prompt-detail-title">Prompt Details</h2>
+                        <div class="prompt-actions">
+                            <button type="button" id="prompt-new" class="memory-secondary-btn">New Prompt</button>
+                            <button type="button" id="prompt-delete" class="memory-secondary-btn danger" disabled>Delete</button>
+                        </div>
+                    </header>
+
+                    <div class="prompt-sync-actions" aria-label="Prompt GitHub synchronization controls">
+                        <button type="button" id="prompt-github-pull" class="memory-secondary-btn">Pull from GitHub</button>
+                        <button type="button" id="prompt-github-push" class="memory-secondary-btn">Push to GitHub</button>
+                        <button type="button" id="prompt-github-sync" class="memory-secondary-btn">Sync</button>
+                        <span id="prompt-github-status" class="prompt-sync-status" role="status" aria-live="polite">GitHub sync ready.</span>
+                    </div>
+
+                    <form id="prompt-form" class="prompt-form" autocomplete="off">
+                        <div class="form-grid">
+                            <label>
+                                <span>Id</span>
+                                <input type="text" id="prompt-id" placeholder="auto-generated from title" autocomplete="off">
+                            </label>
+                            <label>
+                                <span>Title<span class="required">*</span></span>
+                                <input type="text" id="prompt-title" required autocomplete="off">
+                            </label>
+                        </div>
+                        <label>
+                            <span>Description</span>
+                            <input type="text" id="prompt-description" maxlength="400">
+                        </label>
+                        <label>
+                            <span>Tags</span>
+                            <input type="text" id="prompt-tags" placeholder="comma,separated,tags">
+                        </label>
+                        <label>
+                            <span>Body<span class="required">*</span></span>
+                            <textarea id="prompt-body" rows="10" required></textarea>
+                        </label>
+                        <label>
+                            <span>Metadata (JSON)</span>
+                            <textarea id="prompt-metadata" rows="4" placeholder="{\n  &quot;tone&quot;: &quot;analytical&quot;\n}"></textarea>
+                        </label>
+                        <div class="prompt-form-footer">
+                            <div id="prompt-status" role="status" aria-live="polite"></div>
+                            <button type="submit" class="memory-primary-btn">Save Prompt</button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <script src="/webcomm.js"></script>
+    <script src="/prompts/prompts.js"></script>
+</body>
+</html>

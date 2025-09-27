@@ -21,6 +21,134 @@ import { callVeniceWithTokenClassifier } from '../utils/token-classifier.mjs'; /
 import { generateQueries as generateResearchQueriesLLM } from '../features/ai/research.providers.mjs';
 // --- FIX: Import config to get public key ---
 import config from '../config/index.mjs';
+import { getChatHistoryController } from '../features/chat-history/index.mjs';
+import { getChatPersonaController } from '../features/chat/index.mjs';
+
+const BOOLEAN_TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+function isTruthy(value) {
+    if (value == null) return false;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    return BOOLEAN_TRUE_VALUES.has(String(value).trim().toLowerCase());
+}
+
+function formatPersonaLines(persona, index, { isDefault = false } = {}) {
+    const header = isDefault
+        ? `[${index + 1}] ${persona.name} (${persona.slug}) ★`
+        : `[${index + 1}] ${persona.name} (${persona.slug})`;
+    const description = persona.description ? `    ${persona.description}` : '    No description provided.';
+    return [header, description];
+}
+
+function getPersonaHelpText() {
+    return [
+        '/chat persona list [--json]                 List available personas and indicate the current default.',
+        '/chat persona get                          Show the current default persona.',
+        '/chat persona set <slug|name> [--json]     Persist a new default persona.',
+        '/chat persona reset                        Restore the default Bitcore persona.',
+    ].join('\n');
+}
+
+async function handlePersonaCommand({
+    args = [],
+    flags = {},
+    outputFn,
+    errorFn,
+    personaController,
+    currentUser,
+}) {
+    const action = (args.shift() || '').toLowerCase() || 'list';
+    const wantsJson = isTruthy(flags.json ?? flags.JSON);
+
+    switch (action) {
+        case 'list':
+        case 'ls':
+        case 'show': {
+            const snapshot = await personaController.list({ includeDefault: true });
+            if (wantsJson) {
+                outputFn(JSON.stringify({
+                    personas: snapshot.personas,
+                    default: snapshot.default,
+                    updatedAt: snapshot.updatedAt,
+                }, null, 2));
+            } else {
+                outputFn('--- Available Chat Personas ---');
+                snapshot.personas.forEach((persona, index) => {
+                    const isDefault = snapshot.default && snapshot.default.slug === persona.slug;
+                    formatPersonaLines(persona, index, { isDefault }).forEach((line) => outputFn(line));
+                });
+                if (snapshot.updatedAt) {
+                    const ts = new Date(snapshot.updatedAt).toISOString();
+                    outputFn(`Updated: ${ts}`);
+                }
+            }
+            return { success: true, handled: true, keepDisabled: false };
+        }
+
+        case 'get':
+        case 'current': {
+            const state = await personaController.getDefault();
+            if (wantsJson) {
+                outputFn(JSON.stringify(state, null, 2));
+            } else {
+                outputFn(`Default persona: ${state.persona.name} (${state.persona.slug})`);
+                if (state.updatedAt) {
+                    outputFn(`Last updated: ${new Date(state.updatedAt).toISOString()}`);
+                }
+                if (state.persona.description) {
+                    outputFn(state.persona.description);
+                }
+            }
+            return { success: true, handled: true, keepDisabled: false };
+        }
+
+        case 'set':
+        case 'use': {
+            const identifier = args.shift()
+                || flags.slug
+                || flags.character
+                || flags.persona;
+            if (!identifier) {
+                errorFn('Usage: /chat persona set <slug|name>');
+                return { success: false, handled: true, keepDisabled: false };
+            }
+            try {
+                const result = await personaController.setDefault(identifier, { actor: currentUser });
+                if (wantsJson) {
+                    outputFn(JSON.stringify(result, null, 2));
+                } else {
+                    outputFn(`Default persona updated to ${result.persona.name} (${result.persona.slug}).`);
+                }
+                return { success: true, handled: true, keepDisabled: false };
+            } catch (error) {
+                errorFn(error?.message ?? String(error));
+                return { success: false, handled: true, keepDisabled: false };
+            }
+        }
+
+        case 'reset': {
+            const state = await personaController.reset({ actor: currentUser });
+            if (wantsJson) {
+                outputFn(JSON.stringify(state, null, 2));
+            } else {
+                outputFn(`Persona reset to ${state.persona.name} (${state.persona.slug}).`);
+            }
+            return { success: true, handled: true, keepDisabled: false };
+        }
+
+        case 'help': {
+            getPersonaHelpText().split('\n').forEach((line) => outputFn(line));
+            return { success: true, handled: true, keepDisabled: false };
+        }
+
+        default: {
+            errorFn(`Unknown persona subcommand: ${action}`);
+            getPersonaHelpText().split('\n').forEach((line) => outputFn(line));
+            return { success: false, handled: true, keepDisabled: false };
+        }
+    }
+}
 
 
 /**
@@ -40,37 +168,75 @@ import config from '../config/index.mjs';
  * @returns {Promise<Object>} Chat session results
  */
 export async function executeChat(options = {}) {
-    const {
-        model = 'qwen3-235b',
-        character = 'bitcore',
-        session,
-        output,
-        error,
-        webSocketClient,
-        isWebSocket
-    } = options;
+    const positionalArgs = Array.isArray(options.positionalArgs) ? [...options.positionalArgs] : [];
+    const flags = options.flags || {};
+    const declaredAction = options.action ? String(options.action).toLowerCase() : null;
+    const outputFn = typeof options.output === 'function' ? options.output : outputManagerInstance.log;
+    const errorFn = typeof options.error === 'function' ? options.error : outputManagerInstance.error;
+    const personaController = getChatPersonaController();
+    const currentUser = options.currentUser || userManager.getCurrentUser?.();
 
-    const sessionRef = session ?? {};
-    if (!session) {
+    const subcommandCandidate = declaredAction || (positionalArgs[0]?.toLowerCase() ?? null);
+    if (subcommandCandidate && ['persona', 'personas'].includes(subcommandCandidate)) {
+        positionalArgs.shift();
+        return handlePersonaCommand({
+            args: positionalArgs,
+            flags,
+            outputFn,
+            errorFn,
+            personaController,
+            currentUser,
+        });
+    }
+
+    const isWebSocket = Boolean(options.isWebSocket);
+    const webSocketClient = options.webSocketClient;
+    const sessionRef = options.session ?? {};
+    if (!options.session) {
         options.session = sessionRef;
     }
 
-    const outputFn = typeof output === 'function' ? output : outputManagerInstance.log;
-    const errorFn = typeof error === 'function' ? error : outputManagerInstance.error;
+    const model = String(flags.model || options.model || 'qwen3-235b').trim() || 'qwen3-235b';
+
+    let personaRecord;
+    try {
+        const personaInput = flags.character ?? flags.persona ?? options.character;
+        if (personaInput) {
+            personaRecord = await personaController.describe(personaInput);
+        } else {
+            const state = await personaController.getDefault();
+            personaRecord = state.persona;
+        }
+    } catch (error) {
+        errorFn(error.message ?? String(error));
+        return { success: false, handled: true, keepDisabled: false };
+    }
 
     try {
         sessionRef.isChatActive = true;
         sessionRef.chatHistory = [];
         sessionRef.sessionModel = model;
-        sessionRef.sessionCharacter = character;
-        
-        // Send chat-ready event for WebSocket clients
+        sessionRef.sessionCharacter = personaRecord.slug;
+        sessionRef.sessionPersonaName = personaRecord.name;
+
+        const conversationContext = {
+            origin: isWebSocket ? 'web' : 'cli',
+            user: currentUser,
+            tags: ['chat'],
+        };
+        await initializeChatConversationForSession(sessionRef, conversationContext);
+
         if (isWebSocket && webSocketClient) {
             const chatReadyMessage = {
                 type: 'chat-ready',
                 prompt: '[chat] > ',
-                model: model,
-                character: character
+                model,
+                character: personaRecord.slug,
+                persona: {
+                    slug: personaRecord.slug,
+                    name: personaRecord.name,
+                    description: personaRecord.description,
+                },
             };
             try {
                 webSocketClient.send(JSON.stringify(chatReadyMessage));
@@ -79,11 +245,53 @@ export async function executeChat(options = {}) {
             }
         }
 
-        outputFn('Chat session ready. Type /exit to leave.');
+        outputFn(`Chat session ready using persona "${personaRecord.name}" (${personaRecord.slug}). Type /exit to leave.`);
         return { success: true, keepDisabled: false, session: sessionRef };
     } catch (err) {
         errorFn(`Failed to start chat: ${err.message}`);
         return { success: false, keepDisabled: false, session: sessionRef };
+    }
+}
+
+async function initializeChatConversationForSession(sessionRef, context) {
+    if (!sessionRef) return null;
+    if (sessionRef.chatHistoryConversationId) {
+        return sessionRef.chatHistoryConversationId;
+    }
+    try {
+        const controller = getChatHistoryController();
+        const conversation = await controller.startConversation(context);
+        sessionRef.chatHistoryConversationId = conversation?.id;
+        return conversation?.id || null;
+    } catch (error) {
+        console.error(`[Chat] Failed to create chat history conversation: ${error.message}`);
+        return null;
+    }
+}
+
+async function persistSessionChatMessage(sessionRef, role, content) {
+    if (!sessionRef || !sessionRef.chatHistoryConversationId) {
+        return;
+    }
+    try {
+        const controller = getChatHistoryController();
+        await controller.recordMessage(sessionRef.chatHistoryConversationId, { role, content });
+    } catch (error) {
+        console.error(`[Chat] Failed to persist ${role} message: ${error.message}`);
+    }
+}
+
+async function finalizeSessionConversation(sessionRef, reason) {
+    if (!sessionRef || !sessionRef.chatHistoryConversationId) {
+        return;
+    }
+    try {
+        const controller = getChatHistoryController();
+        await controller.closeConversation(sessionRef.chatHistoryConversationId, { reason });
+    } catch (error) {
+        console.error(`[Chat] Failed to finalize chat conversation: ${error.message}`);
+    } finally {
+        delete sessionRef.chatHistoryConversationId;
     }
 }
 
@@ -541,11 +749,13 @@ export async function startResearchFromChat(...args) {
     progressHandler,
     isWebSocket = false,
     webSocketClient = null,
-    user: providedUser
+        user: providedUser,
+        telemetry = null
   } = options;
 
   const effectiveOutput = typeof outputFn === 'function' ? outputFn : outputManagerInstance.log;
   const effectiveError = typeof errorFn === 'function' ? errorFn : outputManagerInstance.error;
+    const telemetryChannel = telemetry || null;
 
   try {
     const hasPrebuiltQueries = Array.isArray(overrideQueries) && overrideQueries.length > 0;
@@ -553,8 +763,19 @@ export async function startResearchFromChat(...args) {
         throw new Error('Chat history is required to start research.');
     }
 
+    telemetryChannel?.emitStatus({
+        stage: 'chat-bootstrap',
+        message: hasPrebuiltQueries
+            ? 'Using pre-generated research queries from chat context.'
+            : 'Analyzing chat history for research directives.'
+    });
+
     let queries = overrideQueries;
     if (!Array.isArray(queries) || queries.length === 0) {
+        telemetryChannel?.emitStatus({
+            stage: 'chat-queries',
+            message: 'Generating follow-up research queries from chat history.'
+        });
         queries = await generateResearchQueries(chatHistory, memoryBlocks, {
             numQueries: Math.max(3, breadth),
             metadata: classificationMetadata,
@@ -564,10 +785,19 @@ export async function startResearchFromChat(...args) {
     }
 
     if (!Array.isArray(queries) || queries.length === 0) {
+        telemetryChannel?.emitStatus({
+            stage: 'chat-error',
+            message: 'Failed to derive research queries from chat history.'
+        });
         throw new Error('Research requires generated queries (overrideQueries).');
     }
 
     const representativeQuery = queries[0]?.original || 'Research from chat history';
+
+    telemetryChannel?.emitThought({
+        text: `Primary query: ${representativeQuery}`,
+        stage: 'planning'
+    });
 
     let userInfo = providedUser;
     if (!userInfo) {
@@ -600,7 +830,32 @@ export async function startResearchFromChat(...args) {
         veniceKey = process.env.VENICE_API_KEY;
     }
 
+    const wrappedProgressHandler = (progressData = {}) => {
+        const emittedEvent = telemetryChannel ? telemetryChannel.emitProgress(progressData) : null;
+        const enrichedProgress = emittedEvent
+            ? { ...progressData, eventId: emittedEvent.id, timestamp: emittedEvent.timestamp }
+            : { ...progressData };
+
+        if (typeof progressHandler === 'function') {
+            try {
+                progressHandler(enrichedProgress);
+            } catch (handlerError) {
+                console.error('[startResearchFromChat] progressHandler threw an error:', handlerError);
+            }
+        } else if (isWebSocket && webSocketClient) {
+            safeSend(webSocketClient, { type: 'progress', data: enrichedProgress });
+        } else if (verbose) {
+            console.log('[chat-research-progress]', enrichedProgress);
+        }
+    };
+
     effectiveOutput('Initializing research engine...');
+    telemetryChannel?.emitStatus({
+        stage: 'running',
+        message: 'Initializing research engine for chat-derived mission.',
+        meta: { depth, breadth, queries: queries.length }
+    });
+
     const engine = new ResearchEngine({
         braveApiKey: braveKey,
         veniceApiKey: veniceKey,
@@ -616,10 +871,11 @@ export async function startResearchFromChat(...args) {
                 effectiveOutput(`[DEBUG] ${msg}`);
             }
         },
-        progressHandler,
+        progressHandler: wrappedProgressHandler,
         isWebSocket,
         webSocketClient,
-        overrideQueries: queries
+        overrideQueries: queries,
+        telemetry: telemetryChannel
     });
 
     effectiveOutput(`Starting research based on ${queries.length} generated queries (derived from chat history).`);
@@ -642,6 +898,11 @@ export async function startResearchFromChat(...args) {
     };
   } catch (error) {
     effectiveError(`Error during research from chat: ${error.message}`);
+        telemetryChannel?.emitStatus({
+                stage: 'chat-error',
+                message: 'Research from chat failed.',
+                detail: error.message
+        });
     return {
         success: false,
         error: error.message
@@ -664,7 +925,7 @@ export async function startResearchFromChat(...args) {
  * @returns {Promise<Object>} Command result indicating success/failure and input state.
  */
 export async function executeExitResearch(options = {}) {
-    const { session, output: outputFn, error: errorFn, currentUser, password: providedPassword, isWebSocket, webSocketClient } = options;
+    const { session, output: outputFn, error: errorFn, currentUser, password: providedPassword, isWebSocket, webSocketClient, telemetry = null } = options;
     const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
     const wsPrompt = options.wsPrompt;
     if (isWebSocket && !wsPrompt) {
@@ -673,6 +934,7 @@ export async function executeExitResearch(options = {}) {
             session.isChatActive = false;
             session.chatHistory = [];
             session.memoryManager = null;
+            await finalizeSessionConversation(session, 'exitresearch-missing-wsprompt');
         }
         if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'chat-exit' });
@@ -683,6 +945,7 @@ export async function executeExitResearch(options = {}) {
 
     const effectiveOutput = typeof outputFn === 'function' ? outputFn : outputManagerInstance.log;
     const effectiveError = typeof errorFn === 'function' ? errorFn : outputManagerInstance.error;
+    const telemetryChannel = telemetry || null;
 
     if (!session || !session.isChatActive) {
         effectiveError('Not currently in an active chat session.');
@@ -694,12 +957,20 @@ export async function executeExitResearch(options = {}) {
         session.isChatActive = false;
         session.memoryManager = null;
         session.chatHistory = [];
+        await finalizeSessionConversation(session, 'exitresearch-empty-history');
         if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'chat-exit' });
             safeSend(webSocketClient, { type: 'mode_change', mode: 'command', prompt: '> ' });
         }
         return { success: false, keepDisabled: false };
     }
+
+    telemetryChannel?.emitStatus({
+        stage: 'chat-transition',
+        message: 'Transitioning from chat dialogue to research pipeline.'
+    });
+
+    const transitionStartedAt = Date.now();
 
     effectiveOutput('Exiting chat and starting research based on chat history...');
     if (isWebSocket && webSocketClient) {
@@ -851,25 +1122,70 @@ export async function executeExitResearch(options = {}) {
             overrideQueries: generatedQueries,
             output: effectiveOutput,
             error: effectiveError,
-            progressHandler: options.progressHandler
+            progressHandler: options.progressHandler,
+            telemetry: telemetryChannel
         };
 
         let relevantMemories = [];
         if (session.memoryManager) {
             try {
                 relevantMemories = await session.memoryManager.retrieveRelevantMemories(researchQueryString, 5);
+                if (relevantMemories.length > 0) {
+                    telemetryChannel?.emitThought({
+                        text: `Retrieved ${relevantMemories.length} relevant memory blocks for context.`,
+                        stage: 'memory'
+                    });
+                }
             } catch (memError) {
                 console.error(`[WebSocket] Error retrieving memory for exitResearch: ${memError.message}`);
                 effectiveOutput(`[System] Warning: Could not retrieve relevant memories - ${memError.message}`);
+                telemetryChannel?.emitStatus({
+                    stage: 'memory-warning',
+                    message: 'Memory retrieval failed.',
+                    detail: memError.message
+                });
             }
         }
 
         researchResult = await startResearchFromChat(researchOptions);
 
-        if (researchResult.success && isWebSocket && webSocketClient) {
-            safeSend(webSocketClient, { type: 'research_complete', summary: researchResult.results?.summary });
-        } else if (!researchResult.success && isWebSocket && webSocketClient) {
-            safeSend(webSocketClient, { type: 'research_complete', error: researchResult.error });
+        if (researchResult.success) {
+            const durationMs = Date.now() - transitionStartedAt;
+            telemetryChannel?.emitStatus({
+                stage: 'summary',
+                message: 'Chat-derived research complete.'
+            });
+            telemetryChannel?.emitComplete({
+                success: true,
+                durationMs,
+                learnings: researchResult.results?.learnings?.length || 0,
+                sources: researchResult.results?.sources?.length || 0,
+                suggestedFilename: researchResult.results?.suggestedFilename || null,
+                summary: researchResult.results?.summary || null
+            });
+            if (isWebSocket && webSocketClient) {
+                safeSend(webSocketClient, {
+                    type: 'research_complete',
+                    summary: researchResult.results?.summary,
+                    suggestedFilename: researchResult.results?.suggestedFilename,
+                    keepDisabled: false
+                });
+            }
+        } else {
+            const durationMs = Date.now() - transitionStartedAt;
+            telemetryChannel?.emitStatus({
+                stage: 'chat-error',
+                message: 'Chat-derived research failed.',
+                detail: researchResult.error
+            });
+            telemetryChannel?.emitComplete({
+                success: false,
+                durationMs,
+                error: researchResult.error
+            });
+            if (isWebSocket && webSocketClient) {
+                safeSend(webSocketClient, { type: 'research_complete', error: researchResult.error, keepDisabled: false });
+            }
         }
     } catch (error) {
         effectiveError(`Error during exitResearch: ${error.message}`);
@@ -877,8 +1193,19 @@ export async function executeExitResearch(options = {}) {
         if (error.message.toLowerCase().includes('password') || error.message.toLowerCase().includes('api key')) {
             if (session) session.password = null;
         }
+        const durationMs = Date.now() - transitionStartedAt;
+        telemetryChannel?.emitStatus({
+            stage: 'chat-error',
+            message: 'Exit research encountered an error.',
+            detail: error.message
+        });
+        telemetryChannel?.emitComplete({
+            success: false,
+            durationMs,
+            error: error.message
+        });
         if (isWebSocket && webSocketClient) {
-            safeSend(webSocketClient, { type: 'research_complete', error: error.message });
+            safeSend(webSocketClient, { type: 'research_complete', error: error.message, keepDisabled: false });
         }
     } finally {
         if (session) {
@@ -888,6 +1215,7 @@ export async function executeExitResearch(options = {}) {
                 console.log(`[WebSocket] Clearing memory manager on /exitresearch for session ${session.sessionId}.`);
                 session.memoryManager = null;
             }
+            await finalizeSessionConversation(session, 'exitresearch');
         }
         if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'chat-exit' });
@@ -902,8 +1230,10 @@ export async function executeExitResearch(options = {}) {
  * @returns {string} Help text.
  */
 export function getChatHelpText() {
-    return `/chat [--memory=true] [--depth=short|medium|long] - Start an interactive chat session. Requires login.
+    return `/chat [--memory=true] [--depth=short|medium|long] [--character=<slug>] - Start an interactive chat session. Requires login.
     --memory=true: Enable memory persistence for the session.
     --depth=<level>: Set memory depth (short, medium, long). Requires --memory=true.
+    --character=<slug>: Temporarily override the default persona for this session.
+    Persona management: /chat persona list|get|set|reset [options]
     In-chat commands: /exit, /exitmemory, /memory stats, /research <query>, /exitresearch, /help`;
 }

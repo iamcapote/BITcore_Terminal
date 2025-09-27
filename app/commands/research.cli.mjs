@@ -18,13 +18,18 @@ import { callVeniceWithTokenClassifier } from '../utils/token-classifier.mjs';
 import { ensureDir } from '../utils/research.ensure-dir.mjs'; // Import ensureDir
 import inquirer from 'inquirer'; // Using inquirer for CLI prompts
 import WebSocket from 'ws'; // Import WebSocket for type checking
-import { uploadToGitHub } from '../utils/github.utils.mjs'; // Import GitHub upload logic
 // --- FIX: Remove unused runResearch import ---
 // import { runResearch } from '../features/research/research.controller.mjs';
 import { cleanQuery } from '../utils/research.clean-query.mjs';
 import { output } from '../utils/research.output-manager.mjs'; // Use the output manager
 import { singlePrompt } from '../utils/research.prompt.mjs'; // For CLI prompts
 import { saveToFile } from '../utils/research.file-utils.mjs'; // For saving results
+import { createMemoryService } from '../features/memory/memory.service.mjs';
+import {
+    fetchMemoryIntelligence,
+    deriveMemoryFollowUpQueries,
+    projectMemorySuggestions
+} from '../utils/research.memory-intelligence.mjs';
 
 // --- Remove freshUserManager import ---
 // import { userManager as freshUserManager } from '../features/auth/user-manager.mjs';
@@ -34,6 +39,9 @@ let activeRlInstance = null;
 
 const PROMPT_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 const POST_RESEARCH_PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for post-research action
+
+const sharedMemoryService = createMemoryService();
+const MEMORY_CONTEXT_MAX_RECORDS = 5;
 
 /**
  * CLI command for executing research.
@@ -84,11 +92,15 @@ export async function executeResearch(options = {}) {
         error: cmdError,   // Renamed from options.error
         currentUser,
         webSocketClient,
+    telemetry,
         // --- FIX: Add wsPrompt ---
         wsPrompt: cmdPrompt, // Renamed from options.wsPrompt
         // --- Ensure debug is correctly destructured and has a default ---
-        debug = options.verbose ? outputManagerInstance.debug.bind(outputManagerInstance) : () => {} // Default to no-op if not verbose
+        debug = options.verbose ? outputManagerInstance.debug.bind(outputManagerInstance) : () => {}, // Default to no-op if not verbose
+        progressHandler: providedProgressHandler
     } = options;
+
+    const telemetryChannel = telemetry ?? null;
 
     // --- FIX: Define effective handlers outside try block ---
     const effectiveOutput = cmdOutput;
@@ -97,10 +109,29 @@ export async function executeResearch(options = {}) {
         ? (msg) => { if (session?.debug || verbose) effectiveOutput(`[DEBUG] ${msg}`); } // Use effectiveOutput
         : (msg) => { if (verbose) console.log(`[DEBUG] ${msg}`); };
     const effectivePrompt = isWebSocket ? cmdPrompt : singlePrompt;
-    const effectiveProgress = isWebSocket && webSocketClient
-        ? (progressData) => safeSend(webSocketClient, { type: 'progress', data: progressData })
-        : (progressData) => { /* Optional CLI progress logging */ };
+    const effectiveProgress = (progressData = {}) => {
+        const emittedEvent = telemetryChannel ? telemetryChannel.emitProgress(progressData) : null;
+        const enrichedProgress = emittedEvent
+            ? { ...progressData, eventId: emittedEvent.id, timestamp: emittedEvent.timestamp }
+            : { ...progressData };
+
+        if (typeof providedProgressHandler === 'function') {
+            try {
+                providedProgressHandler(enrichedProgress);
+            } catch (handlerError) {
+                console.error('[executeResearch] progressHandler threw an error:', handlerError);
+            }
+        } else if (isWebSocket && webSocketClient) {
+            safeSend(webSocketClient, { type: 'progress', data: enrichedProgress });
+        } else if (verbose) {
+            console.log('[research-progress]', enrichedProgress);
+        }
+    };
     // --- End FIX ---
+
+    const commandStartedAt = Date.now();
+    let researchStartedAt = null;
+    telemetryChannel?.emitStatus({ stage: 'initializing', message: 'Validating research command options.' });
 
     // --- BLOCK PUBLIC USERS ---
     if (currentUser && currentUser.role === 'public') {
@@ -203,6 +234,11 @@ export async function executeResearch(options = {}) {
             let missingKeys = [];
             if (!hasBraveKey) missingKeys.push('Brave');
             if (!hasVeniceKey) missingKeys.push('Venice');
+            telemetryChannel?.emitStatus({
+                stage: 'blocked',
+                message: 'Research blocked: missing required API keys.',
+                detail: `Missing: ${missingKeys.join(', ')}`
+            });
             effectiveError(`Missing API key(s) required for research: ${missingKeys.join(', ')}. Use /keys set to configure.`);
             return { success: false, error: `Missing API key(s): ${missingKeys.join(', ')}`, handled: true, keepDisabled: false };
         }
@@ -238,8 +274,17 @@ export async function executeResearch(options = {}) {
             effectiveError(`Failed to decrypt API key(s): ${decryptionError.message}. Please check your password.`);
             effectiveError(`[executeResearch] RAW ERROR caught during API key retrieval:`);
             console.error(decryptionError);
+            telemetryChannel?.emitStatus({
+                stage: 'blocked',
+                message: 'Unable to decrypt API keys.',
+                detail: decryptionError.message
+            });
             return { success: false, error: `API key decryption failed: ${decryptionError.message}`, handled: true, keepDisabled: false };
         }
+        telemetryChannel?.emitStatus({
+            stage: 'auth',
+            message: 'API keys decrypted successfully.'
+        });
 
         // --- Final Query Check ---
         if (!researchQuery) {
@@ -256,11 +301,28 @@ export async function executeResearch(options = {}) {
             }
         }
 
+        telemetryChannel?.emitThought({
+            text: `Research focus: ${researchQuery}`,
+            stage: 'planning'
+        });
+        telemetryChannel?.emitStatus({
+            stage: 'planning',
+            message: 'Research query accepted.',
+            meta: {
+                depth: parseInt(depth, 10) || 2,
+                breadth: parseInt(breadth, 10) || 3
+            }
+        });
+
         // --- Token Classification ---
         let enhancedQuery = { original: researchQuery };
         let useClassifier = classify;
          if (useClassifier) {
             effectiveOutput('Attempting token classification...', true);
+            telemetryChannel?.emitStatus({
+                stage: 'classification',
+                message: 'Running token classifier to enrich query.'
+            });
             try {
                 const tokenResponse = await callVeniceWithTokenClassifier(researchQuery, veniceKey);
                 if (tokenResponse) {
@@ -268,12 +330,114 @@ export async function executeResearch(options = {}) {
                     enhancedQuery.metadata = tokenResponse; // Also add as metadata for summary
                     effectiveOutput('Token classification successful.', true);
                     effectiveOutput(`[TokenClassifier] Metadata:\n${JSON.stringify(tokenResponse, null, 2)}`);
+                    telemetryChannel?.emitThought({
+                        text: 'Token classifier metadata captured.',
+                        stage: 'classification',
+                        meta: { keys: Object.keys(tokenResponse || {}) }
+                    });
                 } else {
                     effectiveOutput('Token classification returned no data.', true);
                 }
             } catch (tokenError) {
                 effectiveError(`Token classification failed: ${tokenError.message}. Proceeding without.`);
+                telemetryChannel?.emitStatus({
+                    stage: 'classification',
+                    message: 'Token classifier failed; continuing without metadata.',
+                    detail: tokenError.message
+                });
             }
+        }
+
+        let memoryContext = null;
+        const canSampleMemory = Boolean(sharedMemoryService && (currentUser?.username || currentUsername));
+        if (canSampleMemory) {
+            if (telemetryChannel) {
+                telemetryChannel.emitStatus({
+                    stage: 'memory',
+                    message: 'Sampling memory intelligence for context.'
+                });
+            }
+
+            try {
+                memoryContext = await fetchMemoryIntelligence({
+                    query: researchQuery,
+                    memoryService: sharedMemoryService,
+                    user: currentUser,
+                    fallbackUsername: currentUsername,
+                    limit: MEMORY_CONTEXT_MAX_RECORDS,
+                    logger: effectiveDebug
+                });
+
+                const recordCount = memoryContext?.records?.length ?? 0;
+
+                if (telemetryChannel && memoryContext?.telemetryPayload) {
+                    telemetryChannel.emitMemoryContext(memoryContext.telemetryPayload);
+                }
+
+                if (telemetryChannel) {
+                    if (recordCount > 0) {
+                        telemetryChannel.emitThought({
+                            text: `Loaded ${recordCount} memory snippet${recordCount === 1 ? '' : 's'} for context.`,
+                            stage: 'memory',
+                            meta: {
+                                layers: Array.from(
+                                    new Set(memoryContext.records.map((record) => record.layer).filter(Boolean))
+                                ).slice(0, 4)
+                            }
+                        });
+                    } else {
+                        telemetryChannel.emitThought({
+                            text: 'No matching memory snippets found; continuing with live research.',
+                            stage: 'memory'
+                        });
+                    }
+                }
+            } catch (memoryError) {
+                effectiveDebug(`[executeResearch] Memory intelligence fetch failed: ${memoryError.message}`);
+                console.warn('[executeResearch] Memory intelligence fetch failed:', memoryError);
+                if (telemetryChannel) {
+                    telemetryChannel.emitStatus({
+                        stage: 'memory-warning',
+                        message: 'Memory intelligence unavailable.',
+                        detail: memoryError.message
+                    });
+                }
+            }
+        }
+
+        const overrideQueries = memoryContext?.records?.length
+            ? deriveMemoryFollowUpQueries({
+                baseQuery: researchQuery,
+                memoryContext,
+                maxQueries: MEMORY_CONTEXT_MAX_RECORDS
+            })
+            : [];
+
+        const telemetrySuggestions = projectMemorySuggestions(overrideQueries);
+
+        if (telemetryChannel && telemetrySuggestions.length) {
+            telemetryChannel.emitSuggestions({
+                source: 'memory',
+                suggestions: telemetrySuggestions
+            });
+        }
+
+        if (overrideQueries.length && telemetryChannel) {
+            telemetryChannel.emitStatus({
+                stage: 'memory-prioritization',
+                message: `Injecting ${overrideQueries.length} memory-guided follow-up queries.`
+            });
+            telemetryChannel.emitThought({
+                text: `Prioritizing ${overrideQueries.length} memory-guided follow-up queries before generating new leads.`,
+                stage: 'planning',
+                meta: {
+                    memorySeeded: true,
+                    memoryIds: overrideQueries
+                        .map((entry) => entry.metadata?.memoryId)
+                        .filter(Boolean)
+                        .slice(0, 4)
+                }
+            });
         }
 
         // --- Initialize Research Engine ---
@@ -287,16 +451,35 @@ export async function executeResearch(options = {}) {
             errorHandler: effectiveError,
             debugHandler: effectiveDebug,
             progressHandler: effectiveProgress,
+            telemetry: telemetryChannel,
             isWebSocket: isWebSocket,
             webSocketClient: webSocketClient
         };
+        if (overrideQueries.length) {
+            engineConfig.overrideQueries = overrideQueries;
+        }
         const controller = new ResearchEngine(engineConfig);
 
         // --- Run Research ---
         effectiveOutput('Starting research pipeline...', true);
+        telemetryChannel?.emitStatus({
+            stage: 'running',
+            message: 'Executing research pipeline.',
+            meta: {
+                depth: parseInt(depth, 10) || 2,
+                breadth: parseInt(breadth, 10) || 3,
+                query: enhancedQuery.original
+            }
+        });
+        telemetryChannel?.emitThought({
+            text: `Initiating research for "${enhancedQuery.original}"`,
+            stage: 'running'
+        });
         if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'research_start', keepDisabled: true });
         }
+
+    researchStartedAt = Date.now();
 
         const results = await controller.research({
             query: enhancedQuery,
@@ -327,6 +510,15 @@ export async function executeResearch(options = {}) {
             effectiveError(`Research failed: ${results?.error || 'Unknown error during research execution.'}`);
             // No prompt needed if research failed
             return { success: false, error: results?.error || 'Research failed', handled: true, keepDisabled: false };
+        }
+
+        if (isWebSocket && webSocketClient) {
+            safeSend(webSocketClient, {
+                type: 'research_complete',
+                summary: results?.summary,
+                suggestedFilename: results?.suggestedFilename,
+                keepDisabled: true
+            });
         }
 
         // --- Send Prompt or Finalize (WebSocket vs CLI) ---
@@ -375,6 +567,16 @@ export async function executeResearch(options = {}) {
             // No automatic upload here anymore
         }
 
+        const completionDuration = Date.now() - (researchStartedAt || commandStartedAt);
+        telemetryChannel?.emitComplete({
+            success: true,
+            durationMs: completionDuration,
+            learnings: results?.learnings?.length || 0,
+            sources: results?.sources?.length || 0,
+            suggestedFilename: results?.suggestedFilename || null,
+            summary: results?.summary || null
+        });
+
         // Return success state for command handler logic
         // Keep input disabled if WebSocket because a prompt is now pending
         return { success: true, results: results, keepDisabled: isWebSocket };
@@ -386,6 +588,17 @@ export async function executeResearch(options = {}) {
         // --- FIX: Use effectiveError defined outside the try block ---
         effectiveError(`Error during research command: ${error.message}`);
         console.error(error.stack); // Keep stack trace log
+        const failureDuration = Date.now() - (researchStartedAt || commandStartedAt);
+        telemetryChannel?.emitStatus({
+            stage: 'error',
+            message: 'Research command failed.',
+            detail: error.message
+        });
+        telemetryChannel?.emitComplete({
+            success: false,
+            durationMs: failureDuration,
+            error: error.message
+        });
         if (isWebSocket && webSocketClient) {
             // Send a generic completion message indicating failure
             safeSend(webSocketClient, { type: 'research_complete', error: error.message, keepDisabled: false }); // Send error completion
@@ -423,3 +636,4 @@ Examples:
   /research "impact of social media on mental health" --classify
 `;
 }
+

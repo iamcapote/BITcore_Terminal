@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Self Organizer | BITwiki</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="wiki-container">
+        <div class="wiki-header">
+            <div class="wiki-logo"><a href="/">BITwiki</a></div>
+            <div class="wiki-nav">
+                <ul>
+                    <li><a href="/">Research Terminal</a></li>
+                    <li><a href="/memory/">Memory Dashboard</a></li>
+                    <li><a href="/prompts/">Prompt Library</a></li>
+                    <li class="active"><a href="/organizer/">Self Organizer</a></li>
+                    <li><a href="/github-sync/">GitHub Sync</a></li>
+                    <li><a href="/research/">My Research</a></li>
+                    <li><a href="/chat-history/">Chat History</a></li>
+                    <li><a href="https://bitwiki.org/wiki/Main_Page">Main Wiki</a></li>
+                    <li><a href="https://psychophilosophy.gitbook.io/corebit-systems/">Learn More</a></li>
+                    <li><a href="https://hub.bitwiki.org/">Join The Community</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="wiki-content">
+            <h1>Self Organizer</h1>
+            <p class="wiki-article-info">Coordinate missions, scheduler cadence, and reusable prompts from a single mission control surface.</p>
+
+            <div class="status-chip-row" aria-label="System status overview">
+                <span class="status-chip status-unknown" data-status-key="venice" data-status-label="Venice LLM">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">Venice LLM</span>
+                    <span class="status-chip-message" data-status-role="message">Checking…</span>
+                </span>
+                <span class="status-chip status-unknown" data-status-key="brave" data-status-label="Brave Search">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">Brave Search</span>
+                    <span class="status-chip-message" data-status-role="message">Checking…</span>
+                </span>
+                <span class="status-chip status-unknown" data-status-key="github" data-status-label="GitHub Sync">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">GitHub Sync</span>
+                    <span class="status-chip-message" data-status-role="message">Checking…</span>
+                </span>
+                <span class="status-chip status-unknown" data-status-key="memory" data-status-label="Memory Core">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">Memory Core</span>
+                    <span class="status-chip-message" data-status-role="message">Checking…</span>
+                </span>
+                    <span class="status-chip status-unknown" data-presence-key="telemetry" data-status-label="Telemetry Feed">
+                        <span class="status-dot" aria-hidden="true"></span>
+                        <span class="status-chip-label" data-status-role="label">Telemetry Feed</span>
+                        <span class="status-chip-message" data-status-role="message">Idle</span>
+                    </span>
+                    <span class="status-chip status-unknown" data-presence-key="logs" data-status-label="Log Stream">
+                        <span class="status-dot" aria-hidden="true"></span>
+                        <span class="status-chip-label" data-status-role="label">Log Stream</span>
+                        <span class="status-chip-message" data-status-role="message">Idle</span>
+                    </span>
+            </div>
+
+            <section class="organizer-summary" aria-label="Mission control summary">
+                <article class="organizer-summary-card" aria-live="polite">
+                    <h2>Scheduler</h2>
+                    <p id="scheduler-status-text" class="organizer-summary-lead">Checking scheduler…</p>
+                    <dl class="organizer-summary-meta">
+                        <div>
+                            <dt>Interval</dt>
+                            <dd id="scheduler-interval">—</dd>
+                        </div>
+                        <div>
+                            <dt>Last Tick</dt>
+                            <dd id="scheduler-last-tick">—</dd>
+                        </div>
+                        <div>
+                            <dt>Active Runs</dt>
+                            <dd id="scheduler-active-runs">—</dd>
+                        </div>
+                    </dl>
+                    <div class="organizer-button-row">
+                        <button type="button" id="scheduler-start" class="memory-secondary-btn">Start</button>
+                        <button type="button" id="scheduler-stop" class="memory-secondary-btn">Stop</button>
+                        <button type="button" id="scheduler-tick" class="memory-secondary-btn">Trigger Tick</button>
+                    </div>
+                </article>
+
+                <article class="organizer-summary-card" aria-live="polite">
+                    <h2>Missions</h2>
+                    <div class="organizer-summary-metric" id="mission-count">0</div>
+                    <p class="organizer-summary-lead" id="mission-summary">Loading missions…</p>
+                </article>
+
+                <article class="organizer-summary-card" aria-live="polite">
+                    <h2>Prompt Library</h2>
+                    <div class="organizer-summary-metric" id="prompt-count">0</div>
+                    <p class="organizer-summary-lead" id="prompt-summary">Loading prompts…</p>
+                    <a class="memory-secondary-btn organizer-link" href="/prompts/">Open Library</a>
+                </article>
+            </section>
+
+            <div class="organizer-grid">
+                <section class="organizer-panel" aria-labelledby="mission-panel-title">
+                    <header class="organizer-panel-header">
+                        <div>
+                            <h2 id="mission-panel-title">Mission Queue</h2>
+                            <p id="missions-status" class="organizer-panel-description">Loading missions…</p>
+                        </div>
+                        <div class="organizer-panel-actions">
+                            <button type="button" id="missions-refresh" class="memory-secondary-btn">Refresh</button>
+                        </div>
+                    </header>
+                    <div class="organizer-panel-body">
+                        <ul id="mission-list" class="organizer-list" aria-live="polite"></ul>
+                    </div>
+                </section>
+
+                <section class="organizer-panel" aria-labelledby="prompt-panel-title">
+                    <header class="organizer-panel-header">
+                        <div>
+                            <h2 id="prompt-panel-title">Prompt Quick Picks</h2>
+                            <p class="organizer-panel-description">Search saved prompts and copy them into new missions.</p>
+                        </div>
+                        <div class="organizer-panel-actions">
+                            <input type="search" id="prompt-search" placeholder="Filter prompts" aria-label="Filter prompts">
+                            <button type="button" id="prompts-refresh" class="memory-secondary-btn">Refresh</button>
+                        </div>
+                    </header>
+                    <div class="organizer-panel-body">
+                        <div id="prompts-status" class="organizer-inline-status" role="status" aria-live="polite">Loading prompts…</div>
+                        <ul id="prompt-list" class="organizer-list" aria-live="polite"></ul>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <script src="/webcomm.js"></script>
+    <script src="/status.js"></script>
+    <script src="/organizer/organizer.js"></script>
+</body>
+</html>

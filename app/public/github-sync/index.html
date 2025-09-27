@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>GitHub Research Sync</title>
+  <link rel="stylesheet" href="/css/github-sync.css">
+</head>
+<body>
+  <nav>
+    <a href="/">Terminal</a> |
+    <a href="/memory/">Memory</a> |
+    <a href="/prompts/">Prompts</a> |
+    <a href="/research/">Research</a> |
+  <a href="/organizer/">Self Organizer</a> |
+  <b>GitHub Sync</b> |
+  <a href="/chat-history/">Chat History</a>
+  </nav>
+  <h1>GitHub Research Sync</h1>
+  <form id="github-sync-form">
+    <label>Action:
+      <select name="action">
+        <option value="verify">Verify</option>
+        <option value="pull">Pull</option>
+        <option value="push">Push</option>
+        <option value="upload">Upload</option>
+      </select>
+    </label>
+    <label>Repo URL or Path:
+      <input name="repo" required>
+    </label>
+    <label>Files (comma-separated, for upload):
+      <input name="files">
+    </label>
+    <button type="submit">Run</button>
+  </form>
+  <pre id="github-sync-result"></pre>
+  <script src="github-sync.js"></script>
+</body>
+</html>

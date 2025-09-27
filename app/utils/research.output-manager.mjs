@@ -1,4 +1,38 @@
 import { WebSocket } from 'ws';
+import { logChannel } from './log-channel.mjs';
+
+const LEVEL_ALIASES = new Map([
+    ['warning', 'warn'],
+    ['error', 'error'],
+    ['warn', 'warn'],
+    ['info', 'info'],
+    ['debug', 'debug']
+]);
+
+function normalizeLevel(level) {
+    const value = typeof level === 'string' ? level.trim().toLowerCase() : '';
+    return LEVEL_ALIASES.get(value) || 'info';
+}
+
+function formatMessage(raw) {
+    if (raw instanceof Error) {
+        return raw.stack || raw.message || raw.name;
+    }
+    if (typeof raw === 'string') {
+        return raw;
+    }
+    if (raw == null) {
+        return '';
+    }
+    if (typeof raw === 'object') {
+        try {
+            return JSON.stringify(raw);
+        } catch (error) {
+            return '[unserializable object]';
+        }
+    }
+    return String(raw);
+}
 
 /**
  * Manages output for both console and WebSocket clients.
@@ -89,47 +123,65 @@ export class OutputManager {
      * @param {string} level - The log level (e.g., 'info', 'warn', 'error', 'debug').
      * @param {string} message - The message to log.
      */
-    _logInternal(level, message) {
-         // Use the configured handler (might be console.log or broadcast via setLogHandler in web mode)
-        if (this.logHandler) {
-             try {
-                // Ensure logHandler is called with appropriate context if needed,
-                // but the main issue is calling _logInternal itself.
-                // Special handling for debug messages based on environment variable
-                if (level === 'debug' && process.env.DEBUG_MODE !== 'true') {
-                    // Do nothing if debug mode is off
-                } else {
-                    this.logHandler(level, message);
-                }
-             } catch (handlerError) {
-                 console.error("Error in custom log handler:", handlerError);
-                 // Fallback to console.error if handler fails
-                 console.error(`[${level.toUpperCase()}] ${message}`);
-             }
-        } else {
-            // Fallback if no handler is set (shouldn't happen with default)
-            // Apply debug mode check here too for fallback
-            if (level !== 'debug' || process.env.DEBUG_MODE === 'true') {
-                console.log(`[${level.toUpperCase()}] ${message}`);
-            }
+    _logInternal(level, rawMessage) {
+        const normalizedLevel = normalizeLevel(level);
+        const debugSuppressed = normalizedLevel === 'debug' && process.env.DEBUG_MODE !== 'true';
+        if (debugSuppressed) {
+            return;
         }
 
-        // Broadcast to WebSocket clients regardless of the console logHandler
-        // Check if there are clients and if the level should be broadcast
-        if (this.webSocketClients.size > 0 && (level !== 'debug' || process.env.DEBUG_MODE === 'true')) {
-            const messageType = level === 'error' ? 'error' : 'output'; // Basic mapping
-            const payload = { type: messageType };
+        const message = formatMessage(rawMessage);
 
-            // Add prefix for non-error messages for clarity in UI
-            const prefix = level !== 'info' ? `[${level.toUpperCase()}] ` : '';
+        if (this.logHandler) {
+            try {
+                this.logHandler(normalizedLevel, message);
+            } catch (handlerError) {
+                console.error('Error in custom log handler:', handlerError);
+                console.error(`[${normalizedLevel.toUpperCase()}] ${message}`);
+            }
+        } else {
+            console.log(`[${normalizedLevel.toUpperCase()}] ${message}`);
+        }
 
-            if (level === 'error') {
-                payload.error = message; // Send errors under 'error' key
+        const entry = logChannel.push({
+            level: normalizedLevel,
+            message,
+            source: 'output-manager'
+        });
+
+        if (!entry) {
+            return;
+        }
+
+        if (this.webSocketClients.size > 0) {
+            const messageType = normalizedLevel === 'error' ? 'error' : 'output';
+            const payload = {
+                type: messageType,
+                level: entry.level,
+                message: entry.message,
+                timestamp: entry.timestamp,
+                sequence: entry.sequence
+            };
+
+            if (messageType === 'error') {
+                payload.error = entry.message;
             } else {
-                payload.data = `${prefix}${message}`; // Send other levels under 'data' key with prefix
+                const prefix = normalizedLevel !== 'info' ? `[${normalizedLevel.toUpperCase()}] ` : '';
+                payload.data = `${prefix}${entry.message}`;
             }
 
             this.broadcast(payload);
+
+            const logEventPayload = JSON.stringify({ type: 'log-event', data: entry });
+            for (const client of this.webSocketClients) {
+                if (client.readyState === WebSocket.OPEN) {
+                    try {
+                        client.send(logEventPayload);
+                    } catch (sendError) {
+                        console.error('[OutputManager] Failed to send log-event to WebSocket client:', sendError);
+                    }
+                }
+            }
         }
     }
 

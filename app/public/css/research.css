@@ -1,0 +1,479 @@
+/*
+ * Research library and GitHub sync surfaces, including navigation breadcrumbs,
+ * statistics widgets, tree explorers, and document viewers for saved missions.
+ */
+.breadcrumbs {
+    font-size: 0.9rem;
+    margin: 0 0 1rem;
+}
+
+.breadcrumb {
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+    color: #666;
+}
+
+.breadcrumb a {
+    color: var(--lnk);
+}
+
+.search-box {
+    padding: 0.5rem;
+    width: 100%;
+    max-width: 400px;
+    margin-bottom: 1rem;
+    border: 1px solid #a2a9b1;
+    border-radius: 4px;
+}
+
+.page-subtitle {
+    color: #666;
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+    font-style: italic;
+}
+
+.user-indicator {
+    background-color: #f8f9fa;
+    border: 1px solid #a2a9b1;
+    padding: 0.5rem 1rem;
+    margin: 1rem 0;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    gap: 0.75rem;
+}
+
+.user-avatar {
+    width: 32px;
+    height: 32px;
+    background-color: #f0f0f0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: #666;
+}
+
+.stats-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.stat-box {
+    flex: 1;
+    min-width: 150px;
+    background-color: #fff;
+    border: 1px solid #a2a9b1;
+    padding: 15px;
+    border-radius: 4px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 5px;
+    position: relative;
+    z-index: 2;
+}
+
+.stat-label {
+    color: #666;
+    font-size: 0.9rem;
+    position: relative;
+    z-index: 2;
+}
+
+.ferrofluid {
+    position: relative;
+    height: 100px;
+    overflow: hidden;
+    border-radius: 50%;
+    margin: 10px auto;
+    width: 100px;
+}
+
+.ferrofluid-animation {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle at center, #000 10%, rgba(0, 0, 0, 0.8) 40%, transparent 70%);
+    animation: ferrofluid-pulse 8s infinite ease-in-out;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+    border-radius: 50%;
+}
+
+.ferrofluid-docs .ferrofluid-animation {
+    background: radial-gradient(circle at center, #000 10%, #222 40%, transparent 80%);
+}
+
+.ferrofluid-categories .ferrofluid-animation {
+    background: radial-gradient(circle at center, #000 10%, #252525 40%, transparent 80%);
+}
+
+.ferrofluid-tags .ferrofluid-animation {
+    background: radial-gradient(circle at center, #000 10%, #202020 40%, transparent 80%);
+}
+
+@keyframes ferrofluid-pulse {
+    0%, 100% {
+        transform: scale(0.85);
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+    }
+    25% {
+        transform: scale(0.95) translateX(-5px) translateY(5px);
+    }
+    50% {
+        transform: scale(1) translateX(5px) translateY(-5px);
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.4);
+    }
+    75% {
+        transform: scale(0.9) translateX(3px) translateY(3px);
+    }
+}
+
+.recent-reports {
+    margin-top: 2rem;
+}
+
+.recent-report-feed {
+    display: grid;
+    gap: 0.8rem;
+}
+
+.research-report-card {
+    background: rgba(8, 14, 24, 0.7);
+    border: 1px solid rgba(124, 173, 255, 0.18);
+    border-radius: 8px;
+    padding: 0.85rem;
+    display: grid;
+    gap: 0.55rem;
+    cursor: pointer;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.research-report-card:hover {
+    border-color: rgba(124, 173, 255, 0.4);
+    transform: translateY(-2px);
+}
+
+.research-report-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6rem;
+    align-items: baseline;
+}
+
+.research-report-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: rgba(222, 234, 255, 0.95);
+}
+
+.research-report-header time {
+    font-size: 0.72rem;
+    color: rgba(163, 181, 220, 0.8);
+}
+
+.research-report-summary {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    color: rgba(216, 228, 255, 0.88);
+}
+
+.research-report-meta {
+    font-size: 0.72rem;
+    color: rgba(176, 192, 226, 0.78);
+}
+
+.research-report-error {
+    font-size: 0.75rem;
+    color: #ff8a8a;
+}
+
+.github-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+}
+
+.github-status-block {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.github-path {
+    font-size: 0.8rem;
+    color: rgba(177, 196, 232, 0.85);
+}
+
+.github-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.github-activity-log {
+    display: grid;
+    gap: 0.35rem;
+    margin-bottom: 1rem;
+    font-size: 0.75rem;
+    color: rgba(177, 196, 232, 0.82);
+}
+
+.github-activity-entry {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    background: rgba(10, 18, 32, 0.7);
+    border: 1px solid rgba(124, 173, 255, 0.16);
+    border-radius: 6px;
+    padding: 0.35rem 0.6rem;
+}
+
+.github-activity-level {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+}
+
+.github-activity-level.level-info {
+    color: rgba(124, 173, 255, 0.85);
+}
+
+.github-activity-level.level-warn {
+    color: #ffd27f;
+}
+
+.github-activity-level.level-error {
+    color: #ff8a8a;
+}
+
+.github-activity-message {
+    flex: 1;
+}
+
+.github-activity-time {
+    font-size: 0.68rem;
+    color: rgba(177, 196, 232, 0.7);
+}
+
+.tree-root {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    font-size: 0.95rem;
+}
+
+.tree-root li {
+    padding-left: 1.2rem;
+    position: relative;
+    line-height: 1.7;
+}
+
+.tree-root summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    padding: 2px 0;
+}
+
+.tree-root summary::-webkit-details-marker {
+    display: none;
+}
+
+.tree-root summary:focus {
+    outline: none;
+}
+
+.tree-root .toggle-btn {
+    color: #666;
+    margin-right: 4px;
+    font-size: 0.7rem;
+    width: 1em;
+    display: inline-block;
+    text-align: center;
+    flex-shrink: 0;
+    transition: transform 0.1s ease-in-out;
+}
+
+:root.dark .tree-root .toggle-btn {
+    color: #aaa;
+}
+
+.tree-root details:not([open]) > summary .toggle-btn {
+    transform: rotate(-90deg);
+}
+
+.tree-root details[open] > summary .toggle-btn {
+    transform: rotate(0deg);
+}
+
+.tree-root .folder-icon,
+.tree-root .file-icon {
+    margin-right: 6px;
+    font-size: 1em;
+    width: 1.2em;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.tree-root .folder-label {
+    font-weight: normal;
+    color: var(--fg);
+    transition: color 0.2s ease;
+}
+
+.tree-root summary:hover .folder-label {
+    color: var(--lnk);
+}
+
+.tree-root .file {
+    display: flex;
+    align-items: center;
+    padding: 2px 0;
+}
+
+.tree-root .file a {
+    text-decoration: none;
+    color: var(--lnk);
+    transition: color 0.2s ease;
+}
+
+.tree-root .file a:hover {
+    text-decoration: underline;
+}
+
+.content-container {
+    display: flex;
+    gap: 20px;
+    margin-top: 20px;
+    align-items: flex-start;
+}
+
+.file-explorer {
+    flex: 1;
+    min-width: 250px;
+}
+
+.document-viewer {
+    flex: 2;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 15px;
+    background-color: var(--tab-active-bg);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.document-viewer.hidden {
+    display: none;
+}
+
+.tab-container {
+    margin-top: 20px;
+    border: 1px solid #a2a9b1;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.tab-buttons {
+    display: flex;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #a2a9b1;
+}
+
+.tab-btn {
+    padding: 10px 20px;
+    cursor: pointer;
+    border: none;
+    background: none;
+    border-right: 1px solid var(--subtle-border);
+    background-color: var(--tab-bg);
+}
+
+.tab-btn.active {
+    background-color: var(--tab-active-bg);
+    border-color: var(--border);
+    font-weight: bold;
+}
+
+.tab-content {
+    display: none;
+    padding: 15px;
+    background-color: var(--tab-active-bg);
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.markdown-title {
+    margin-top: 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.markdown-meta {
+    margin: 10px 0;
+    font-size: 0.9rem;
+    color: #666;
+}
+
+.markdown-content {
+    padding: 1rem;
+    border-radius: 4px;
+    margin: 15px 0;
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+}
+
+.document-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+}
+
+.action-btn {
+    padding: 5px 15px;
+    background-color: var(--tab-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.action-btn:hover {
+    background-color: var(--subtle-border);
+}
+
+.tag,
+.category {
+    display: inline-block;
+    padding: 2px 8px;
+    margin: 2px;
+    border-radius: 10px;
+    font-size: 0.8rem;
+}
+
+.tag {
+    background-color: #eaecf0;
+    color: #555;
+}
+
+.category {
+    background-color: #dae8fc;
+    color: #333;
+}

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat History | BITwiki</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="wiki-container">
+        <div class="wiki-header">
+            <div class="wiki-logo"><a href="/">BITwiki</a></div>
+            <div class="wiki-nav">
+                <ul>
+                    <li><a href="/">Research Terminal</a></li>
+                    <li><a href="/memory/">Memory Dashboard</a></li>
+                    <li><a href="/prompts/">Prompt Library</a></li>
+                    <li><a href="/organizer/">Self Organizer</a></li>
+                    <li><a href="/github-sync/">GitHub Sync</a></li>
+                    <li><a href="/research/">My Research</a></li>
+                    <li class="active"><a href="/chat-history/">Chat History</a></li>
+                    <li><a href="https://bitwiki.org/wiki/Main_Page">Main Wiki</a></li>
+                    <li><a href="https://psychophilosophy.gitbook.io/corebit-systems/">Learn More</a></li>
+                    <li><a href="https://hub.bitwiki.org/">Join The Community</a></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="wiki-content">
+            <h1>Chat History Archive</h1>
+            <p class="wiki-article-info">Review, export, and manage persisted chat transcripts with privacy-aware redactions.</p>
+
+            <div class="status-chip-row" aria-label="System status overview">
+                <span class="status-chip status-unknown" data-status-key="venice" data-status-label="Venice LLM">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">Venice LLM</span>
+                    <span class="status-chip-message" data-status-role="message">Checking…</span>
+                </span>
+                <span class="status-chip status-unknown" data-status-key="brave" data-status-label="Brave Search">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">Brave Search</span>
+                    <span class="status-chip-message" data-status-role="message">Checking…</span>
+                </span>
+                <span class="status-chip status-unknown" data-status-key="memory" data-status-label="Memory Core">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">Memory Core</span>
+                    <span class="status-chip-message" data-status-role="message">Checking…</span>
+                </span>
+                <span class="status-chip status-unknown" data-status-key="github" data-status-label="GitHub Sync">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">GitHub Sync</span>
+                    <span class="status-chip-message" data-status-role="message">Checking…</span>
+                </span>
+                <span class="status-chip status-unknown" data-presence-key="telemetry" data-status-label="Telemetry Feed">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="status-chip-label" data-status-role="label">Telemetry Feed</span>
+                    <span class="status-chip-message" data-status-role="message">Idle</span>
+                </span>
+            </div>
+
+            <section class="chat-history-summary" aria-label="Chat archive summary">
+                <article class="organizer-summary-card" aria-live="polite">
+                    <h2>Conversations</h2>
+                    <div class="organizer-summary-metric" id="conversation-count">0</div>
+                    <p class="organizer-summary-lead" id="conversation-summary">Loading conversation metrics…</p>
+                    <div class="organizer-button-row">
+                        <button type="button" id="refresh-conversations" class="memory-secondary-btn">Refresh</button>
+                        <button type="button" id="clear-conversations" class="memory-secondary-btn">Clear Expired</button>
+                    </div>
+                </article>
+
+                <article class="organizer-summary-card" aria-live="polite">
+                    <h2>Retention Policy</h2>
+                    <p class="organizer-summary-lead" id="retention-policy">Chat transcripts are retained for 30 days by default.</p>
+                    <p class="organizer-summary-meta">Data older than the retention window is automatically pruned.</p>
+                </article>
+            </section>
+
+            <div class="organizer-grid">
+                <section class="organizer-panel" aria-labelledby="conversation-list-title">
+                    <header class="organizer-panel-header">
+                        <div>
+                            <h2 id="conversation-list-title">Stored Conversations</h2>
+                            <p class="organizer-panel-description" id="conversation-status">Loading conversations…</p>
+                        </div>
+                        <div class="organizer-panel-actions">
+                            <input type="search" id="conversation-search" placeholder="Filter by user or tag" aria-label="Filter conversations">
+                            <button type="button" id="download-selected" class="memory-secondary-btn" disabled>Download</button>
+                            <button type="button" id="delete-selected" class="memory-secondary-btn" disabled>Delete</button>
+                        </div>
+                    </header>
+                    <div class="organizer-panel-body">
+                        <ul id="conversation-list" class="organizer-list" aria-live="polite"></ul>
+                    </div>
+                </section>
+
+                <section class="organizer-panel" aria-labelledby="conversation-detail-title">
+                    <header class="organizer-panel-header">
+                        <div>
+                            <h2 id="conversation-detail-title">Conversation Detail</h2>
+                            <p class="organizer-panel-description" id="detail-status">Select a conversation to inspect messages.</p>
+                        </div>
+                    </header>
+                    <div class="organizer-panel-body">
+                        <div id="conversation-metadata" class="conversation-metadata"></div>
+                        <div id="conversation-messages" class="conversation-messages" aria-live="polite"></div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <script src="/webcomm.js"></script>
+    <script src="/status.js"></script>
+    <script src="/chat-history/chat-history.js"></script>
+</body>
+</html>

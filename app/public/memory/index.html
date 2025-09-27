@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BITCORE AI - Memory Dashboard</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="wiki-container">
+        <div class="wiki-header">
+            <div class="wiki-logo"><a href="/">BITwiki</a></div>
+            <div class="wiki-nav">
+                <ul>
+                    <li><a href="/">Research Terminal</a></li>
+                    <li class="active"><a href="/memory/">Memory Dashboard</a></li>
+                    <li><a href="/prompts/">Prompt Library</a></li>
+                <li><a href="/organizer/">Self Organizer</a></li>
+                <li><a href="/github-sync/">GitHub Sync</a></li>
+                <li><a href="/research/">My Research</a></li>
+                    <li><a href="/chat-history/">Chat History</a></li>
+                    <li><a href="https://bitwiki.org/wiki/Main_Page">Main Wiki</a></li>
+                    <li><a href="https://psychophilosophy.gitbook.io/corebit-systems/">Learn More</a></li>
+                    <li><a href="https://hub.bitwiki.org/">Join The Community</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="wiki-content">
+            <h1>Memory Dashboard</h1>
+            <div class="wiki-article-info">Live memory metrics, store/recall tools, and telemetry for BITCORE AI.</div>
+            <div class="memory-dashboard">
+                <div class="memory-dashboard-header">
+                    <div>
+                        <span class="dashboard-title">Memory Metrics</span>
+                        <p class="dashboard-subtitle">System-wide memory health across layers and sources.</p>
+                    </div>
+                    <button id="refresh-metrics" class="memory-secondary-btn" type="button">Refresh</button>
+                </div>
+
+                <section id="memory-metrics" class="memory-metrics" aria-live="polite">
+                    <div class="metrics-placeholder">Loading metrics…</div>
+                </section>
+
+                <div class="memory-layout">
+                    <section class="memory-workbench" aria-label="Memory Workbench">
+                        <div class="memory-tabs" role="tablist">
+                            <button class="memory-tab active" data-tab="store" role="tab" aria-selected="true">Store</button>
+                            <button class="memory-tab" data-tab="recall" role="tab">Recall</button>
+                            <button class="memory-tab" data-tab="results" role="tab">Results</button>
+                            <button class="memory-tab" data-tab="telemetry" role="tab">Telemetry</button>
+                        </div>
+
+                        <div class="memory-panels">
+                            <div id="panel-store" class="memory-panel active" role="tabpanel">
+                                <form id="memory-store-form" class="memory-form" autocomplete="off">
+                                    <h3>Store Memory</h3>
+                                    <div class="memory-field">
+                                        <label for="store-content">Content</label>
+                                        <textarea id="store-content" rows="4" placeholder="What should BITCORE remember?" required></textarea>
+                                    </div>
+                                    <div class="memory-field-grid">
+                                        <label class="memory-field" for="store-layer">
+                                            <span>Layer</span>
+                                            <select id="store-layer">
+                                                <option value="episodic">Episodic</option>
+                                                <option value="working">Working</option>
+                                                <option value="semantic">Semantic</option>
+                                            </select>
+                                        </label>
+                                        <label class="memory-field" for="store-source">
+                                            <span>Source</span>
+                                            <input type="text" id="store-source" placeholder="e.g. /research session" />
+                                        </label>
+                                    </div>
+                                    <div class="memory-field">
+                                        <label for="store-tags">Tags</label>
+                                        <input type="text" id="store-tags" placeholder="comma,separated,tags" />
+                                    </div>
+                                    <label class="memory-checkbox">
+                                        <input type="checkbox" id="store-github" />
+                                        <span>Sync to GitHub repository</span>
+                                    </label>
+                                    <div class="memory-actions">
+                                        <button type="submit" class="memory-primary-btn">Store Memory</button>
+                                        <div id="store-status" class="form-status" role="status"></div>
+                                    </div>
+                                </form>
+                            </div>
+
+                            <div id="panel-recall" class="memory-panel" role="tabpanel" hidden>
+                                <form id="memory-recall-form" class="memory-form" autocomplete="off">
+                                    <h3>Recall Memory</h3>
+                                    <div class="memory-field">
+                                        <label for="recall-query">Query</label>
+                                        <input type="text" id="recall-query" placeholder="Search phrase or natural language prompt" required />
+                                    </div>
+                                    <div class="memory-field-grid">
+                                        <label class="memory-field" for="recall-layer">
+                                            <span>Layer</span>
+                                            <select id="recall-layer">
+                                                <option value="episodic">Episodic</option>
+                                                <option value="working">Working</option>
+                                                <option value="semantic">Semantic</option>
+                                            </select>
+                                        </label>
+                                        <label class="memory-field" for="recall-limit">
+                                            <span>Limit</span>
+                                            <input type="number" id="recall-limit" min="1" max="20" value="5" />
+                                        </label>
+                                    </div>
+                                    <div class="memory-filter-row">
+                                        <label class="memory-checkbox"><input type="checkbox" id="recall-short" checked /> <span>Include short-term</span></label>
+                                        <label class="memory-checkbox"><input type="checkbox" id="recall-long" checked /> <span>Include long-term</span></label>
+                                        <label class="memory-checkbox"><input type="checkbox" id="recall-meta" checked /> <span>Include metadata</span></label>
+                                        <label class="memory-checkbox"><input type="checkbox" id="recall-github" /> <span>GitHub-backed</span></label>
+                                    </div>
+                                    <div class="memory-actions">
+                                        <button type="submit" class="memory-primary-btn">Recall Memories</button>
+                                        <div id="recall-status" class="form-status" role="status"></div>
+                                    </div>
+                                </form>
+                            </div>
+
+                            <div id="panel-results" class="memory-panel" role="tabpanel" hidden>
+                                <div class="panel-header">
+                                    <h3>Recall Results</h3>
+                                    <button id="clear-results" class="memory-secondary-btn" type="button">Clear</button>
+                                </div>
+                                <div id="recall-results" class="memory-results" aria-live="polite">
+                                    <div class="memory-empty">Run a recall to populate results.</div>
+                                </div>
+                            </div>
+
+                            <div id="panel-telemetry" class="memory-panel" role="tabpanel" hidden>
+                                <div class="panel-header">
+                                    <h3>Memory Telemetry</h3>
+                                    <span id="telemetry-status" class="telemetry-status telemetry-idle">Idle</span>
+                                </div>
+                                <div id="telemetry-feed" class="telemetry-feed" aria-live="polite">
+                                    <div class="memory-empty">Telemetry events will appear here when WebSocket activity occurs.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <aside class="memory-side-panel" aria-label="Quick Stats">
+                        <h3>Layer Overview</h3>
+                        <ul id="layer-breakdown" class="layer-breakdown"></ul>
+                        <h3>Recent Activity</h3>
+                        <ul id="activity-feed" class="activity-feed"></ul>
+                    </aside>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/webcomm.js"></script>
+    <script src="/memory/memory.js"></script>
+</body>
+</html>
