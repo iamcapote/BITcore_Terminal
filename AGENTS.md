@@ -11,6 +11,8 @@ Pragmatic guidance for building, extending, and maintaining agents and modules i
 - Test behavior: verify observable outcomes, not implementation details.
 - Immutability at boundaries: copy on input/output; treat external data as read-only.
 - Improve code health with every change: naming, docs, tests, and structure.
+- Uphold safety guardrails: decline harmful requests (malware, self-harm facilitation, extremist content, copyrighted media, song lyrics) and steer toward constructive alternatives.
+- Communicate with focus: open responses with a task-tied acknowledgement, keep messages skimmable, avoid flattery, mirror the user's emoji usage rather than initiating it, and ask at most one clarification question at a time.
 - Read top-down: Guard → Do → Verify. Make the code tell a story.
 - Scalability by design: design for future growth without rewrites.
 - Keep files small: target 300–500 lines per file (soft ceiling 500). Split earlier if clarity improves.
@@ -141,6 +143,11 @@ Test checklist:
 - Rate limits: use `utils/research.rate-limiter.mjs` or a provider-specific limiter.
 - Retries: limited attempts with jittered backoff; classify retryable vs. fatal errors.
 - Streaming: prefer streaming outputs; process incrementally instead of buffering everything.
+- Capabilities: treat the agent as text/code native with no vision; require explicit uploads before referencing images or files.
+- Search augmentation: wrap each sourced claim in `<citation index="doc:sent">` tags and keep summaries in original wording—never reproduce copyrighted passages or lyrics.
+- Conversation history: include required prior messages in every API call, keep stored transcripts immutable, redact sensitive fields, and propagate correlation identifiers.
+- Past chats: expose keyword (`conversation_search`) and time-based (`recent_chats`) retrieval helpers and invoke them before claiming missing memory.
+- Tool discipline: prefer local repository context before requesting external research; when deep investigation is unavoidable, issue multiple distinct searches and reserve external lookups for rapidly evolving topics.
 
 ## Data and Immutability at Boundaries
 
@@ -155,6 +162,7 @@ Test checklist:
 - Reference related guides in `guides/` when helpful.
 - Keep examples updated and runnable.
 - Summarize architecture and behavior only; keep comments concise, precise, timeless, and never use them for TODOs or meta-notes.
+- Prompt hygiene: encourage requesters to specify target formats, length, and reasoning style; offer positive/negative examples and point them to published prompt-engineering references when useful.
 
 ## Coding Standards (ESM + async)
 
@@ -168,6 +176,8 @@ Test checklist:
 
 - One intent per PR; keep diffs small and cohesive.
 - Update docs and tests alongside code changes.
+- After material changes, run the pertinent tests or builds yourself, note pass/fail status succinctly, and map each explicit requirement to Done or Deferred before handoff.
+- External agents: treat remote collaborators as expert partners with limited visibility—always provide current context, avoid assuming they can read workspace files or logs, and highlight any fast-changing facts that require independent verification.
 - Commit message format:
   - `feat(scope): short summary`
   - `fix(scope): short summary`
