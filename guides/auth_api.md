@@ -1,180 +1,159 @@
 # Authentication & API Key Management – Technical Reference
 
-This guide describes the production implementation of authentication, user storage, and API key management for the Deep Research Privacy App. It reflects the code in `/app/features/auth`, `/app/commands`, and supporting utilities as of September 2025.
+This guide captures the current single-user authentication façade, storage layout, and API key flows for the Deep Research Privacy App. It reflects the simplified implementation present in `app/features/auth/user-manager.mjs` and associated helpers as of **October 2025**.
 
 ---
 
-## 1. System Overview
+## 1. System Snapshot
 
-| Concern | Implementation | Key Modules |
+| Concern | Current Behaviour | Key Modules |
 | --- | --- | --- |
-| User storage | JSON files under `~/.mcp/users` (override via `MCP_TEST_USER_DIR`) | `app/features/auth/user-manager.mjs` |
-| Password hashing | Argon2id with per-user salts | `user-manager.mjs` (`argon2` dependency) |
-| API key encryption | AES-256-GCM, key derived with `scrypt` | `app/features/auth/encryption.mjs` |
-| Session tracking (CLI) | `~/.mcp/session.json` with expiry timestamps | `user-manager.mjs::createSession` / `loadUser` |
-| Rate limiting | In-memory attempt tracker for login | `user-manager.mjs::RateLimiter` |
-| CLI commands | `/login`, `/logout`, `/status`, `/users`, `/password-change`, `/keys` | `app/commands/*.mjs` |
-| WebSocket auth | Session-local state within `app/features/research/routes.mjs` | `userManager.authenticateUser`, `userManager.getUserData` |
+| User storage | Single JSON file `global-user.json` under `~/.bitcore-terminal` (override via `BITCORE_STORAGE_DIR`) | `app/features/auth/user-manager.mjs`, `app/utils/research.ensure-dir.mjs` |
+| Authentication | Hard-wired single-user mode (`operator`/`admin`). `/login` is a no-op, `/logout` clears nothing. | `app/commands/login.cli.mjs`, `app/commands/logout.cli.mjs` |
+| Passwords | Not persisted. Commands that historically required passwords now skip prompts unless downstream logic (e.g., GitHub upload) explicitly asks for one. | Same as above |
+| API key storage | Plaintext values in `global-user.json` (Brave, Venice) plus GitHub metadata. No encryption layer is active. | `user-manager.mjs::setApiKey`, `setGitHubConfig` |
+| API key resolution | Session cache → user JSON → environment variables | `app/utils/api-keys.mjs` |
+| CLI/Web parity | `/keys`, `/status`, `/memory`, `/missions`, etc. run without login. WebSocket sessions clone the global user on connect. | `app/features/research/websocket/connection.mjs` |
+
+> ⚠️ **Security Trade-off:** The legacy encrypted vault (`argon2id`, `scrypt`, AES-GCM) remains in the git history but is no longer invoked. Treat the storage directory as sensitive configuration and guard it at the OS level.
 
 ---
 
-## 2. Directory & Files
+## 2. Storage Layout
 
 ```
-~/.mcp/
-  users/
-    public.json
-    <username>.json
-  session.json          # CLI session persistence
+~/.bitcore-terminal/
+  global-user.json      # canonical single-user profile
+  terminal-preferences.json
+  research-preferences.json
+  ...
 ```
 
-- `MCP_TEST_USER_DIR` points the user directory (and session file) to an alternate location for tests.
-- User files contain role, password hash, salts, encrypted keys, GitHub settings, and limit metadata.
-- Public profile is created automatically with limited quotas and no encrypted keys.
+`global-user.json` structure:
+
+```json
+{
+  "username": "operator",
+  "role": "admin",
+  "apiKeys": {
+    "brave": "...",
+    "venice": "..."
+  },
+  "github": {
+    "owner": "...",
+    "repo": "...",
+    "branch": "main",
+    "token": "..."
+  },
+  "features": {
+    "modelBrowser": true
+  }
+}
+```
+
+No other user files are created; all commands read and update this record.
 
 ---
 
-## 3. User Manager (`user-manager.mjs`)
+## 3. User Manager Responsibilities
 
-### 3.1 Initialisation
+1. **Initialisation**
+   - `initialize()` ensures the storage directory exists, reads `global-user.json`, and merges it with defaults derived from environment variables (`BRAVE_API_KEY`, `VENICE_API_KEY`, `GITHUB_*`, `BITCORE_*`).
+   - If the file is missing, a new document is written to disk with the merged defaults.
 
-1. `ensureUserDir()` creates the target directory.
-2. `createPublicProfile()` writes `public.json` with baseline limits and empty GitHub fields.
-3. `adminExists()` scans user files for role `admin`.
-4. If no admin exists, CLI entrypoints prompt for creation via `createInitialAdmin(username, password)`.
-5. CLI mode attempts to restore the previous session (`session.json`) if not expired (default 30 days).
+2. **Session Accessors**
+   - `getCurrentUser()` and `getUserData()` return the in-memory copy (creating it on demand).
+   - `isAuthenticated()` always returns `true`.
+   - `getUsername()` / `getRole()` surface the fixed identity.
 
-### 3.2 Password Handling
+3. **Mutations**
+   - `setApiKey(service, value)` writes Brave/Venice tokens directly.
+   - `setGitHubConfig(config)` upserts owner/repo/branch/token.
+   - `setFeatureFlag(feature, bool)` toggles feature switches (currently only `modelBrowser`).
 
-- Passwords are hashed with `argon2id` (via `argon2` dependency). Hash and salt are stored in the user JSON.
-- `changePassword()` verifies the existing hash, decrypts stored keys, re-encrypts them with the new password, and updates the hash/salt.
-- Public user has no password.
+4. **Persistence**
+   - `save()` rewrites `global-user.json` with pretty-printed JSON.
+   - Tests invoke the same API and run under a temporary directory by overriding `BITCORE_STORAGE_DIR`.
 
-### 3.3 API Keys & Encryption
-
-- Keys supported: Brave, Venice, GitHub token (plus GitHub owner/repo/branch metadata).
-- Encryption pipeline:
-  1. Prompt user for password (CLI hidden prompt / WebSocket prompt).
-  2. Derive a 32-byte key from password + salt using `scrypt` (`deriveKey`).
-  3. Encrypt plaintext key with AES-256-GCM (`encryptApiKey`).
-  4. Store JSON payload (`{ iv, authTag, encrypted }`) in user file.
-- Decryption reverses the process using the cached password or prompted password.
-
-### 3.4 Rate Limiting
-
-- `RateLimiter` enforces maximum attempts per time window (default 5 attempts per 15 minutes).
-- Exponential backoff increases block window after repeated violations.
-- Applied in both CLI and WebSocket login via `attempt(username)` and `reset(username)`.
-
-### 3.5 Session Concepts
-
-- **CLI Session (`currentUser`)**: Global process state used by CLI commands. Persisted to `session.json` with `expiresAt`.
-- **WebSocket Session**: Each socket retains its own `session.user` object plus cached decrypted keys/passwords. `authenticateUser` returns a fresh user object without mutating global state.
+There is **no** password hash, salt management, rate limiting, or encrypted payload in the active code path.
 
 ---
 
-## 4. Command Layer
+## 4. CLI & Web Command Layer
 
-### 4.1 `/login`
+### `/login`
+Returns the active user and prints a diagnostic message confirming single-user mode. Useful for tests that expect a structured response.
 
-1. CLI: `app/commands/login.cli.mjs::executeLogin` prompts for username/password, calls `userManager.login`, caches password if successful, and writes CLI session.
-2. WebSocket: `routes.mjs::handleLogin` uses `authenticateUser` and stores user data on the socket session.
-3. On success, `/status` and downstream commands gain access to decrypted keys (with password prompt if necessary).
+### `/logout`
+Stub that reports the fixed mode. No state change occurs.
 
-### 4.2 `/logout`
+### `/status`
+Reports username, role, feature flags, and whether API keys/GitHub metadata are present.
 
-- CLI reloads the `public` profile, clears cached password, and removes session file.
-- WebSocket clears session state and notifies client via `logout_success` event.
+### `/keys`
+- `set brave <value>` / `set venice <value>` – update the stored plaintext keys.
+- `set github --github-owner=ORG --github-repo=REPO [--github-branch=BRANCH] [--github-token=TOKEN]` – configure sync destinations.
+- `check` / `stat` – display configuration status.
+- `test` – perform live connectivity checks (Brave ping, Venice models endpoint, GitHub `GET /user`).
 
-### 4.3 `/status`
-
-- Reports username, role, memory mode, and API key configuration status. Reads from the active session (CLI global or WebSocket session).
-
-### 4.4 `/users`
-
-- Admin-only operations: `create`, `list`, `delete`, `createAdmin`.
-- `createUser()` validates role, generates password if omitted, writes user file with initial limits, and returns the generated password (displayed once to the admin).
-- Deletion checks safeguards (cannot remove last admin, active user, or public account).
-
-### 4.5 `/password-change`
-
-- Prompts current password and new password, invokes `userManager.changePassword`. Re-encrypts stored API keys.
-
-### 4.6 `/keys`
-
-- `set`: Prompts for Brave/Venice/GitHub tokens and stores them encrypted.
-- `check` / `stat`: Displays whether keys are configured (without revealing values).
-- `test`: Performs live API calls (Brave search ping, Venice prompt, GitHub repo metadata) to validate credentials. Implemented in `keys.cli.mjs` using helper functions in `user-manager.mjs`.
+### WebSocket Sessions
+`handleWebSocketConnection` clones the resolved user for each socket, retains decrypted keys in memory while the connection is open, and clears them on disconnect/inactivity. The Web terminal experience therefore mirrors the CLI without additional prompts.
 
 ---
 
-## 5. API Key Resolution
+## 5. API Key Resolution Order
 
-When a feature requests a key (research, chat, GitHub uploads):
+1. Session-scoped cache (`session.apiKeyCache`) populated by previous lookups.
+2. `global-user.json` via `userManager.getApiKey(service)`.
+3. Environment fallbacks (`BRAVE_API_KEY`, `VENICE_API_KEY`, `VENICE_PUBLIC_API_KEY`).
 
-1. First preference: decrypted user key from the session (`session.decryptedKeys`).
-2. Fallback: environment variable (`BRAVE_API_KEY`, `VENICE_API_KEY`, `GITHUB_TOKEN`, etc.).
-3. If neither is available, the command aborts with an informative error. WebSocket clients receive an `error` message and may be prompted to configure keys.
+If a key is still missing, the consumer raises a typed error:
+- `MissingResearchKeysError` for `/research`
+- Informational messages for `/diagnose`, `/github-sync`, etc.
 
-`user-manager.mjs::getDecryptedKeys(password)` handles the decryption pipeline. Commands typically cache the password for the duration of the CLI session to minimise prompts.
-
----
-
-## 6. GitHub Settings
-
-User files store the following fields for research/memory uploads:
-
-- `githubOwner`
-- `githubRepo`
-- `githubBranch`
-- `encryptedGitHubToken`
-
-Helpers in `app/utils/github.utils.mjs` and `app/infrastructure/memory/github-memory.integration.mjs` expect these fields. If any are missing, uploads gracefully decline with guidance to run `/keys set github ...`.
+GitHub configuration uses the same precedence rules with helper `resolveGitHubConfig`.
 
 ---
 
-## 7. Validation & Testing
+## 6. Operational Guidance
+
+- **Backups**: Treat `~/.bitcore-terminal` as configuration. Copy the directory using OS tooling or automation (Ansible, cron). There is no key encryption—secure the directory itself.
+- **Secrets Hygiene**: Rotate Brave/Venice/GitHub tokens where they originate. Consider re-enabling encryption if multi-user mode returns.
+- **Environment Overrides**: Set `BITCORE_STORAGE_DIR` for tests or container deployments to keep operator state within the workspace.
+- **Monitoring**: The `/keys test` command is the fastest way to confirm connectivity after credential changes.
+
+---
+
+## 7. Testing Checklist
 
 Automated coverage (Vitest):
 
-- `tests/auth.test.mjs` – End-to-end authentication flows.
-- `tests/cli-integration.test.mjs` – Command router covering `/login`, `/keys`, `/users`.
-- `tests/memory.test.mjs`, `tests/github-memory.test.mjs` – Ensure decrypted GitHub credentials work during commits.
-- `tests/system-validation.mjs` – Full pipeline validation, including authentication prerequisites.
+- `tests/auth.test.mjs` – verifies that `setApiKey`, `setGitHubConfig`, and retrieval helpers work end to end.
+- `tests/cli-integration.test.mjs` – exercises `/login`, `/keys`, `/status` under single-user assumptions.
+- Integration suites (`research`, `memory`, `missions`) rely on `resolveApiKeys` and therefore exercise the same path indirectly.
 
-Manual smoke tests:
+Manual smoke test:
 
 ```bash
-# Start in CLI mode
 npm start -- cli
-
-/status                # should show public user
-/login admin           # enter password when prompted
-/keys set brave        # store a Brave key (prompted)
-/keys test             # validate credentials
-/users list            # verify admin tooling
-/logout
+/status
+/keys check
+/keys set brave "BRAVE-KEY"
+/keys set venice "VENICE-KEY"
+/keys set github --github-owner=me --github-repo=research --github-token=ghp_example
+/keys test
 ```
 
-For WebSocket flows:
-
-```bash
-npm start
-# Visit http://localhost:3000, open DevTools console
-# Issue commands via terminal UI and confirm login_success/logout_success events
-```
+For the Web terminal, open `http://localhost:3000`, issue `/status`, `/keys check`, and confirm the output mirrors the CLI.
 
 ---
 
-## 8. Operational Notes
+## 8. Future Considerations
 
-- **Backups**: User JSON files are sufficient to restore accounts; keep them encrypted when backing up.
-- **Password resets**: Admin users can reset another user's password via `/users create --force` or by editing the JSON file (followed by `argon2` hash generation). Prefer CLI flow to keep audit trail.
-- **Environment overrides**: Setting `MCP_TEST_USER_DIR` is required for automated tests to avoid touching developer home directories.
-- **Security posture**: Encourage HTTPS in production, rotate API keys regularly, and monitor rate-limiter logs for suspicious activity.
+- Reintroduce encrypted-at-rest storage if multi-user support or remote deployments demand it. The existing `app/features/auth/encryption.mjs` helpers can be reused once the user manager regains password prompts.
+- Harden the writable directory when packaging for production (run as non-root user, restrict permissions, mount as secret volume in containers).
+- If telemetry or audit requirements expand, add a thin logging layer to record credential changes (`setApiKey`, `setGitHubConfig`) with redacted values.
 
----
-
-Use this document as the canonical reference when modifying authentication flows, user storage, or key management. Update it alongside substantive code changes.
+Keep this guide aligned with the behaviour of `user-manager.mjs`—update it whenever authentication flows change or encryption returns.
 
 

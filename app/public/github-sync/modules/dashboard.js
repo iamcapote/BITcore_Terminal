@@ -1,10 +1,11 @@
-import { GitHubSyncAPI, GitHubSyncError } from './api.js';
+import { GitHubSyncAPI } from './api.js';
 import { StagingManager } from './staging.js';
 import { ActivityFeedController } from './activity-feed.js';
 import { ACTION_MAP, ACTION_LABEL } from './dashboard.constants.js';
 import { ensureWebComm } from './dashboard.utils.js';
-import { RemoteBrowserView } from './dashboard.remote-view.js';
-import { StagingPanelView } from './dashboard.staging-view.js';
+import { DashboardResultView } from './dashboard.result-view.js';
+import { DashboardRemoteController } from './dashboard.remote-controller.js';
+import { DashboardStagingController } from './dashboard.staging-controller.js';
 
 class GitHubSyncDashboard {
   constructor(root) {
@@ -39,62 +40,61 @@ class GitHubSyncDashboard {
       stagingRemoveButton: root.querySelector('[data-staging-remove]')
     };
 
-    this.remoteView = new RemoteBrowserView({
-      listElement: this.elements.remoteList,
-      emptyElement: this.elements.remoteEmpty,
-      pathElement: this.elements.remotePath,
-      browserElement: this.elements.remoteBrowser,
-      onNavigate: (path) => this.handleRemoteNavigate(path),
-      onFetch: (path) => this.handleRemoteFetch(path),
-      onRefresh: () => this.handleRemoteRefresh(),
-      onUp: () => this.handleRemoteUp()
+    this.resultView = new DashboardResultView({
+      containerElement: this.elements.resultContainer,
+      statusElement: this.elements.resultStatus,
+      metaElement: this.elements.resultMeta,
+      outputElement: this.elements.resultOutput
     });
 
-    this.stagingView = new StagingPanelView({
-      root: this.elements.stagingRoot,
-      listElement: this.elements.stagingList,
-      editorElement: this.elements.stagingEditor,
-      pathInput: this.elements.stagingPath,
-      originLabel: this.elements.stagingOrigin,
-      dirtyLabel: this.elements.stagingDirty,
-      updatedLabel: this.elements.stagingUpdated,
-      removeButton: this.elements.stagingRemoveButton,
-      onToolbarAction: (action) => this.handleStagingToolbar(action),
-      onEditorInput: (value) => this.handleEditorInput(value),
-      onSelect: (path) => this.staging.setActive(path)
+    this.remoteController = new DashboardRemoteController({
+      elements: {
+        remoteList: this.elements.remoteList,
+        remoteEmpty: this.elements.remoteEmpty,
+        remotePath: this.elements.remotePath,
+        remoteBrowser: this.elements.remoteBrowser,
+        pathInput: this.elements.path
+      },
+      runAction: (actionKey, overrides) => this.runAction(actionKey, overrides),
+      logger: console
+    });
+
+    this.stagingController = new DashboardStagingController({
+      staging: this.staging,
+      elements: {
+        stagingRoot: this.elements.stagingRoot,
+        stagingList: this.elements.stagingList,
+        stagingEditor: this.elements.stagingEditor,
+        stagingPath: this.elements.stagingPath,
+        stagingOrigin: this.elements.stagingOrigin,
+        stagingDirty: this.elements.stagingDirty,
+        stagingUpdated: this.elements.stagingUpdated,
+        stagingRemoveButton: this.elements.stagingRemoveButton
+      },
+      api: this.api,
+      resultView: this.resultView,
+      buildPayload: (actionKey, overrides) => this.buildPayload(actionKey, overrides),
+      remoteController: this.remoteController,
+      logger: console
     });
 
     this.actionButtons = new Map();
-    this.stagingDisposers = [];
     this.pendingAction = null;
-    this.remoteListing = null;
-    this.remoteSelectionPath = null;
   }
 
   init() {
     this.bindForm();
     this.bindActionButtons();
-    this.stagingView.init();
-    this.remoteView.init();
-    this.attachStagingListeners();
-    this.refreshStagingPanel();
-    this.setStatus('Idle — awaiting action.', 'idle');
-    this.remoteView.render(this.remoteListing);
+    this.stagingController.init();
+    this.remoteController.init();
+    this.resultView.setStatus('Idle — awaiting action.', 'idle');
     this.initActivityFeed();
     this.ensureWebSocket();
   }
 
   destroy() {
-    this.stagingDisposers.forEach((dispose) => {
-      try {
-        dispose?.();
-      } catch (error) {
-        console.warn('[GitHubSyncDashboard] staging dispose failed', error);
-      }
-    });
-    this.stagingDisposers = [];
-    this.stagingView.destroy();
-    this.remoteView.destroy();
+    this.stagingController.destroy();
+    this.remoteController.destroy();
     if (this.activityController && typeof this.activityController.destroy === 'function') {
       this.activityController.destroy();
     }
@@ -117,14 +117,8 @@ class GitHubSyncDashboard {
         return;
       }
       this.actionButtons.set(actionKey, button);
-      button.addEventListener('click', () => this.handleAction(actionKey));
+      button.addEventListener('click', () => this.runAction(actionKey));
     });
-  }
-
-  attachStagingListeners() {
-    const offChange = this.staging.on('change', () => this.refreshStagingPanel());
-    const offActive = this.staging.on('active-change', () => this.refreshStagingPanel());
-    this.stagingDisposers.push(offChange, offActive);
   }
 
   ensureWebSocket() {
@@ -148,7 +142,7 @@ class GitHubSyncDashboard {
     this.activityController.init();
   }
 
-  async handleAction(actionKey, overrides = {}) {
+  async runAction(actionKey, overrides = {}) {
     if (this.pendingAction) {
       return;
     }
@@ -160,14 +154,14 @@ class GitHubSyncDashboard {
     try {
       const payload = this.buildPayload(actionKey, overrides);
       if (actionKey === 'list' && !overrides.keepSelection) {
-        this.remoteSelectionPath = null;
+        this.remoteController.clearSelection();
       }
       this.setPending(actionKey, true, button, label);
       const response = await this.api.githubSync(payload);
-      this.renderSuccess(actionKey, payload, response);
+      this.resultView.renderSuccess({ actionKey, label, payload, response });
       this.afterAction(actionKey, response, payload);
     } catch (error) {
-      this.renderError(actionKey, error);
+      this.resultView.renderError({ actionKey, label, error });
     } finally {
       this.setPending(actionKey, false, button, label);
     }
@@ -249,344 +243,27 @@ class GitHubSyncDashboard {
       }
     }
     if (pending) {
-      this.setStatus(`Running ${label}`, 'pending');
-    }
-  }
-
-  setStatus(message, state = 'idle') {
-    if (!this.elements.resultStatus) {
-      return;
-    }
-    this.elements.resultStatus.textContent = message;
-    if (this.elements.resultContainer) {
-      this.elements.resultContainer.dataset.state = state;
-    }
-  }
-
-  renderSuccess(actionKey, payload, response) {
-    const label = ACTION_LABEL[actionKey] || actionKey;
-    this.setStatus(`${label} succeeded`, 'success');
-
-    if (this.elements.resultMeta) {
-      const metadata = [];
-      if (response?.correlationId) {
-        metadata.push(`Correlation: ${response.correlationId}`);
-      }
-      if (payload?.branch) {
-        metadata.push(`Branch: ${payload.branch}`);
-      }
-      if (payload?.path) {
-        metadata.push(`Path: ${payload.path}`);
-      }
-      if (actionKey === 'list' && Array.isArray(response?.data?.entries)) {
-        metadata.push(`Entries: ${response.data.entries.length}`);
-      }
-      this.elements.resultMeta.textContent = metadata.join(' · ');
-    }
-
-    if (this.elements.resultOutput) {
-      const view = {
-        action: response?.action ?? payload?.action ?? ACTION_MAP[actionKey],
-        ok: response?.ok ?? true,
-        data: response?.data ?? null,
-        meta: response?.meta ?? null
-      };
-      this.elements.resultOutput.textContent = JSON.stringify(view, null, 2);
-    }
-  }
-
-  renderError(actionKey, error) {
-    const label = ACTION_LABEL[actionKey] || actionKey;
-    const message = error instanceof GitHubSyncError
-      ? error.message
-      : (error?.message || 'Unknown error');
-    this.setStatus(`${label} failed: ${message}`, 'error');
-
-    if (this.elements.resultMeta) {
-      const metadata = [];
-      if (error instanceof GitHubSyncError) {
-        if (error.status) {
-          metadata.push(`HTTP ${error.status}`);
-        }
-        if (error.correlationId) {
-          metadata.push(`Correlation: ${error.correlationId}`);
-        }
-      }
-      this.elements.resultMeta.textContent = metadata.join(' · ');
-    }
-
-    if (this.elements.resultOutput) {
-      const payload = {
-        message,
-        details: error instanceof GitHubSyncError ? error.details ?? null : null
-      };
-      this.elements.resultOutput.textContent = JSON.stringify(payload, null, 2);
+      this.resultView.setStatus(`Running ${label}`, 'pending');
     }
   }
 
   afterAction(actionKey, response, payload = {}) {
     switch (actionKey) {
       case 'list':
-        this.applyRemoteListing(response?.data ?? null, payload);
+        this.remoteController.applyListing(response?.data ?? null, payload);
         break;
       case 'fetch':
-        this.stageFetchedFile(response?.data);
-        if (this.remoteListing) {
-          this.applyRemoteListing(this.remoteListing);
-        }
+        this.stagingController.stageFetchedFile(response?.data);
+        this.remoteController.reapplyListing();
         break;
       case 'upload':
-        this.markActiveClean(response?.data?.summary ?? response?.data);
+        this.stagingController.markActiveClean(response?.data?.summary ?? response?.data);
         break;
       case 'push':
-        this.markAllDirtyClean(response?.data?.summaries ?? response?.data);
+        this.stagingController.markAllDirtyClean(response?.data?.summaries ?? response?.data);
         break;
       default:
         break;
-    }
-  }
-
-  applyRemoteListing(listing, payload = {}) {
-    this.remoteListing = listing || null;
-    this.remoteView.render(this.remoteListing, {
-      selectionPath: this.remoteSelectionPath,
-      pathOverride: payload.path
-    });
-  }
-
-  stageFetchedFile(file) {
-    if (!file || !file.path) {
-      return;
-    }
-    try {
-      this.staging.stageFile({
-        path: file.path,
-        content: file.content ?? '',
-        origin: 'remote',
-        sha: file.sha ?? null,
-        ref: file.ref ?? null
-      });
-      this.staging.setActive(file.path);
-      if (this.elements.path) {
-        this.elements.path.value = file.path;
-      }
-      this.remoteSelectionPath = file.path;
-      this.remoteView.setSelection(this.remoteSelectionPath);
-    } catch (error) {
-      console.warn('[GitHubSyncDashboard] Failed to stage fetched file:', error);
-    }
-  }
-
-  markActiveClean(summary) {
-    const active = this.staging.getActive();
-    if (!active) {
-      return;
-    }
-    try {
-      this.staging.stageFile({
-        path: active.path,
-        content: active.content,
-        origin: 'remote',
-        sha: summary?.fileSha ?? null,
-        ref: summary?.branch ?? null
-      });
-      this.staging.setActive(active.path);
-    } catch (error) {
-      console.warn('[GitHubSyncDashboard] Failed to refresh staged file after upload:', error);
-    }
-  }
-
-  markAllDirtyClean(summaries) {
-    const active = this.staging.getActive();
-    const dirty = this.staging.dirtyEntries();
-    if (!dirty.length) {
-      return;
-    }
-    const summaryByPath = new Map();
-    if (Array.isArray(summaries)) {
-      summaries.forEach((item) => {
-        if (item?.path) {
-          summaryByPath.set(item.path, item);
-        }
-      });
-    }
-    dirty.forEach((file) => {
-      const summary = summaryByPath.get(file.path);
-      try {
-        this.staging.stageFile({
-          path: file.path,
-          content: file.content,
-          origin: 'remote',
-          sha: summary?.fileSha ?? null,
-          ref: summary?.branch ?? null
-        });
-      } catch (error) {
-        console.warn('[GitHubSyncDashboard] Failed to mark file clean:', error);
-      }
-    });
-    if (active?.path) {
-      this.staging.setActive(active.path);
-    }
-  }
-
-  handleRemoteNavigate(path) {
-    const normalized = typeof path === 'string' ? path.trim() : '';
-    this.remoteSelectionPath = null;
-    if (this.elements.path) {
-      this.elements.path.value = normalized;
-    }
-    this.handleAction('list', { path: normalized });
-  }
-
-  handleRemoteFetch(path) {
-    const normalized = typeof path === 'string' ? path.trim() : '';
-    if (!normalized) {
-      return;
-    }
-    this.remoteSelectionPath = normalized;
-    this.remoteView.setSelection(normalized);
-    if (this.elements.path) {
-      this.elements.path.value = normalized;
-    }
-    this.handleAction('fetch', { path: normalized });
-  }
-
-  handleRemoteRefresh() {
-    const currentPath = typeof this.remoteListing?.path === 'string'
-      ? this.remoteListing.path
-      : (this.elements.path?.value?.trim() ?? '');
-    if (this.elements.path) {
-      this.elements.path.value = currentPath || '';
-    }
-    this.handleAction('list', { path: currentPath || '', keepSelection: true });
-  }
-
-  handleRemoteUp() {
-    const currentPath = typeof this.remoteListing?.path === 'string'
-      ? this.remoteListing.path
-      : (this.elements.path?.value?.trim() ?? '');
-    if (!currentPath) {
-      return;
-    }
-    const sanitized = currentPath.replace(/\\/g, '/');
-    const segments = sanitized.split('/').filter(Boolean);
-    if (segments.length === 0) {
-      this.handleRemoteNavigate('');
-      return;
-    }
-    segments.pop();
-    const parentPath = segments.join('/');
-    this.handleRemoteNavigate(parentPath);
-  }
-
-  handleStagingToolbar(action) {
-    switch (action) {
-      case 'stage-blank':
-        this.stageBlankFile();
-        break;
-      case 'refresh-active':
-        this.reloadActiveFromRemote();
-        break;
-      case 'remove-active':
-        this.removeActiveFile();
-        break;
-      case 'clear-all':
-        this.clearStaging();
-        break;
-      default:
-        break;
-    }
-  }
-
-  stageBlankFile() {
-    const path = window.prompt('Enter the repository path for the new staged file (e.g., research/new-notes.md)');
-    if (!path) {
-      return;
-    }
-    const trimmed = path.trim();
-    if (!trimmed) {
-      return;
-    }
-    try {
-      this.staging.stageBlank(trimmed, { origin: 'local' });
-      this.staging.setActive(trimmed);
-      if (this.elements.path) {
-        this.elements.path.value = trimmed;
-      }
-    } catch (error) {
-      window.alert(error.message);
-    }
-  }
-
-  async reloadActiveFromRemote() {
-    const active = this.staging.getActive();
-    if (!active) {
-      return;
-    }
-    try {
-      const payload = this.buildPayload('fetch', { path: active.path });
-      const response = await this.api.githubSync(payload);
-      this.renderSuccess('fetch', payload, response);
-      this.stageFetchedFile(response?.data);
-      if (this.remoteListing) {
-        this.remoteSelectionPath = active.path;
-        this.remoteView.setSelection(active.path);
-        this.applyRemoteListing(this.remoteListing);
-      }
-    } catch (error) {
-      this.renderError('fetch', error);
-    }
-  }
-
-  removeActiveFile() {
-    const active = this.staging.getActive();
-    if (!active) {
-      return;
-    }
-    this.staging.remove(active.path);
-  }
-
-  clearStaging() {
-    if (this.staging.toArray().length === 0) {
-      return;
-    }
-    const confirmed = window.confirm('Remove all staged files? This does not affect GitHub until you push.');
-    if (!confirmed) {
-      return;
-    }
-    this.staging.clear();
-  }
-
-  handleEditorInput(value) {
-    const active = this.staging.getActive();
-    if (!active) {
-      return;
-    }
-    try {
-      this.staging.updateContent(active.path, value);
-    } catch (error) {
-      console.warn('[GitHubSyncDashboard] Failed to update staged content:', error);
-    }
-  }
-
-  refreshStagingPanel() {
-    const active = this.staging.getActive();
-    const files = this.staging.toArray().map((file) => ({
-      ...file,
-      dirty: this.staging.isDirty(file.path)
-    }));
-
-    this.stagingView.renderList(files, active?.path ?? null);
-    this.stagingView.renderActive(active);
-    this.stagingView.updateMeta({
-      origin: active?.origin ?? null,
-      dirty: active ? this.staging.isDirty(active.path) : false,
-      updatedAt: active?.updatedAt ?? null
-    });
-    this.stagingView.setButtonsState({ hasActive: Boolean(active) });
-
-    if (active && this.elements.path) {
-      this.elements.path.value = active.path;
     }
   }
 }

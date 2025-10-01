@@ -164,6 +164,21 @@ Test checklist:
 - Summarize architecture and behavior only; keep comments concise, precise, timeless, and never use them for TODOs or meta-notes.
 - Write comments that are as short as clarity allows and as detailed as precision demands; favor declarative descriptions of architecture, data flow, and invariants, and never use comments for status updates, placeholders, or conversational tone.
 - Prompt hygiene: encourage requesters to specify target formats, length, and reasoning style; offer positive/negative examples and point them to published prompt-engineering references when useful.
+- Comment discipline cheat sheet: state purpose-first, describe structure/flow, avoid status chatter, never stash TODOs or process notes; write for an expert reader in crisp, timeless sentences.
+
+### File & Comment Hygiene Summary
+
+- Enforce the 300–500 LOC envelope per module; flag and split outliers before they sprawl.
+- Favor micro-modules by responsibility (routers, orchestrators, managers, systems) so related code stays cohesive yet small.
+- Start every file with a Why/What/How docblock and keep sectional comments structural, timeless, and free of meta updates.
+- Condense prose: short declarative sentences that describe architecture and behavior; never embed TODOs or conversational notes in code comments.
+
+### Comment Precision Protocol (Summary)
+
+- Start every file with a succinct Why/What/How docblock telegraphing intent and contract.
+- Use sectional comments sparingly to orient readers to architecture, control flow, or invariants—never for status updates.
+- Keep prose timeless, high-signal, and assumption-light; avoid filler, meta-notes, or TODOs.
+- Condense information: short sentences for clarity, enough detail for precision, written for an expert reader.
 
 ### Comment Philosophy Summary
 
@@ -171,6 +186,7 @@ Test checklist:
 - Annotate sections only to explain structure, data flow, and invariants; keep prose timeless, high-signal, and assume an expert audience.
 - Ban meta-status notes and TODOs in code comments—use dedicated tracking files instead.
 - Condense information: enough detail for precision, no filler, no conversational tone.
+- Keep sentences short, declarative, and precise; treat comments as architectural documentation, never chatter.
 
 ## Coding Standards (ESM + async)
 

@@ -1,6 +1,6 @@
 # Chat & Memory System – Technical Guide
 
-This guide documents the current chat subsystem and memory integration implemented in the `/app` directory as of September 2025. It replaces prior aspirational documentation and tracks the live codebase.
+This guide documents the current chat subsystem and memory integration implemented in the `/app` directory as of October 2025. It replaces prior aspirational documentation and tracks the live codebase.
 
 ---
 
@@ -8,11 +8,28 @@ This guide documents the current chat subsystem and memory integration implement
 
 | Layer | Modules | Responsibility |
 | --- | --- | --- |
-| **Entry Points** | `app/commands/chat.cli.mjs`, `app/features/research/routes.mjs` (WebSocket chat command handling) | Parse `/chat` invocations, configure session state, and acknowledge chat readiness. |
+| **Entry Points** | `app/commands/chat.cli.mjs`, `app/features/chat/routes.mjs` (WebSocket chat command handling) | Parse `/chat` invocations, configure session state, and acknowledge chat readiness. The CLI file fans out to purpose-built helpers in `app/commands/chat/` (session, persona, interactive CLI, research, memory). |
 | **Session State** | WebSocket session objects (`session.isChatActive`, `session.chatHistory`, `session.memoryManager`) | Persist chat context, selected model/character, and memory manager instance for Web clients. |
-| **LLM Access** | `app/infrastructure/ai/venice.llm-client.mjs`, `app/infrastructure/ai/venice.response-processor.mjs` | Submit chat turns to Venice LLM and clean model responses before display. |
+| **LLM Access** | `app/infrastructure/ai/venice.llm-client.mjs`, `app/infrastructure/ai/venice.response-processor.mjs` | Submit chat turns to Venice LLM and clean model responses before display. Web handler relies on env-provided keys; CLI paths go through `resolveApiKeys`. |
 | **Memory Management** | `app/infrastructure/memory/memory.manager.mjs`, `app/infrastructure/memory/github-memory.integration.mjs` | Store, retrieve, summarise, and optionally commit memories to GitHub depending on user configuration. |
 | **Output Plumbing** | `app/utils/research.output-manager.mjs`, `app/utils/websocket.utils.mjs` | Mirror chat output across CLI stdout and WebSocket connections, respecting enable/disable input events. |
+
+### 1.1 Chat Command Modules
+
+All chat command logic now lives in small, single-responsibility modules under `app/commands/chat/`:
+
+| Module | Responsibility |
+| --- | --- |
+| `session.mjs` | Bootstrap `/chat`, manage session flags, persist chat history metadata, and bridge persona subcommands. |
+| `persona.mjs` | Handle `/chat persona …` commands, flag parsing, and output formatting. |
+| `interactive-cli.mjs` | Provide CLI-only helpers for hidden prompts and the readline chat loop. |
+| `memory.mjs` | Implement `/exitmemory`, including finalisation messaging and session cleanup. |
+| `research/queries.mjs` | Generate LLM-backed or heuristic research queries from chat context. |
+| `research/start.mjs` | Launch chat-derived research by normalising options, wiring telemetry, and instantiating the research engine. |
+| `research/exit.mjs` | Orchestrate `/exitresearch`, including WebSocket prompts, classification opt-in, and session teardown. |
+| `research.mjs` (facade) | Re-export the research helpers so existing imports stay stable while actual code stays modular. |
+
+This structure keeps each file well under the 300–500 line guidance in `AGENTS.md` and mirrors the modular terminal public bundle.
 
 ---
 
@@ -23,7 +40,7 @@ This guide documents the current chat subsystem and memory integration implement
    - WebSocket: `handleCommandMessage` (`app/features/research/routes.mjs`) interprets `/chat` and updates the session, then sends a `chat-ready` event.
 
 2. **Session Initialisation**
-   - A Venice `LLMClient` is prepared with the requested model/character (defaults: model `qwen3-235b`, character `bitcore`).
+   - A Venice `LLMClient` is prepared with the requested model/character (defaults: model `qwen3-235b`, character `bitcore`). CLI flows resolve the API key through `resolveApiKeys`; the Web handler relies on `VENICE_API_KEY` or the single-user profile.
    - `session.chatHistory` is initialised and the UI prompt switches to `[chat] >` for Web clients.
    - If memory is enabled, `MemoryManager` instantiates with depth-specific settings (short/medium/long) and optional GitHub integration derived from the authenticated user profile.
 
@@ -36,7 +53,7 @@ This guide documents the current chat subsystem and memory integration implement
 4. **Exit Conditions**
    - `/exit` ends the chat session.
    - `/exitmemory` finalises memory and optionally commits to GitHub (details below).
-   - `/research …` transitions into the research pipeline using accumulated chat context via `startResearchFromChat`.
+   - `/research …` transitions into the research pipeline using accumulated chat context via `startResearchFromChat` (implemented in `app/commands/chat/research/start.mjs`).
 
 ---
 
@@ -44,6 +61,7 @@ This guide documents the current chat subsystem and memory integration implement
 
 `MemoryManager` supports three depth profiles defined in `app/infrastructure/memory/memory.manager.mjs`:
 
+| Depth | Max memories | Retrieval limit | Relevance threshold | Summarise every |
 | --- | --- | --- | --- | --- |
 | `short` | 10 | 2 | 0.7 | 10 turns |
 | `medium` | 50 | 5 | 0.5 | 20 turns |
@@ -78,7 +96,7 @@ Additional behaviours:
 2. `MemoryManager.summarizeAndFinalize()` composes the dialogue, generates summaries using Venice if necessary, and prepares upload content.
 3. `GitHubMemoryIntegration.commitMemory()` pushes the summary to the configured repository/branch.
 4. On success, a `memory_commit` WebSocket event is emitted with the commit SHA; CLI prints the SHA via `outputManager`.
-5. The session’s `memoryManager` instance is cleared.
+5. The session’s `memoryManager` instance is cleared by `app/commands/chat/memory.mjs`.
 
 If GitHub settings are missing or commit fails, the memory is still summarised locally and a fallback message is shown.
 
@@ -111,9 +129,9 @@ Automated coverage:
 Manual smoke tests:
 
 ```bash
-# Start CLI chat with memory
+# Start CLI chat with memory (single-user mode)
 npm start -- cli
-/login <user>
+/status
 /chat --memory=true --depth=medium
 ```
 

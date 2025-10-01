@@ -1,41 +1,17 @@
 # BITcore Terminal Application - To Do List
 
-> **Note:** Treat this plan as additive context. Engineers should feel empowered to iterate, split, or parallelize tasks as bandwidth allows while preserving BITcore’s architectural standards and security posture.
-
-
-## Completed
-
-*   [COMPLETED] Fix `effectiveError is not a function` in `executeResearch` catch block.
-*   [COMPLETED] Fix `cmdOutput is not a function` in `executeChat` for public users.
-*   [COMPLETED] Ensure public users cannot execute `/research` command (block early).
-*   [COMPLETED] Ensure public users receive the correct notice in `/chat` and are returned to command mode.
-*   [COMPLETED] Ensure output/error handlers are correctly passed from `handleCommandMessage` to `executeChat` and `executeResearch`.
-*   [COMPLETED] Verify GitHub upload pipeline in `handleInputMessage`:
-    *   [COMPLETED] Ensure `userManager.getGitHubConfig` is called with password.
-    *   [COMPLETED] Ensure decrypted token is passed to `uploadToGitHub`.
-    *   [COMPLETED] Add robust error handling for config retrieval and upload.
-    *   [COMPLETED] Handle nested password prompt for GitHub token if needed.
-*   [COMPLETED] Ensure `promptData` (like `suggestedFilename`) is correctly set in `executeResearch` before prompting for post-research action.
-*   [COMPLETED] Web-CLI `startResearchFromChat` now pulls Brave/Venice keys from the single-user profile with environment fallbacks (`app/commands/chat.cli.mjs`).
-*   [COMPLETED] WebSocket `exitMemory` reuses injected output/error handlers and re-enables input on completion (`app/commands/chat.cli.mjs`).
-*   [COMPLETED] Hardened `handleChatMessage` prompt/error flow for memory and LLM operations (`app/features/research/routes.mjs`).
-*   [COMPLETED] Guarded `generateQueries` input contract to prevent undefined arguments in `/research test` (`app/features/ai/research.providers.mjs`).
-*   [COMPLETED] Implemented `userManager.checkApiKeys`/`testApiKeys` and `/keys stat` alias resolution (`app/features/auth/user-manager.mjs`, `app/commands/keys.cli.mjs`).
-*   [COMPLETED] `/diagnose` consumes environment-backed API checks without password prompts and uses the single-user compatibility shim (`app/commands/diagnose.cli.mjs`, `app/features/auth/user-manager.mjs`).
-*   [COMPLETED] Centralised Brave/Venice API-key resolution via `app/utils/api-keys.mjs` and refactored chat/research flows to consume the helper.
-
----
+> **Note:** Treat this plan as additive context. Engineers should feel empowered to iterate, split, or parallelize tasks as bandwidth allows while preserving our architectural standards and security posture.
 
 
 ## High-Priority Bug Backlog
 
-- [ ] Double-check `enableClientInput` / `disableClientInput` pairing across all flows (prompts, errors, success).
-- [x] Add GitHub-token tests to `/keys test`, `/diagnose`.
-- [ ] Web-CLI: full `/research`-in-chat flow (password, memory, prompts).
+
+- [ ] Web-CLI: full `/research`-in-chat flow (memory prompts, markdown actions) without relying on password prompts.
 - [ ] Rate-limit WebSocket & add CSRF (if forms introduced).
+- [ ] Restore Venice-backed query/summarisation providers in `app/features/ai/research.providers.mjs` and wire tests.
 - [ ] **(Testing)** Verify GitHub upload works after user sets a valid token with `repo` scope.
-- [ ] **(Testing)** Verify public profile restrictions for `/research`, `/keys`, and `/chat`.
-- [ ] **(Testing)** Verify `/chat` command works correctly for logged-in users in Web-CLI.
+- [ ] **(Testing)** Verify single-user profile behavior for `/research`, `/keys`, and `/chat` in CLI and Web flows.
+- [ ] **(Testing)** Verify `/chat` command works correctly for the single-user session in Web-CLI.
 - [ ] Is the app ready for live production? live test? 
 
 
@@ -105,11 +81,36 @@ cron.schedule('0 * * * *', async () => {
 
 ---
 
+## Completed
+
+*   [COMPLETED] Fix `effectiveError is not a function` in `executeResearch` catch block.
+*   [COMPLETED] Fix `cmdOutput is not a function` in `executeChat` for public users.
+*   [COMPLETED] Ensure public users cannot execute `/research` command (block early).
+*   [COMPLETED] Ensure public users receive the correct notice in `/chat` and are returned to command mode.
+*   [COMPLETED] Ensure output/error handlers are correctly passed from `handleCommandMessage` to `executeChat` and `executeResearch`.
+*   [COMPLETED] Verify GitHub upload pipeline in `handleInputMessage`:
+    *   [COMPLETED] Ensure `userManager.getGitHubConfig` resolves plaintext credentials from the single-user profile or environment.
+    *   [COMPLETED] Ensure the resolved token is passed to `uploadToGitHub`.
+    *   [COMPLETED] Add robust error handling for config retrieval and upload.
+*   [COMPLETED] Documented comment precision philosophy in `AGENTS.md` so code comments stay timeless and architectural.
+*   [COMPLETED] Ensure `promptData` (like `suggestedFilename`) is correctly set in `executeResearch` before prompting for post-research action.
+*   [COMPLETED] Web-CLI `startResearchFromChat` now pulls Brave/Venice keys from the single-user profile with environment fallbacks (`app/commands/chat.cli.mjs`).
+*   [COMPLETED] WebSocket `exitMemory` reuses injected output/error handlers and re-enables input on completion (`app/commands/chat.cli.mjs`).
+*   [COMPLETED] Hardened `handleChatMessage` prompt/error flow for memory and LLM operations (`app/features/research/routes.mjs`).
+*   [COMPLETED] Guarded `generateQueries` input contract to prevent undefined arguments in `/research test` (`app/features/ai/research.providers.mjs`).
+*   [COMPLETED] Implemented `userManager.checkApiKeys`/`testApiKeys` and `/keys stat` alias resolution (`app/features/auth/user-manager.mjs`, `app/commands/keys.cli.mjs`).
+*   [COMPLETED] `/diagnose` consumes environment-backed API checks without password prompts and uses the single-user compatibility shim (`app/commands/diagnose.cli.mjs`, `app/features/auth/user-manager.mjs`).
+*   [COMPLETED] Centralised Brave/Venice API-key resolution via `app/utils/api-keys.mjs` and refactored chat/research flows to consume the helper.
+*   [COMPLETED] Trimmed `/missions` CLI into modular handlers to satisfy the 500-line guideline and prepare for further decomposition.
+- [COMPLETED] Double-check `enableClientInput` / `disableClientInput` pairing across all flows (prompts, errors, success).
+- [COMPLETED] Add GitHub-token tests to `/keys test`, `/diagnose`.
+
+---
 
 ---
 
 Important to remember:
-- Length of files. According to #AGENTS.md , the max size for files should be 300-500 LoC . We need to review file by file for the entire codebase to verify it is following this rule. the more modular and micro-architecture structure the better it is for the developers that debug. First start by identifying the files to fix and then related files that are connectedd to this long file. since files are connected and reference each other you have to edit meticulously and intelligently. You can separate files by nodes and modules and divide everything into micro structures (routers, orchestrators, managers, systems) . One big example file that needs a lot of tender love and care is the terminal file... we should be dividing this into several nodes so that this function is better displayed. 
+- Length of files. According to #AGENTS.md , the max size for files should be 300-500 LoC . We need to review file by file for the entire codebase to verify it is following this rule. the more modular and micro-architecture structure the better it is for the developers that debug. First start by identifying the files to fix and then related files that are connectedd to this long file. since files are connected and reference each other you have to edit meticulously and intelligently. You can separate files by nodes and modules and divide everything into micro structures (routers, orchestrators, managers, systems) . 
 
 - Related to the last item -> each file in our codebase should have at the top a descriptive and comprehensive comments written in a precise brief and accurate way that describes at a glance what each file does. Additionally each sections should have their own comments to explain and expandd what each functiion is doing . The text should be as short as possible to be clear but as long as poossible to be precise. Information must be condensed. Comments should be timeless and not hard to undertstand. Comments should not be meta-commentary. signal-posting or similar. It must be straight forward to the point and assume the reader is intelligent. Short precise sentences. Posting fixes and to dos in comments is prohibited, there are files for this. use the appropriate channels. comments are there to explain and describe the code architecture structure functional systemic behaviors and similar. After reading this include a summarized version of this philosophy described in this paragraph in the #AGENTS.md 
 

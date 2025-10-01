@@ -1,43 +1,35 @@
-import path from 'path';
+/**
+ * Why: Orchestrates the `/research` command for CLI and WebSocket clients so operators can run instrumented investigations.
+ * What: Validates requests, resolves credentials, composes the research engine, and streams telemetry/output across transports.
+ * How: Guard → Do → Verify pipeline coordinating password prompts, API key access, memory enrichment, research execution, and post-run actions.
+ * Contract
+ *   Inputs:
+ *     - options: ResearchCommandOptions { positionalArgs?: string[]; query?: string; depth?: number; breadth?: number; classify?: boolean; verbose?: boolean; password?: string; isWebSocket?: boolean; session?: object; output: Function; error: Function; currentUser?: object; webSocketClient?: WebSocket; wsPrompt?: Function; telemetry?: TelemetryChannel; progressHandler?: Function; overrideQueries?: Array }
+ *   Outputs:
+ *     - Resolves to { success: boolean; handled?: boolean; keepDisabled?: boolean; researchComplete?: boolean; error?: string }
+ *   Error modes:
+ *     - Validation errors for missing handlers/query, AuthenticationError for public users, ConfigurationError when API keys unavailable, upstream ResearchEngine errors surfaced with context.
+ *   Performance:
+ *     - Guard/resolve work <2s (soft), research pipeline streaming; memory footprint <10 MB per run.
+ *   Side effects:
+ *     - Prompts for passwords, reads encrypted config, performs external network requests via ResearchEngine, emits telemetry and websocket events.
+ */
+
 import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
-import { userManager } from '../features/auth/user-manager.mjs';
-import { handleCliError, ErrorTypes, logCommandStart, logCommandSuccess } from '../utils/cli-error-handler.mjs';
-import readline from 'readline'; // Keep for CLI mode
-import os from 'os';
-import fs from 'fs/promises';
-// Import the shared safeSend utility
+import WebSocket from 'ws';
+import { logCommandStart } from '../utils/cli-error-handler.mjs';
 import { safeSend } from '../utils/websocket.utils.mjs';
-// Import the singleton instance for defaults if needed
 import { output as outputManagerInstance } from '../utils/research.output-manager.mjs';
-// Import token classifier function (assuming it exists and handles its own errors/output)
-import { callVeniceWithTokenClassifier } from '../utils/token-classifier.mjs';
-// --- FIX: Comment out missing import ---
-// import { GitHubIntegration } from '../utils/github.utils.mjs';
-// --- FIX: Remove unused uploadFileToGitHub import ---
-// import { uploadFileToGitHub } from '../infrastructure/storage/github.storage.mjs';
-import { ensureDir } from '../utils/research.ensure-dir.mjs'; // Import ensureDir
-import inquirer from 'inquirer'; // Using inquirer for CLI prompts
-import WebSocket from 'ws'; // Import WebSocket for type checking
-// --- FIX: Remove unused runResearch import ---
-// import { runResearch } from '../features/research/research.controller.mjs';
-import { cleanQuery } from '../utils/research.clean-query.mjs';
-import { output } from '../utils/research.output-manager.mjs'; // Use the output manager
-import { singlePrompt } from '../utils/research.prompt.mjs'; // For CLI prompts
-import { saveToFile } from '../utils/research.file-utils.mjs'; // For saving results
+import { singlePrompt } from '../utils/research.prompt.mjs';
 import { createMemoryService } from '../features/memory/memory.service.mjs';
-import {
-    fetchMemoryIntelligence,
-    deriveMemoryFollowUpQueries,
-    projectMemorySuggestions
-} from '../utils/research.memory-intelligence.mjs';
 import { resolveResearchDefaults } from '../features/research/research.defaults.mjs';
-import { resolveServiceApiKey } from '../utils/api-keys.mjs';
-
-// --- Remove freshUserManager import ---
-// import { userManager as freshUserManager } from '../features/auth/user-manager.mjs';
-
-// Keep track of the active readline interface to avoid conflicts
-let activeRlInstance = null;
+import { prepareMemoryContext } from './research/memory-context.mjs';
+import {
+    resolveResearchKeys,
+    MissingResearchKeysError,
+    ResearchKeyResolutionError
+} from './research/keys.mjs';
+import { enrichResearchQuery } from './research/query-classifier.mjs';
 
 const PROMPT_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 const POST_RESEARCH_PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for post-research action
@@ -94,9 +86,9 @@ export async function executeResearch(options = {}) {
         output: cmdOutput, // Renamed from options.output
         error: cmdError,   // Renamed from options.error
         currentUser,
+    overrideQueries: optionOverrideQueries = [],
         webSocketClient,
         telemetry,
-        // --- FIX: Add wsPrompt ---
         wsPrompt: cmdPrompt, // Renamed from options.wsPrompt
         // --- Ensure debug is correctly destructured and has a default ---
         debug = options.verbose ? outputManagerInstance.debug.bind(outputManagerInstance) : () => {}, // Default to no-op if not verbose
@@ -113,7 +105,6 @@ export async function executeResearch(options = {}) {
 
     const telemetryChannel = telemetry ?? null;
 
-    // --- FIX: Define effective handlers outside try block ---
     const effectiveOutput = cmdOutput;
     const effectiveError = cmdError;
     const effectiveDebug = isWebSocket
@@ -153,12 +144,10 @@ export async function executeResearch(options = {}) {
     // Determine query for 'run' action
     // --- Query now comes ONLY from positionalArgs or options.query ---
     let researchQuery = positionalArgs.join(' ').trim() || queryFromOptions;
-    // --- FIX: Define action variable (assuming 'run' is the only action now) ---
     const action = 'run';
     const needsPassword = action === 'run'; // For clarity in catch block
 
     try {
-        // --- FIX: Add check for valid output/error functions ---
         if (typeof effectiveOutput !== 'function') {
             console.error("[executeResearch] CRITICAL: effectiveOutput is not a function.", options);
             // Cannot send error back to client easily here, log and maybe throw
@@ -169,16 +158,12 @@ export async function executeResearch(options = {}) {
             // Log, but try to continue if possible, or throw
             throw new Error("Internal server error: Error handler misconfigured.");
         }
-        // --- End FIX ---
-
-        // --- Public User Check - Moved to the top ---
+    // --- Public User Check - Moved to the top ---
         if (currentUser && currentUser.role === 'public') {
             effectiveError('Research command is not available for public users. Please /login to use this feature.');
             return { success: false, error: 'Permission denied for public user', handled: true, keepDisabled: false }; // Enable input after error
         }
-        // --- End FIX ---
-
-        // --- Authentication Check ---
+    // --- Authentication Check ---
         const isAuthenticated = !!currentUser && currentUser.role !== 'public';
         const currentUsername = currentUser ? currentUser.username : 'public'; // Should not be public due to check above
         const currentUserRole = currentUser ? currentUser.role : 'public'; // Should not be public
@@ -197,17 +182,15 @@ export async function executeResearch(options = {}) {
 
         // Password check remains important for key decryption and auto-upload
         if (needsPassword && !userPassword) {
-             // --- FIX: Prompt for password if needed and not available ---
              if (!effectivePrompt) {
                  effectiveError('Internal Error: Prompt function not available.');
-                 // --- FIX: Return keepDisabled: false as prompt failed server-side ---
                  return { success: false, error: 'Prompt unavailable', handled: true, keepDisabled: false };
              }
              effectiveDebug("Password not provided or cached for research, prompting user.");
              // Prompt without context, as it's for key decryption here
              const promptTarget = isWebSocket ? webSocketClient : null; // Pass ws for WebSocket, null for CLI
              try {
-                 userPassword = await effectivePrompt(promptTarget, session, `Enter password to access API keys/GitHub: `, 120000, true, null); // isPassword = true
+                userPassword = await effectivePrompt(promptTarget, session, `Enter password to access API keys/GitHub: `, PROMPT_TIMEOUT_MS, true, null); // isPassword = true
                  if (!userPassword) {
                      throw new Error("Password required or prompt cancelled/timed out");
                  }
@@ -219,7 +202,6 @@ export async function executeResearch(options = {}) {
                  }
              } catch (promptError) {
                  effectiveError(`Password prompt failed: ${promptError.message}`);
-                 // --- FIX: Return keepDisabled: false as prompt failed/cancelled ---
                  return { success: false, error: `Password prompt failed: ${promptError.message}`, handled: true, keepDisabled: false };
              }
         }
@@ -238,64 +220,37 @@ export async function executeResearch(options = {}) {
         // ===========================
         // Condition 'action === run' removed as it's the only path
 
-        // --- API Key Check (for 'run' action) ---
-        const hasBraveKey = await userManager.hasApiKey('brave', currentUsername);
-        const hasVeniceKey = await userManager.hasApiKey('venice', currentUsername);
-        if (!hasBraveKey || !hasVeniceKey) {
-            let missingKeys = [];
-            if (!hasBraveKey) missingKeys.push('Brave');
-            if (!hasVeniceKey) missingKeys.push('Venice');
-            telemetryChannel?.emitStatus({
-                stage: 'blocked',
-                message: 'Research blocked: missing required API keys.',
-                detail: `Missing: ${missingKeys.join(', ')}`
-            });
-            effectiveError(`Missing API key(s) required for research: ${missingKeys.join(', ')}. Use /keys set to configure.`);
-            return { success: false, error: `Missing API key(s): ${missingKeys.join(', ')}`, handled: true, keepDisabled: false };
-        }
-
-        // --- Get API Keys (Requires Password - already handled above) ---
-        let braveKey, veniceKey;
+        let braveKey;
+        let veniceKey;
         try {
-            effectiveDebug(`[executeResearch] Resolving API keys for ${currentUsername}...`);
-            braveKey = await resolveServiceApiKey('brave', { session });
-            veniceKey = await resolveServiceApiKey('venice', { session });
-
-            if (!braveKey || !veniceKey) {
-                const missing = [
-                    !braveKey ? 'Brave' : null,
-                    !veniceKey ? 'Venice' : null,
-                ].filter(Boolean).join(', ');
-                throw new Error(`Missing required API key(s): ${missing || 'unknown'}`);
+            ({ braveKey, veniceKey } = await resolveResearchKeys({
+                username: currentUsername,
+                session,
+                telemetry: telemetryChannel,
+                debug: effectiveDebug
+            }));
+        } catch (keyError) {
+            if (keyError instanceof MissingResearchKeysError) {
+                const missingLabel = keyError.missingKeys.join(', ');
+                effectiveError(`Missing API key(s) required for research: ${missingLabel}. Use /keys set to configure.`);
+                return { success: false, error: keyError.message, handled: true, keepDisabled: false };
             }
-
-            effectiveDebug('[executeResearch] API keys resolved successfully.');
-        } catch (keyResolutionError) {
-            effectiveError(`Unable to resolve API key(s): ${keyResolutionError.message}. Configure them via /keys set or environment variables.`);
-            telemetryChannel?.emitStatus({
-                stage: 'blocked',
-                message: 'Missing required API keys.',
-                detail: keyResolutionError.message
-            });
-            return { success: false, error: keyResolutionError.message, handled: true, keepDisabled: false };
+            if (keyError instanceof ResearchKeyResolutionError) {
+                effectiveError(`Unable to resolve API key(s): ${keyError.message}. Configure them via /keys set or environment variables.`);
+                return { success: false, error: keyError.message, handled: true, keepDisabled: false };
+            }
+            throw keyError;
         }
-        telemetryChannel?.emitStatus({
-            stage: 'auth',
-            message: 'API keys resolved successfully.'
-        });
 
-        // --- Final Query Check ---
         if (!researchQuery) {
              if (isWebSocket) {
-                // This indicates an issue in handleCommandMessage's interactive flow
                 effectiveError('Internal Error: Research query is missing in WebSocket mode after prompt.');
                 return { success: false, error: 'Query required', handled: true, keepDisabled: false };
-            } else { // CLI prompt
-                researchQuery = await singlePrompt('What would you like to research? ');
-                if (!researchQuery) {
-                    effectiveError('Research query cannot be empty.');
-                    return { success: false, error: 'Empty query', handled: true };
-                }
+            }
+            researchQuery = await singlePrompt('What would you like to research? ');
+            if (!researchQuery) {
+                effectiveError('Research query cannot be empty.');
+                return { success: false, error: 'Empty query', handled: true };
             }
         }
 
@@ -313,131 +268,29 @@ export async function executeResearch(options = {}) {
             }
         });
 
-        // --- Token Classification ---
-        let enhancedQuery = { original: researchQuery };
-        let useClassifier = classify;
-         if (useClassifier) {
-            effectiveOutput('Attempting token classification...', true);
-            telemetryChannel?.emitStatus({
-                stage: 'classification',
-                message: 'Running token classifier to enrich query.'
-            });
-            try {
-                const tokenResponse = await callVeniceWithTokenClassifier(researchQuery, veniceKey);
-                if (tokenResponse) {
-                    enhancedQuery.tokenClassification = tokenResponse;
-                    enhancedQuery.metadata = tokenResponse; // Also add as metadata for summary
-                    effectiveOutput('Token classification successful.', true);
-                    effectiveOutput(`[TokenClassifier] Metadata:\n${JSON.stringify(tokenResponse, null, 2)}`);
-                    telemetryChannel?.emitThought({
-                        text: 'Token classifier metadata captured.',
-                        stage: 'classification',
-                        meta: { keys: Object.keys(tokenResponse || {}) }
-                    });
-                } else {
-                    effectiveOutput('Token classification returned no data.', true);
-                }
-            } catch (tokenError) {
-                effectiveError(`Token classification failed: ${tokenError.message}. Proceeding without.`);
-                telemetryChannel?.emitStatus({
-                    stage: 'classification',
-                    message: 'Token classifier failed; continuing without metadata.',
-                    detail: tokenError.message
-                });
-            }
-        }
+        const enhancedQuery = await enrichResearchQuery({
+            query: researchQuery,
+            classify,
+            veniceKey,
+            output: effectiveOutput,
+            error: effectiveError,
+            telemetry: telemetryChannel
+        });
 
-        let memoryContext = null;
-        const canSampleMemory = Boolean(sharedMemoryService && (currentUser?.username || currentUsername));
-        if (canSampleMemory) {
-            if (telemetryChannel) {
-                telemetryChannel.emitStatus({
-                    stage: 'memory',
-                    message: 'Sampling memory intelligence for context.'
-                });
-            }
+        const { overrideQueries: memoryOverrides } = await prepareMemoryContext({
+            query: researchQuery,
+            memoryService: sharedMemoryService,
+            user: currentUser,
+            fallbackUsername: currentUsername,
+            limit: MEMORY_CONTEXT_MAX_RECORDS,
+            telemetry: telemetryChannel,
+            debug: effectiveDebug
+        });
 
-            try {
-                memoryContext = await fetchMemoryIntelligence({
-                    query: researchQuery,
-                    memoryService: sharedMemoryService,
-                    user: currentUser,
-                    fallbackUsername: currentUsername,
-                    limit: MEMORY_CONTEXT_MAX_RECORDS,
-                    logger: effectiveDebug
-                });
-
-                const recordCount = memoryContext?.records?.length ?? 0;
-
-                if (telemetryChannel && memoryContext?.telemetryPayload) {
-                    telemetryChannel.emitMemoryContext(memoryContext.telemetryPayload);
-                }
-
-                if (telemetryChannel) {
-                    if (recordCount > 0) {
-                        telemetryChannel.emitThought({
-                            text: `Loaded ${recordCount} memory snippet${recordCount === 1 ? '' : 's'} for context.`,
-                            stage: 'memory',
-                            meta: {
-                                layers: Array.from(
-                                    new Set(memoryContext.records.map((record) => record.layer).filter(Boolean))
-                                ).slice(0, 4)
-                            }
-                        });
-                    } else {
-                        telemetryChannel.emitThought({
-                            text: 'No matching memory snippets found; continuing with live research.',
-                            stage: 'memory'
-                        });
-                    }
-                }
-            } catch (memoryError) {
-                effectiveDebug(`[executeResearch] Memory intelligence fetch failed: ${memoryError.message}`);
-                console.warn('[executeResearch] Memory intelligence fetch failed:', memoryError);
-                if (telemetryChannel) {
-                    telemetryChannel.emitStatus({
-                        stage: 'memory-warning',
-                        message: 'Memory intelligence unavailable.',
-                        detail: memoryError.message
-                    });
-                }
-            }
-        }
-
-        const overrideQueries = memoryContext?.records?.length
-            ? deriveMemoryFollowUpQueries({
-                baseQuery: researchQuery,
-                memoryContext,
-                maxQueries: MEMORY_CONTEXT_MAX_RECORDS
-            })
-            : [];
-
-        const telemetrySuggestions = projectMemorySuggestions(overrideQueries);
-
-        if (telemetryChannel && telemetrySuggestions.length) {
-            telemetryChannel.emitSuggestions({
-                source: 'memory',
-                suggestions: telemetrySuggestions
-            });
-        }
-
-        if (overrideQueries.length && telemetryChannel) {
-            telemetryChannel.emitStatus({
-                stage: 'memory-prioritization',
-                message: `Injecting ${overrideQueries.length} memory-guided follow-up queries.`
-            });
-            telemetryChannel.emitThought({
-                text: `Prioritizing ${overrideQueries.length} memory-guided follow-up queries before generating new leads.`,
-                stage: 'planning',
-                meta: {
-                    memorySeeded: true,
-                    memoryIds: overrideQueries
-                        .map((entry) => entry.metadata?.memoryId)
-                        .filter(Boolean)
-                        .slice(0, 4)
-                }
-            });
-        }
+        const combinedOverrideQueries = [
+            ...(Array.isArray(optionOverrideQueries) ? optionOverrideQueries : []),
+            ...memoryOverrides
+        ];
 
         // --- Initialize Research Engine ---
         const userInfo = { username: currentUsername, role: currentUserRole };
@@ -454,13 +307,13 @@ export async function executeResearch(options = {}) {
             isWebSocket: isWebSocket,
             webSocketClient: webSocketClient
         };
-        if (overrideQueries.length) {
-            engineConfig.overrideQueries = overrideQueries;
+        if (combinedOverrideQueries.length) {
+            engineConfig.overrideQueries = combinedOverrideQueries;
         }
         const controller = new ResearchEngine(engineConfig);
 
         // --- Run Research ---
-    effectiveOutput(`Starting research pipeline... (depth ${depth}, breadth ${breadth}, ${isPublic ? 'public' : 'private'} visibility)`, true);
+        effectiveOutput(`Starting research pipeline... (depth ${depth}, breadth ${breadth}, ${isPublic ? 'public' : 'private'} visibility)`, true);
         telemetryChannel?.emitStatus({
             stage: 'running',
             message: 'Executing research pipeline.',
@@ -479,7 +332,7 @@ export async function executeResearch(options = {}) {
             safeSend(webSocketClient, { type: 'research_start', keepDisabled: true });
         }
 
-    researchStartedAt = Date.now();
+        researchStartedAt = Date.now();
 
         const results = await controller.research({
             query: enhancedQuery,
@@ -489,16 +342,13 @@ export async function executeResearch(options = {}) {
 
         // --- Output Results ---
         if (results && results.success !== false) { // Check if research didn't explicitly fail
-            // ...existing code...
 
             // --- Store result markdown content in session for post-research actions ---
             if (results.markdownContent && isWebSocket && session) {
                 session.currentResearchResult = results.markdownContent; // Store the actual markdown
                 session.currentResearchFilename = results.suggestedFilename; // Store the suggested filename
-                // --- FIX: Store promptData needed by handleInputMessage ---
                 session.promptData = { suggestedFilename: results.suggestedFilename };
                 effectiveDebug("Stored research markdown content and suggested filename in session and promptData.");
-                // --- FIX: Store password in session for post-research actions ---
                 if (session.password !== userPassword) session.password = userPassword;
             } else if (results.suggestedFilename && isWebSocket && session) {
                 effectiveError(`Internal Warning: Suggested filename exists but markdown content is missing in session ${session.sessionId}.`);
@@ -538,13 +388,11 @@ export async function executeResearch(options = {}) {
                     webSocketClient,
                     session,
                     `Choose action for "${results.suggestedFilename || 'research results'}": [Download] | [Upload] | [Keep] | [Discard]`,
-                    120000, // 2 minute timeout
+                    POST_RESEARCH_PROMPT_TIMEOUT_MS,
                     false, // Not a password prompt
                     'post_research_action' // Set context for handleInputMessage
                 );
-                // --- FIX: Ensure password is available for post-research actions ---
                 if (session.password !== userPassword) session.password = userPassword;
-                // --- END FIX ---
                 effectiveDebug(`Post-research action prompt sent. Server awaits response via handleInputMessage with context 'post_research_action'.`);
                 // Keep input disabled, handleInputMessage will re-enable it after processing the choice.
 
@@ -585,7 +433,6 @@ export async function executeResearch(options = {}) {
         // effectiveError(`Unknown research action: ${action}. Only 'run' is supported directly.`);
         // return { success: false, error: `Unknown action: ${action}`, handled: true, keepDisabled: false };
     } catch (error) {
-        // --- FIX: Use effectiveError defined outside the try block ---
         effectiveError(`Error during research command: ${error.message}`);
         console.error(error.stack); // Keep stack trace log
         const failureDuration = Date.now() - (researchStartedAt || commandStartedAt);

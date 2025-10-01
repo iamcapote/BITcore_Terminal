@@ -1,6 +1,6 @@
 ## WebSocket Session Architecture
 
-The terminal UI relies on a single WebSocket channel managed by `handleWebSocketConnection` in `app/features/research/routes.mjs`. This guide summarizes the current behaviour so you can extend it safely.
+The terminal UI relies on a single WebSocket channel managed by `handleWebSocketConnection` in `app/features/research/routes.mjs`. This guide summarises the current behaviour (October 2025) so you can extend it safely. Single-user mode means every socket clones the same `global-user.json` profile; per-socket isolation is still important because cached secrets live on the session object until teardown.
 
 ### Connection lifecycle
 

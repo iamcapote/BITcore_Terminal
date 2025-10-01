@@ -1,426 +1,214 @@
 /**
- * Memory Manager for the MCP Chat System
- * 
- * Manages ephemeral and persistent memories, including storage, retrieval,
- * validation, summarization, and integration with GitHub.
+ * Memory Manager Orchestrator
+ * Why: Coordinate validation, retrieval, summarization, and persistence for chat memories.
+ * What: Provides the public API consumed by services/controllers while delegating state to the MemoryStore adapter.
+ * How: Validates configuration, manages LLM interactions, and routes memory data through store and GitHub integrations.
+ *
+ * Contract
+ * Inputs:
+ *   - new MemoryManager({ depth?, user, githubEnabled? })
+ *   - Methods accept plain objects/strings representing memory content or query parameters.
+ * Outputs:
+ *   - Methods return memory objects, stats snapshots, or operation summaries consumed elsewhere in the app.
+ * Error modes:
+ *   - Throws for invalid configuration (depth/user).
+ *   - Returns { success: false, error } for recoverable runtime errors.
+ * Performance:
+ *   - Memory operations bound by configuration; LLM calls dominate latency (soft 2s, hard 5s upstream).
+ * Side effects:
+ *   - Optional GitHub persistence via GitHubMemoryIntegration.
  */
 
-import crypto from 'crypto';
 import { LLMClient } from '../ai/venice.llm-client.mjs';
 import { GitHubMemoryIntegration } from './github-memory.integration.mjs';
-import { cleanChatResponse } from '../ai/venice.response-processor.mjs';
+import { MemoryStore } from './memory.store.mjs';
+import { ensureValidDepth, ensureValidUser } from './memory.validators.mjs';
+import {
+  SCORING_SYSTEM_PROMPT,
+  VALIDATION_SYSTEM_PROMPT,
+  GROUP_SUMMARY_SYSTEM_PROMPT,
+  CONVERSATION_SUMMARY_PROMPT
+} from './memory.prompts.mjs';
+import {
+  calculateSimilarity,
+  extractKeyConcepts,
+  buildScoringUserPrompt,
+  extractJsonPayload
+} from './memory.helpers.mjs';
 
-// Memory depth options
-const MEMORY_DEPTHS = {
+export const MEMORY_DEPTHS = {
   SHORT: 'short',
   MEDIUM: 'medium',
   LONG: 'long'
 };
 
-// Memory depth settings
 const MEMORY_SETTINGS = {
-  [MEMORY_DEPTHS.SHORT]: {
-    maxMemories: 10,    // Max memories to retain
-    retrievalLimit: 2,  // Max memories to retrieve
-    threshold: 0.7,     // Relevance threshold (0-1)
-    summarizeEvery: 10  // Summarize after N exchanges
-  },
-  [MEMORY_DEPTHS.MEDIUM]: {
-    maxMemories: 50,
-    retrievalLimit: 5,
-    threshold: 0.5,
-    summarizeEvery: 20
-  },
-  [MEMORY_DEPTHS.LONG]: {
-    maxMemories: 100,
-    retrievalLimit: 8,
-    threshold: 0.3,
-    summarizeEvery: 30
-  }
+  [MEMORY_DEPTHS.SHORT]: { maxMemories: 10, retrievalLimit: 2, threshold: 0.7, summarizeEvery: 10 },
+  [MEMORY_DEPTHS.MEDIUM]: { maxMemories: 50, retrievalLimit: 5, threshold: 0.5, summarizeEvery: 20 },
+  [MEMORY_DEPTHS.LONG]: { maxMemories: 100, retrievalLimit: 8, threshold: 0.3, summarizeEvery: 30 }
 };
 
-/**
- * Memory Manager
- * 
- * Handles all memory operations for the chat system, including
- * storage, retrieval, validation, and summarization.
- */
+
 export class MemoryManager {
   /**
-   * Create a new Memory Manager instance
-   * 
-   * @param {Object} options - Configuration options
-   * @param {string} options.depth - Memory depth ('short', 'medium', 'long')
-   * @param {Object} options.user - User object
-   * @param {boolean} options.githubEnabled - Enable GitHub integration
+   * @param {{ depth?: string, user: { username: string }, githubEnabled?: boolean }} [options]
    */
   constructor(options = {}) {
-    const { 
-      depth = MEMORY_DEPTHS.MEDIUM,
-      user,
-      githubEnabled = false
-    } = options;
-    
-    // Validate depth option
-    if (!Object.values(MEMORY_DEPTHS).includes(depth)) {
-      throw new Error(`Invalid memory depth: ${depth}. Must be one of: ${Object.values(MEMORY_DEPTHS).join(', ')}`);
-    }
-    
-    // Validate user
-    if (!user || !user.username) {
-      throw new Error('Valid user object with username is required');
-    }
-    
-    // Set properties
-    this.user = user;
-    this.depth = depth;
-    this.settings = MEMORY_SETTINGS[depth];
+    const { depth = MEMORY_DEPTHS.MEDIUM, user, githubEnabled = false } = options;
+    const { depth: normalizedDepth, settings } = ensureValidDepth(depth, MEMORY_SETTINGS);
+    this.user = ensureValidUser(user);
+
+    this.depth = normalizedDepth;
+    this.settings = settings;
     this.llmClient = null;
     this.initialized = false;
-    this.stats = {
-      memoriesStored: 0,
-      memoriesRetrieved: 0,
-      memoriesValidated: 0,
-      memoriesSummarized: 0
-    };
-    
-    // Initialize memory stores
-    this.ephemeralMemories = []; // Short-term/working memory
-    this.validatedMemories = []; // Validated memories
-    
-    // Initialize GitHub integration if enabled
-    this.githubIntegration = githubEnabled ? 
-      new GitHubMemoryIntegration({
-        username: user.username,
-        enabled: true
-      }) : null;
-      
-    // Initialize when API key is set
-    this.initialize();
+
+    this.store = new MemoryStore({ depth: this.depth, settings: this.settings });
+    this.stats = this.store.stats;
+
+    this.githubIntegration = githubEnabled
+      ? new GitHubMemoryIntegration({ username: this.user.username, enabled: true })
+      : null;
   }
-  
-  /**
-   * Initialize the memory manager
-   * 
-   * @private
-   */
+
   async initialize() {
-    try {
-      // Initialize LLM client when needed (lazy initialization)
-      this.initialized = true;
-    } catch (error) {
-      console.error(`Failed to initialize memory manager: ${error.message}`);
-      throw error;
-    }
+    this.initialized = true;
   }
-  
-  /**
-   * Get the current memory depth level
-   * 
-   * @returns {string} Memory depth level
-   */
+
   getDepthLevel() {
     return this.depth;
   }
-  
-  /**
-   * Get memory statistics
-   * 
-   * @returns {Object} Memory statistics
-   */
+
   getStats() {
-    return {
-      ...this.stats,
-      depthLevel: this.depth,
-      ephemeralCount: this.ephemeralMemories.length,
-      validatedCount: this.validatedMemories.length
-    };
+    return this.store.snapshot();
   }
-  
-  /**
-   * Generate a unique memory ID
-   * 
-   * @returns {string} Unique memory ID
-   */
+
   generateMemoryId() {
-    return 'mem-' + crypto.randomBytes(4).toString('hex');
+    return this.store.generateMemoryId();
   }
-  
-  /**
-   * Store a new memory
-   * 
-   * @param {string} content - Memory content
-   * @param {string} role - Memory role ('user' or 'assistant')
-   * @returns {Promise<Object>} Stored memory object
-   */
+
   async storeMemory(content, role = 'user') {
     if (!this.initialized) {
       await this.initialize();
     }
-    
-    // Create memory object
-    const memory = {
-      id: this.generateMemoryId(),
-      content,
-      role,
-      timestamp: new Date().toISOString(),
-      tags: [],
-      score: 0.5 // Default score, will be updated during validation
-    };
-    
-    // Add to ephemeral memories
-    this.ephemeralMemories.push(memory);
-    
-    // Limit the size of ephemeral memories
-    if (this.ephemeralMemories.length > this.settings.maxMemories) {
-      this.ephemeralMemories = this.ephemeralMemories.slice(-this.settings.maxMemories);
-    }
-    
-    this.stats.memoriesStored++;
-    
-    return memory;
+    return this.store.createEphemeralMemory({ content, role, score: 0.5 });
   }
-  
-  /**
-   * Calculate semantic similarity between two text strings
-   * 
-   * @param {string} text1 - First text string
-   * @param {string} text2 - Second text string
-   * @returns {number} Similarity score between 0 and 1
-   * @private
-   */
-  calculateSimilarity(text1, text2) {
-    if (!text1 || !text2) return 0;
-    
-    try {
-      // Normalize texts
-      const norm1 = text1.toLowerCase().replace(/[^\w\s]/g, '');
-      const norm2 = text2.toLowerCase().replace(/[^\w\s]/g, '');
-      
-      // Split into words
-      const words1 = new Set(norm1.split(/\s+/).filter(Boolean));
-      const words2 = new Set(norm2.split(/\s+/).filter(Boolean));
-      
-      // Calculate Jaccard similarity
-      const intersection = new Set([...words1].filter(word => words2.has(word)));
-      const union = new Set([...words1, ...words2]);
-      
-      return intersection.size / union.size;
-    } catch (error) {
-      console.error(`Error calculating similarity: ${error.message}`);
-      return 0;
-    }
-  }
-  
-  /**
-   * Extract key concepts from text
-   * 
-   * @param {string} text - Text to extract concepts from
-   * @returns {string[]} Array of key concepts
-   * @private
-   */
-  extractKeyConcepts(text) {
-    if (!text) return [];
-    
-    try {
-      // Simple naive implementation - extract nouns, entities, and technical terms
-      const words = text.toLowerCase().match(/\b[a-z]{3,}\b/g) || [];
-      
-      // Filter common stop words
-      const stopWords = new Set(['the', 'and', 'that', 'this', 'with', 'for', 'from', 'was', 'were', 'what', 'when', 'where', 'who', 'how', 'why', 'which']);
-      const filteredWords = words.filter(word => !stopWords.has(word));
-      
-      // Count word frequency
-      const wordCounts = {};
-      filteredWords.forEach(word => {
-        wordCounts[word] = (wordCounts[word] || 0) + 1;
-      });
-      
-      // Get top N words by frequency
-      return Object.entries(wordCounts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
-        .map(entry => entry[0]);
-    } catch (error) {
-      console.error(`Error extracting key concepts: ${error.message}`);
-      return [];
-    }
-  }
-  
-  /**
-   * Retrieve relevant memories based on a query using improved semantic matching
-   * 
-   * @param {string} query - Query to retrieve memories for
-   * @param {boolean} includeShortTerm - Whether to include short-term memories
-   * @param {boolean} includeLongTerm - Whether to include long-term memories 
-   * @param {boolean} includeMeta - Whether to include meta memories
-   * @returns {Promise<Array>} Array of relevant memories
-   */
+
   async retrieveRelevantMemories(query, includeShortTerm = true, includeLongTerm = true, includeMeta = true) {
     if (!this.initialized) {
       await this.initialize();
     }
-    
-    // Get candidate memories based on inclusion flags
+
     const candidateMemories = [];
-    
+
     if (includeShortTerm) {
-      candidateMemories.push(...this.ephemeralMemories);
+      candidateMemories.push(...this.store.getEphemeral());
     }
-    
+
     if (includeLongTerm) {
-      // Add validated memories
-      candidateMemories.push(...this.validatedMemories.filter(m => !m.isMeta));
-      
-      // Fetch long-term memories from GitHub if enabled
-      if (this.githubIntegration && includeLongTerm) {
+      candidateMemories.push(...this.store.getValidated().filter((memory) => !memory.isMeta));
+      if (this.githubIntegration) {
         try {
-          const longTermMemories = await this.retrieveLongTermMemories();
-          candidateMemories.push(...longTermMemories);
+          const longTerm = await this.retrieveLongTermMemories();
+          candidateMemories.push(...longTerm);
         } catch (error) {
           console.error(`Error retrieving long-term memories: ${error.message}`);
         }
       }
     }
-    
+
     if (includeMeta) {
-      // Add meta memories
-      candidateMemories.push(...this.validatedMemories.filter(m => m.isMeta));
+      candidateMemories.push(...this.store.getValidated().filter((memory) => memory.isMeta));
     }
-    
+
     if (candidateMemories.length === 0) {
       return [];
     }
-    
-    // First attempt: Use LLM-based scoring if available
+
+    const queryConcepts = extractKeyConcepts(query);
+
     try {
-      if (this.llmClient) {
-        // Extract key concepts from query to improve matching
-        const queryConcepts = this.extractKeyConcepts(query);
-        
-        // Create system prompt for scoring memories
-        const systemPrompt = `You are a memory retrieval system. Your task is to score how relevant each memory is to the current query.
-Score each memory from 0-1 where 1 means highly relevant and 0 means completely irrelevant.
-Consider:
-1. Direct relevance to the query topic
-2. Semantic similarity of concepts
-3. Contextual importance
-4. Recency (newer memories may be more relevant)
-5. Tags and metadata that match the query
+      if (!this.llmClient) {
+        this.llmClient = new LLMClient();
+      }
 
-Format your response as a JSON array of objects with memory IDs and scores:
-[{"id": "mem-123", "score": 0.9, "reason": "directly addresses the topic"}, {"id": "mem-456", "score": 0.2, "reason": "only tangentially related"}]`;
-      
-        // Create user prompt with query and memories
-        const userPrompt = `Query: ${query}
-Key concepts: ${queryConcepts.join(', ')}
+      const userPrompt = buildScoringUserPrompt(query, queryConcepts, candidateMemories);
+      const response = await this.llmClient.complete({
+        system: SCORING_SYSTEM_PROMPT,
+        prompt: userPrompt,
+        temperature: 0.2,
+        maxTokens: 1500
+      });
 
-Memories to score (ID, role, content, tags):
-${candidateMemories.map(mem => 
-          `[ID: ${mem.id}] [${mem.role}] ${mem.content.substring(0, 200)}${mem.content.length > 200 ? '...' : ''} 
-Tags: ${mem.tags?.join(', ') || 'none'}`
-        ).join('\n\n')}`;
-        
-        // Get scores from LLM
-        const response = await this.llmClient.complete({
-          system: systemPrompt,
-          prompt: userPrompt,
-          temperature: 0.2, // Lower temperature for more consistent scoring
-          maxTokens: 1500
-        });
-        
-        // Parse response to get scored memories
-        const responseContent = cleanChatResponse(response.content);
-        let jsonMatch = responseContent.match(/\[\s*\{.*\}\s*\]/s);
-        
-        if (jsonMatch) {
-          const jsonArray = JSON.parse(jsonMatch[0]);
-          
-          // Map scores to memory objects
-          const scoredMemories = jsonArray.map(item => {
-            const memory = candidateMemories.find(m => m.id === item.id);
-            if (memory) {
-              return {
-                ...memory,
-                similarity: parseFloat(item.score) || 0,
-                matchReason: item.reason || ''
-              };
+      const payload = extractJsonPayload(response.content);
+      if (Array.isArray(payload)) {
+        const scored = payload
+          .map((entry) => {
+            const memory = candidateMemories.find((candidate) => candidate.id === entry.id);
+            if (!memory) {
+              return null;
             }
-            return null;
-          }).filter(Boolean);
-          
-          // Sort by score and filter by threshold
-          const relevantMemories = scoredMemories
-            .filter(memory => memory.similarity >= this.settings.threshold)
-            .sort((a, b) => b.similarity - a.similarity)
-            .slice(0, this.settings.retrievalLimit);
-          
-          this.stats.memoriesRetrieved += relevantMemories.length;
-          return relevantMemories;
-        }
+            return {
+              ...memory,
+              similarity: Number.parseFloat(entry.score) || 0,
+              matchReason: entry.reason || ''
+            };
+          })
+          .filter(Boolean);
+
+        const relevant = scored
+          .filter((memory) => memory.similarity >= this.settings.threshold)
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, this.settings.retrievalLimit);
+
+        this.store.recordRetrieval(relevant.length);
+        return relevant;
       }
     } catch (error) {
       console.error(`Error in LLM-based memory scoring: ${error.message}`);
-      // Continue to fallback approach
     }
-    
-    // Fallback approach: Local semantic matching
+
     console.log('Using fallback local semantic matching for memory retrieval');
-    
-    // Calculate semantic similarity for each memory
-    const scoredMemories = candidateMemories.map(memory => {
-      // Calculate base similarity
-      let similarity = this.calculateSimilarity(query, memory.content);
-      
-      // Boost score based on tags matching
-      const queryConcepts = this.extractKeyConcepts(query);
+
+    const scoredMemories = candidateMemories.map((memory) => {
+      let similarity = calculateSimilarity(query, memory.content);
+
       if (memory.tags && queryConcepts.length > 0) {
-        const tagMatch = memory.tags.some(tag => 
-          queryConcepts.some(concept => tag.toLowerCase().includes(concept))
+        const tagMatch = memory.tags.some((tag) =>
+          queryConcepts.some((concept) => tag.toLowerCase().includes(concept))
         );
         if (tagMatch) {
-          similarity += 0.2; // Boost for tag matching
+          similarity += 0.2;
         }
       }
-      
-      // Apply recency bias for short-term memories
+
       if (memory.timestamp) {
         const ageInHours = (Date.now() - new Date(memory.timestamp).getTime()) / (1000 * 60 * 60);
-        const recencyBoost = Math.max(0, 0.1 - (ageInHours / 240) * 0.1); // Small boost for recent memories
+        const recencyBoost = Math.max(0, 0.1 - (ageInHours / 240) * 0.1);
         similarity += recencyBoost;
       }
-      
-      // Apply existing score if available
+
       if (memory.score) {
-        similarity += memory.score * 0.2; // Weight the pre-validated score
+        similarity += memory.score * 0.2;
       }
-      
-      // Cap at 1.0
-      similarity = Math.min(1, similarity);
-      
-      return { ...memory, similarity };
+
+      return { ...memory, similarity: Math.min(1, similarity) };
     });
-    
-    // Sort by similarity score and apply threshold and limit
+
     const relevantMemories = scoredMemories
-      .filter(memory => memory.similarity >= this.settings.threshold)
+      .filter((memory) => memory.similarity >= this.settings.threshold)
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, this.settings.retrievalLimit);
-    
-    this.stats.memoriesRetrieved += relevantMemories.length;
+
+    this.store.recordRetrieval(relevantMemories.length);
     return relevantMemories;
   }
-  
-  /**
-   * Retrieve long-term memories from GitHub
-   * 
-   * @returns {Promise<Array>} Array of long-term memories
-   */
+
   async retrieveLongTermMemories() {
     if (!this.githubIntegration) {
       return [];
     }
-    
+
     try {
       return await this.githubIntegration.retrieveMemories('long_term');
     } catch (error) {
@@ -428,17 +216,12 @@ Tags: ${mem.tags?.join(', ') || 'none'}`
       return [];
     }
   }
-  
-  /**
-   * Retrieve meta memories from GitHub
-   * 
-   * @returns {Promise<Array>} Array of meta memories
-   */
+
   async retrieveMetaMemories() {
     if (!this.githubIntegration) {
       return [];
     }
-    
+
     try {
       return await this.githubIntegration.retrieveMemories('meta');
     } catch (error) {
@@ -446,445 +229,249 @@ Tags: ${mem.tags?.join(', ') || 'none'}`
       return [];
     }
   }
-  
-  /**
-   * Finalize a memory to long-term storage
-   * 
-   * @param {Object} memory - Memory to finalize
-   * @returns {Promise<Object>} Result of the operation
-   */
+
   async finalizeToLongTerm(memory) {
     if (!memory) {
       return { success: false, error: 'No memory provided' };
     }
-    
+
+    if (!this.githubIntegration) {
+      return { success: false, error: 'GitHub integration not enabled' };
+    }
+
     try {
-      if (!this.githubIntegration) {
-        return { 
-          success: false, 
-          error: 'GitHub integration not enabled' 
-        };
-      }
-      
-      // Store in GitHub
-      const result = await this.githubIntegration.storeMemory(
-        memory.content,
-        'long_term',
-        {
-          tags: memory.tags || [],
-          score: memory.score || 0.5,
-          timestamp: memory.timestamp || new Date().toISOString(),
-          role: memory.role || 'system'
-        }
-      );
-      
+      const result = await this.githubIntegration.storeMemory(memory.content, 'long_term', {
+        tags: memory.tags || [],
+        score: memory.score || 0.5,
+        timestamp: memory.timestamp || new Date().toISOString(),
+        role: memory.role || 'system'
+      });
       return { success: true, result };
     } catch (error) {
       console.error(`Error finalizing memory to long-term storage: ${error.message}`);
       return { success: false, error: error.message };
     }
   }
-  
-  /**
-   * Validate memories by analyzing and scoring them
-   * 
-   * @returns {Promise<Object>} Validation result
-   */
+
   async validateMemories() {
     if (!this.initialized) {
       await this.initialize();
     }
-    
-    if (this.ephemeralMemories.length === 0) {
+
+    const ephemeral = this.store.getEphemeral();
+    if (ephemeral.length === 0) {
       return { validated: 0 };
     }
-    
+
     try {
-      // Initialize LLM client if needed
       if (!this.llmClient) {
         this.llmClient = new LLMClient();
       }
-      
-      // Prepare memories for validation
-      const memoriesToValidate = this.ephemeralMemories.slice(-10); // Validate last 10 memories
-      
-      // Create system prompt for validation
-      const systemPrompt = `You are a memory validation system. Your task is to analyze the provided memories and determine their importance, accuracy, and relevance.
-For each memory, provide:
-1. A score from 0 to 1 (where 1 is highest importance)
-2. Relevant tags (comma-separated keywords)
-3. An action: 'retain' (keep as is), 'summarize' (important but could be condensed), or 'discard' (not worth keeping)
-Respond with a JSON array. Format:
-{"memories": [
-  {"id": "mem-123", "score": 0.8, "tags": ["important", "key concept"], "action": "retain"},
-  {"id": "mem-456", "score": 0.4, "tags": ["context"], "action": "summarize"},
-  {"id": "mem-789", "score": 0.2, "tags": ["trivial"], "action": "discard"}
-]}`;
-      
-      // Create user prompt with memories
-      const userPrompt = `Please validate the following memories:\n\n` + 
-        memoriesToValidate.map(mem => `[ID: ${mem.id}]\n${mem.role}: ${mem.content}`).join('\n\n');
-      
-      // Get validation from LLM
+
+      const memoriesToValidate = ephemeral.slice(-10);
+      const userPrompt = `Please validate the following memories:\n\n${memoriesToValidate
+        .map((mem) => `[ID: ${mem.id}]\n${mem.role}: ${mem.content}`)
+        .join('\n\n')}`;
+
       const response = await this.llmClient.complete({
-        system: systemPrompt,
+        system: VALIDATION_SYSTEM_PROMPT,
         prompt: userPrompt,
         temperature: 0.3,
         maxTokens: 1500
       });
-      
-      // Process validation result
-      try {
-        // Extract JSON object from response
-        const responseContent = cleanChatResponse(response.content);
-        const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-        
-        if (jsonMatch) {
-          const validationResult = JSON.parse(jsonMatch[0]);
-          
-          if (validationResult.memories && Array.isArray(validationResult.memories)) {
-            // Process each validated memory
-            for (const validatedMem of validationResult.memories) {
-              const memoryIndex = this.ephemeralMemories.findIndex(m => m.id === validatedMem.id);
-              
-              if (memoryIndex !== -1) {
-                const memory = this.ephemeralMemories[memoryIndex];
-                
-                // Update memory with validation results
-                memory.score = parseFloat(validatedMem.score) || 0.5;
-                memory.tags = Array.isArray(validatedMem.tags) ? validatedMem.tags : [];
-                memory.validated = true;
-                
-                // Handle actions
-                if (validatedMem.action === 'retain' && memory.score >= this.settings.threshold) {
-                  this.validatedMemories.push(memory);
-                } else if (validatedMem.action === 'summarize') {
-                  // Mark for summarization but keep for now
-                  memory.needsSummarization = true;
-                  this.validatedMemories.push(memory);
-                } else if (validatedMem.action === 'discard') {
-                  // Remove from ephemeral memories
-                  this.ephemeralMemories.splice(memoryIndex, 1);
-                }
-              }
-            }
-            
-            // If any memories need summarization and we have enough, summarize them
-            const memoriesToSummarize = this.validatedMemories.filter(m => m.needsSummarization);
-            if (memoriesToSummarize.length >= 3) {
-              await this.summarizeMemories(memoriesToSummarize);
-            }
-            
-            this.stats.memoriesValidated += validationResult.memories.length;
-            
-            return { 
-              validated: validationResult.memories.length,
-              retained: validationResult.memories.filter(m => m.action === 'retain').length,
-              summarized: validationResult.memories.filter(m => m.action === 'summarize').length,
-              discarded: validationResult.memories.filter(m => m.action === 'discard').length
-            };
-          }
+
+      const payload = extractJsonPayload(response.content);
+      const validatedEntries = Array.isArray(payload?.memories) ? payload.memories : [];
+
+      for (const entry of validatedEntries) {
+        const memoryIndex = ephemeral.findIndex((mem) => mem.id === entry.id);
+        if (memoryIndex === -1) {
+          continue;
         }
-        
-        // Fallback if parsing fails
-        throw new Error('Invalid validation result format');
-        
-      } catch (error) {
-        console.error(`Error processing memory validation: ${error.message}`);
-        return { validated: 0, error: error.message };
+
+        const memory = ephemeral[memoryIndex];
+        memory.score = Number.parseFloat(entry.score) || 0.5;
+        memory.tags = Array.isArray(entry.tags) ? entry.tags : [];
+        memory.validated = true;
+
+        if (entry.action === 'retain' && memory.score >= this.settings.threshold) {
+          this.store.addValidated(memory);
+        } else if (entry.action === 'summarize') {
+          memory.needsSummarization = true;
+          this.store.addValidated(memory);
+        } else if (entry.action === 'discard') {
+          this.store.removeEphemeralByIndex(memoryIndex);
+        }
       }
+
+      const validatedCount = validatedEntries.length;
+      this.store.recordValidation(validatedCount);
+
+      const summary = {
+        validated: validatedCount,
+        retained: validatedEntries.filter((entry) => entry.action === 'retain').length,
+        summarized: validatedEntries.filter((entry) => entry.action === 'summarize').length,
+        discarded: validatedEntries.filter((entry) => entry.action === 'discard').length
+      };
+
+      const toSummarize = this.store
+        .getValidated()
+        .filter((memory) => memory.needsSummarization);
+
+      if (toSummarize.length >= 3) {
+        await this.summarizeMemories(toSummarize);
+      }
+
+      return summary;
     } catch (error) {
       console.error(`Error validating memories: ${error.message}`);
       return { validated: 0, error: error.message };
     }
   }
-  
-  /**
-   * Summarize a group of memories
-   * 
-   * @param {Array} memories - Memories to summarize
-   * @returns {Promise<Object>} Summarization result
-   * @private
-   */
+
   async summarizeMemories(memories) {
     if (!memories || memories.length === 0) {
       return { summarized: 0 };
     }
-    
+
     try {
-      // Initialize LLM client if needed
       if (!this.llmClient) {
         this.llmClient = new LLMClient();
       }
-      
-      // Create system prompt for summarization
-      const systemPrompt = `You are a memory summarization system. Your task is to analyze the provided memories and create concise summaries that capture the essential information.
-Group related memories together and create summaries that preserve the key information.
-For each summary, provide:
-1. The summarized content
-2. Relevant tags (comma-separated keywords)
-3. An importance score from 0 to 1 (where 1 is highest importance)
-Respond with a JSON object. Format:
-{"summaries": [
-  {"content": "Summary of related memories", "tags": ["important", "key concept"], "importance": 0.8},
-  {"content": "Another summary", "tags": ["context"], "importance": 0.6}
-]}`;
-      
-      // Create user prompt with memories
-      const userPrompt = `Please summarize the following memories:\n\n` + 
-        memories.map(mem => `[${mem.role}]: ${mem.content}`).join('\n\n');
-      
-      // Get summarization from LLM
+
+      const userPrompt = `Please summarize the following memories:\n\n${memories
+        .map((mem) => `[${mem.role}]: ${mem.content}`)
+        .join('\n\n')}`;
+
       const response = await this.llmClient.complete({
-        system: systemPrompt,
+        system: GROUP_SUMMARY_SYSTEM_PROMPT,
         prompt: userPrompt,
         temperature: 0.4,
         maxTokens: 2000
       });
-      
-      // Process summarization result
-      try {
-        // Extract JSON object from response
-        const responseContent = cleanChatResponse(response.content);
-        const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-        
-        if (jsonMatch) {
-          const summaryResult = JSON.parse(jsonMatch[0]);
-          
-          if (summaryResult.summaries && Array.isArray(summaryResult.summaries)) {
-            // Create new memory entries for summaries
-            for (const summary of summaryResult.summaries) {
-              const summaryMemory = {
-                id: this.generateMemoryId(),
-                content: summary.content,
-                role: 'summary',
-                timestamp: new Date().toISOString(),
-                tags: Array.isArray(summary.tags) ? summary.tags : [],
-                score: parseFloat(summary.importance) || 0.7,
-                summarized: true,
-                sourceMemories: memories.map(m => m.id)
-              };
-              
-              // Add to validated memories
-              this.validatedMemories.push(summaryMemory);
-              
-              // Store in GitHub if enabled
-              if (this.githubIntegration) {
-                this.githubIntegration.storeMemory(summaryMemory, 'meta').catch(error => {
-                  console.error(`Failed to store memory in GitHub: ${error.message}`);
-                });
-              }
-            }
-            
-            // Remove original memories that were summarized
-            memories.forEach(memory => {
-              const index = this.validatedMemories.findIndex(m => m.id === memory.id);
-              if (index !== -1) {
-                this.validatedMemories.splice(index, 1);
-              }
-            });
-            
-            this.stats.memoriesSummarized += summaryResult.summaries.length;
-            
-            return { 
-              summarized: summaryResult.summaries.length,
-              originalCount: memories.length
-            };
-          }
+
+      const payload = extractJsonPayload(response.content);
+      const summaries = Array.isArray(payload?.summaries) ? payload.summaries : [];
+
+      for (const summary of summaries) {
+        const summaryMemory = {
+          id: this.store.generateMemoryId(),
+          content: summary.content,
+          role: 'summary',
+          timestamp: new Date().toISOString(),
+          tags: Array.isArray(summary.tags) ? summary.tags : [],
+          score: Number.parseFloat(summary.importance) || 0.7,
+          summarized: true,
+          sourceMemories: memories.map((mem) => mem.id)
+        };
+
+        this.store.addValidated(summaryMemory);
+
+        if (this.githubIntegration) {
+          this.githubIntegration.storeMemory(summaryMemory, 'meta').catch((error) => {
+            console.error(`Failed to store memory in GitHub: ${error.message}`);
+          });
         }
-        
-        // Fallback if parsing fails
-        throw new Error('Invalid summarization result format');
-        
-      } catch (error) {
-        console.error(`Error processing memory summarization: ${error.message}`);
-        return { summarized: 0, error: error.message };
       }
+
+      memories.forEach((memory) => {
+        memory.needsSummarization = false;
+        this.store.removeValidatedById(memory.id);
+      });
+
+      this.store.recordSummaries(summaries.length);
+
+      return { summarized: summaries.length, originalCount: memories.length };
     } catch (error) {
       console.error(`Error summarizing memories: ${error.message}`);
       return { summarized: 0, error: error.message };
     }
   }
-  
-  /**
-   * Summarize and finalize all memories
-   * 
-   * @param {string} conversationText - Text of the entire conversation
-   * @returns {Promise<Object>} Finalization result
-   */
+
   async summarizeAndFinalize(conversationText) {
     if (!this.initialized) {
       await this.initialize();
     }
-    
+
     try {
-      // Initialize LLM client if needed
       if (!this.llmClient) {
         this.llmClient = new LLMClient();
       }
-      
-      // Create system prompt for summarization
-      const systemPrompt = `You are a memory summarization system. Your task is to analyze the provided conversation and create:
-1. A concise summary of the key points (2-3 paragraphs)
-2. A list of important facts or insights (3-5 bullet points)
-3. Relevant tags for categorization (comma-separated keywords)
 
-Format your response as a JSON object:
-{
-  "summary": "Concise summary text...",
-  "keyPoints": ["Important fact 1", "Important insight 2", ...],
-  "tags": ["tag1", "tag2", "tag3", ...]
-}`;
-      
-      // Create user prompt with conversation text
-      const userPrompt = `Please summarize and extract key information from the following conversation:\n\n${conversationText}`;
-      
-      // Get summary from LLM
       const response = await this.llmClient.complete({
-        system: systemPrompt,
-        prompt: userPrompt,
+        system: CONVERSATION_SUMMARY_PROMPT,
+        prompt: `Please summarize and extract key information from the following conversation:\n\n${conversationText}`,
         temperature: 0.3,
         maxTokens: 1500
       });
-      
-      // Parse response
-      try {
-        // Clean response and extract JSON
-        const responseContent = cleanChatResponse(response.content);
-        const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-        
-        if (jsonMatch) {
-          const summaryData = JSON.parse(jsonMatch[0]);
-          
-          // Create meta-memory from summary
-          const metaMemory = {
-            id: this.generateMemoryId(),
-            content: summaryData.summary,
-            keyPoints: summaryData.keyPoints || [],
-            tags: summaryData.tags || [],
-            type: 'summary',
-            timestamp: new Date().toISOString(),
-            source: this.ephemeralMemories.map(m => m.id)
-          };
-          
-          // Add to validated memories
-          this.validatedMemories.push(metaMemory);
-          
-          // Move important ephemeral memories to validated based on key points
-          for (const keyPoint of summaryData.keyPoints) {
-            const matchingMemories = this.ephemeralMemories.filter(
-              mem => mem.content.toLowerCase().includes(keyPoint.toLowerCase())
-            );
-            
-            for (const mem of matchingMemories) {
-              // Add tags
-              mem.tags = [...new Set([...(mem.tags || []), ...summaryData.tags])];
-              
-              // Mark as validated
-              mem.validated = true;
-              
-              // Add to validated memories if not already present
-              if (!this.validatedMemories.some(m => m.id === mem.id)) {
-                this.validatedMemories.push(mem);
-              }
-            }
-          }
-          
-          // Clear ephemeral memories
-          this.ephemeralMemories = [];
-          
-          // Update stats
-          this.stats.memoriesSummarized++;
-          
-          // Integrate with GitHub if enabled
-          if (this.githubIntegration) {
-            try {
-              await this.githubIntegration.storeMemory(metaMemory);
-            } catch (error) {
-              console.error(`Error storing memory in GitHub: ${error.message}`);
-            }
-          }
-          
-          return {
-            success: true,
-            summary: metaMemory
-          };
+
+      const payload = extractJsonPayload(response.content);
+      const metaMemory = {
+        id: this.store.generateMemoryId(),
+        content: payload.summary,
+        keyPoints: Array.isArray(payload.keyPoints) ? payload.keyPoints : [],
+        tags: Array.isArray(payload.tags) ? payload.tags : [],
+        type: 'summary',
+        timestamp: new Date().toISOString(),
+        source: this.store.getEphemeral().map((memory) => memory.id)
+      };
+
+      this.store.addValidated(metaMemory);
+
+      for (const keyPoint of metaMemory.keyPoints) {
+        const matchingMemories = this.store
+          .getEphemeral()
+          .filter((memory) => memory.content.toLowerCase().includes(String(keyPoint).toLowerCase()));
+
+        for (const memory of matchingMemories) {
+          memory.tags = Array.from(new Set([...(memory.tags || []), ...metaMemory.tags]));
+          memory.validated = true;
+          this.store.addValidated(memory);
         }
-      } catch (error) {
-        console.error(`Error parsing summary: ${error.message}`);
       }
-      
-      // Simple fallback if parsing fails
+
+      this.store.clearEphemeral();
+      this.store.recordSummaries(1);
+
+      if (this.githubIntegration) {
+        try {
+          await this.githubIntegration.storeMemory(metaMemory, 'meta');
+        } catch (error) {
+          console.error(`Error storing memory in GitHub: ${error.message}`);
+        }
+      }
+
+      return { success: true, summary: metaMemory };
+    } catch (error) {
+      console.error(`Error summarizing memories: ${error.message}`);
       const fallbackSummary = {
-        id: this.generateMemoryId(),
+        id: this.store.generateMemoryId(),
         content: `Conversation summary (auto-generated): ${conversationText.substring(0, 100)}...`,
         type: 'summary',
         timestamp: new Date().toISOString(),
-        source: this.ephemeralMemories.map(m => m.id)
+        source: this.store.getEphemeral().map((memory) => memory.id)
       };
-      
-      this.validatedMemories.push(fallbackSummary);
-      this.ephemeralMemories = [];
-      this.stats.memoriesSummarized++;
-      
-      return {
-        success: true,
-        summary: fallbackSummary
-      };
-    } catch (error) {
-      console.error(`Error summarizing memories: ${error.message}`);
-      return {
-        success: false,
-        error: error.message
-      };
+      this.store.addValidated(fallbackSummary);
+      this.store.clearEphemeral();
+      this.store.recordSummaries(1);
+      return { success: true, summary: fallbackSummary };
     }
   }
 
-  /**
-   * Get all memories (both ephemeral and validated)
-   * 
-   * @returns {Array} Combined array of all memories
-   */
   getAllMemories() {
-    return [...this.ephemeralMemories, ...this.validatedMemories];
+    return this.store.getAllMemories();
   }
-  
-  /**
-   * Organize memories into different layers based on validation status and scores
-   * 
-   * @returns {Promise<Object>} Result of organization
-   * @private
-   */
+
   async _organizeMemoryLayers() {
-    // Create memory layer buckets if they don't exist
-    this.shortTermMemories = this.shortTermMemories || [];
-    this.longTermMemories = this.longTermMemories || [];
-    this.metaMemories = this.metaMemories || [];
-    
-    // Clear existing categorized memories
-    this.shortTermMemories = [];
-    this.longTermMemories = [];
-    this.metaMemories = [];
-    
-    // Categorize ephemeral memories as short-term
-    this.shortTermMemories = [...this.ephemeralMemories];
-    
-    // Categorize validated memories by their properties
-    for (const memory of this.validatedMemories) {
-      if (memory.isMeta) {
-        this.metaMemories.push(memory);
-      } else if (memory.score >= 0.7) { // High score memories go to long-term
-        this.longTermMemories.push(memory);
-      } else {
-        this.shortTermMemories.push(memory);
-      }
-    }
-    
+    const layers = this.store.organizeLayers({ scoreThreshold: 0.7 });
+    this.shortTermMemories = layers.shortTerm;
+    this.longTermMemories = layers.longTerm;
+    this.metaMemories = layers.meta;
     return {
-      shortTerm: this.shortTermMemories.length,
-      longTerm: this.longTermMemories.length,
-      meta: this.metaMemories.length,
-      total: this.getAllMemories().length
+      shortTerm: layers.counts.shortTerm,
+      longTerm: layers.counts.longTerm,
+      meta: layers.counts.meta,
+      total: layers.counts.total
     };
   }
 }

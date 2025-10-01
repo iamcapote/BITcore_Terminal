@@ -1,4 +1,4 @@
-import ResearchEngine from '../../infrastructure/research/research.engine.mjs';
+import { ResearchEngine } from '../../infrastructure/research/research.engine.mjs';
 import { callVeniceWithTokenClassifier } from '../../utils/token-classifier.mjs';
 import { resolveResearchDefaults } from './research.defaults.mjs';
 import { resolveApiKeys } from '../../utils/api-keys.mjs';
@@ -98,11 +98,11 @@ export async function runResearch(query, breadthOverride, depthOverride, useToke
     depth,
     visibility: isPublic ? 'public' : 'private',
     isPublic,
-    braveApiKey, // Pass key
-    veniceApiKey, // Pass key
-    outputFn, // Pass outputFn for internal logging
-    errorFn,  // Pass errorFn for internal logging
-    onProgress: progressFn // Pass the progress callback directly
+    braveApiKey,
+    veniceApiKey,
+    outputHandler: outputFn,
+    errorHandler: errorFn,
+    progressHandler: progressFn
   });
 
   // Execute research

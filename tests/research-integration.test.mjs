@@ -12,6 +12,32 @@ vi.mock('../app/features/ai/research.providers.mjs', () => ({
   ])
 }));
 
+vi.mock('../app/commands/research/keys.mjs', () => {
+  class MissingResearchKeysError extends Error {
+    constructor(missingKeys) {
+      super(`Missing API key(s): ${missingKeys.join(', ')}`);
+      this.missingKeys = missingKeys;
+    }
+  }
+
+  class ResearchKeyResolutionError extends Error {}
+
+  return {
+    resolveResearchKeys: vi.fn().mockResolvedValue({ braveKey: 'test-brave', veniceKey: 'test-venice' }),
+    MissingResearchKeysError,
+    ResearchKeyResolutionError,
+  };
+});
+
+vi.mock('../app/utils/api-keys.mjs', () => ({
+  resolveApiKeys: vi.fn().mockResolvedValue({ brave: 'test-brave', venice: 'test-venice' }),
+  resolveServiceApiKey: vi.fn().mockImplementation(async (service) => {
+    if (service === 'brave') return 'test-brave';
+    if (service === 'venice') return 'test-venice';
+    return `test-${service || 'unknown'}`;
+  })
+}));
+
 vi.mock('../app/infrastructure/research/research.engine.mjs', () => {
   const researchMock = vi.fn();
   const ResearchEngine = vi.fn().mockImplementation(() => ({

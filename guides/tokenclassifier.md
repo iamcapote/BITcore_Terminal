@@ -1,6 +1,6 @@
 # Token Classification Module – Technical Guide
 
-The token classification module enriches research queries by delegating analysis to the Venice LLM service. This document reflects the implementation in `app/utils/token-classifier.mjs` and related helpers (September 2025).
+The token classification module enriches research queries by delegating analysis to the Venice LLM service. This document reflects the implementation in `app/utils/token-classifier.mjs` and related helpers (October 2025).
 
 ---
 
@@ -9,7 +9,7 @@ The token classification module enriches research queries by delegating analysis
 | Step | Responsibility | Module |
 | --- | --- | --- |
 | 1 | Collect user query and decide whether to classify | `app/commands/research.cli.mjs`, `app/features/research/routes.mjs` |
-| 2 | Retrieve decrypted Venice API key | `app/features/auth/user-manager.mjs` (CLI/Web sessions) |
+| 2 | Resolve Venice API key | `app/commands/research/keys.mjs` → `resolveResearchKeys` |
 | 3 | Send query to Venice classifier character | `app/utils/token-classifier.mjs` |
 | 4 | Clean response and attach to query object | `token-classifier.mjs`, `research.providers.mjs` |
 | 5 | Continue research pipeline using enriched query metadata | Research engine stack |
@@ -20,8 +20,8 @@ High-level execution:
 2. The command layer retrieves the user’s Venice API key (or falls back to environment variable).
 3. `callVeniceWithTokenClassifier(query, veniceApiKey, debugFn)` is invoked.
 4. Venice responds using the default classifier character slug (`getDefaultTokenClassifierCharacterSlug`).
-5. The raw model output is cleaned with `cleanChatResponse` and stored on the query object as `tokenClassification`.
-6. Research providers use this metadata when generating breadth/depth queries.
+5. The raw model output is cleaned with `cleanChatResponse` and stored on the query object as `metadata` by `enrichResearchQuery`.
+6. The research pipeline consumes this metadata when generating breadth/depth queries (once `research.providers.mjs` is restored).
 
 ---
 
@@ -34,7 +34,7 @@ async function callVeniceWithTokenClassifier(query, veniceApiKey, debugHandler =
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `query` | `string` | Required user query text. Empty/null queries short-circuit and return `null`. |
-| `veniceApiKey` | `string` | Decrypted Venice API key. Missing keys produce a debug log and return `null`. |
+| `veniceApiKey` | `string` | Venice API key from the single-user profile or env vars. Missing keys produce a debug log and return `null`. |
 | `debugHandler` | `function` | Optional logger used for verbose instrumentation. Defaults to `console.log`. |
 
 Return value: cleaned string classification or `null` if classification is skipped/failed non-critically. Critical API key errors throw.
@@ -82,7 +82,8 @@ The research pipeline treats `null` as “classification unavailable” and fall
 
 - **CLI (`app/commands/research.cli.mjs`)**: Prompts with “Use token classification? (y/n)” unless `--classify` flag present.
 - **WebSocket (`app/features/research/routes.mjs`)**: `wsPrompt` asks the same question during interactive flows; `--classify` flag also supported.
-- **Research Providers (`app/features/ai/research.providers.mjs`)**: Expect optional `tokenClassification` on query objects and incorporate metadata into query generation prompts.
+- **Query enrichment (`app/commands/research/query-classifier.mjs`)**: Calls the classifier and merges the cleaned string into `query.metadata`.
+- **Research Providers (`app/features/ai/research.providers.mjs`)**: Expected to consume the metadata once the placeholder file is replaced; current shim prevents usage (tracked in `guides/gaps.md`).
 - **Debug Logging**: Pass a bound logger (e.g., `outputManager.debug`) so classification steps show up in CLI or Web logs.
 
 ---
@@ -98,8 +99,8 @@ Manual checks:
 
 ```bash
 npm start -- cli
-/login <username>
-/research --classify "evaluate quantum internet milestones"
+/status
+/research --classify "Evaluate quantum internet milestones"
 ```
 
 Observe debug logs for classifier invocation. Set `VENICE_API_KEY` or user-specific key before running.

@@ -1,19 +1,48 @@
-import { output as defaultOutput } from '../../utils/research.output-manager.mjs'; // Use defaultOutput alias
+/**
+ * Contract
+ * Inputs:
+ *   - config?: {
+ *       braveApiKey?: string;
+ *       veniceApiKey?: string;
+ *       verbose?: boolean;
+ *       user?: { username?: string; role?: string };
+ *       outputHandler?: (line: string) => void;
+ *       errorHandler?: (line: string) => void;
+ *       debugHandler?: (line: string) => void;
+ *       progressHandler?: (progress: object) => void;
+ *       isWebSocket?: boolean;
+ *       webSocketClient?: unknown;
+ *       overrideQueries?: Array<{ original: string; metadata?: any }>;
+ *       telemetry?: { emitStatus?: (payload: any) => void; emitThought?: (payload: any) => void };
+ *       model?: string;
+ *       character?: string | null;
+ *     }
+ * Outputs:
+ *   - ResearchEngine instance with `research({ query, depth, breadth })` returning a Promise<ResearchOutcome> where
+ *     ResearchOutcome = { learnings: string[]; sources: string[]; followUpQueries?: any[]; summary: string; markdownContent: string | null; suggestedFilename: string | null; error?: string }.
+ * Error modes:
+ *   - Throws during construction when required API keys are absent outside of test mode.
+ *   - `research` rejects with validation errors for missing query/depth/breadth and propagates underlying provider failures.
+ * Performance:
+ *   - Designed for depth/breadth up to low double digits; uses rate limiter (5 req/sec). Markdown generation is in-memory.
+ * Side effects:
+ *   - Issues network calls via search providers and Venice LLM client, emits telemetry/log lines, and mutates progress handlers.
+ */
+
 import { ResearchPath } from './research.path.mjs';
-import fs from 'fs/promises';
-import path from 'path';
-import { generateSummary } from '../../features/ai/research.providers.mjs';
-import { ensureDir } from '../../utils/research.ensure-dir.mjs';
 import { LLMClient } from '../ai/venice.llm-client.mjs';
-import { generateQueries } from '../../features/ai/research.providers.mjs';
-// Import safeSend for progress updates
-import { safeSend } from '../../utils/websocket.utils.mjs';
-// --- Import suggestSearchProvider ---
-import { suggestSearchProvider } from '../search/search.providers.mjs';
 import { BraveSearchProvider } from '../search/search.providers.mjs';
 import { RateLimiter } from '../../utils/research.rate-limiter.mjs';
-import { generateQueriesLLM, generateSummaryLLM, processResults } from '../../features/ai/research.providers.mjs';
-import { getDefaultResearchCharacterSlug } from '../ai/venice.characters.mjs'; // Import character slug getter
+import {
+  generateSummary,
+  generateQueries,
+  generateQueriesLLM,
+  generateSummaryLLM,
+  processResults
+} from '../../features/ai/research.providers.mjs';
+import { getDefaultResearchCharacterSlug } from '../ai/venice.characters.mjs';
+import { buildResearchMarkdown } from './research.markdown.mjs';
+import { runOverrideQueries } from './research.override-runner.mjs';
 
 /**
  * Main research engine that coordinates research paths
@@ -51,8 +80,8 @@ export class ResearchEngine {
     // --- misc flags ---
     this.isWebSocket   = isWebSocket;
     this.webSocketClient = webSocketClient;
-    this.overrideQueries = overrideQueries; // --- Store overrideQueries ---
-  this.telemetry = telemetry || null;
+    this.overrideQueries = overrideQueries;
+    this.telemetry = telemetry || null;
 
     // --- NEW: Add convenience aliases using the correctly assigned handlers ---
     this.output = this.outputHandler;
@@ -63,42 +92,35 @@ export class ResearchEngine {
     // Store the original config object if needed elsewhere, though direct properties are preferred
     this.config = config; // Store the passed config
 
-  // Validate essential config
-  if (!this.braveApiKey || !this.veniceApiKey) {
-    const isVitest = !!process.env.VITEST;
-    const isTestNode = typeof process !== 'undefined' && process.env && (process.env.NODE_ENV === 'test');
-    if (isVitest || isTestNode) {
-      this.error("[ResearchEngine] WARNING: Missing API keys in test environment; continuing with mocks.");
-    } else {
-      // Log the error using the provided handler before throwing
-      this.error("[ResearchEngine] CRITICAL: ResearchEngine requires braveApiKey and veniceApiKey in config.");
-      throw new Error("ResearchEngine requires braveApiKey and veniceApiKey in config.");
-    }
-  }
-     if (!this.user || !this.user.username) {
-        this.debug("[ResearchEngine] Warning: User information not provided in config.");
-        // Proceed without user info if necessary, but log warning
-        this.user = this.user || { username: 'unknown', role: 'unknown' };
+    // Validate essential config
+    if (!this.braveApiKey || !this.veniceApiKey) {
+      const isVitest = !!process.env.VITEST;
+      const isTestNode = typeof process !== 'undefined' && process.env && (process.env.NODE_ENV === 'test');
+      if (isVitest || isTestNode) {
+        this.error('[ResearchEngine] WARNING: Missing API keys in test environment; continuing with mocks.');
+      } else {
+        this.error('[ResearchEngine] CRITICAL: ResearchEngine requires braveApiKey and veniceApiKey in config.');
+        throw new Error('ResearchEngine requires braveApiKey and veniceApiKey in config.');
+      }
     }
 
-    // --- Instantiate Search Provider ONCE ---
-  try {
-    if (this.braveApiKey) {
-      this.searchProvider = suggestSearchProvider({
-        type: 'web',
-        apiKey: this.braveApiKey,
-        outputFn: this.debug, // Use debug for provider logs
-        errorFn: this.error
-      });
-      this.debug(`[ResearchEngine] Search provider initialized successfully.`);
-    } else {
-      this.debug(`[ResearchEngine] Search provider not initialized due to missing Brave API key (test mode).`);
+    if (!this.user || !this.user.username) {
+      this.debug('[ResearchEngine] Warning: User information not provided in config.');
+      this.user = this.user || { username: 'unknown', role: 'unknown' };
     }
-  } catch (providerError) {
-    this.error(`[ResearchEngine] CRITICAL: Failed to initialize search provider: ${providerError.message}`);
-    if (!process.env.VITEST) throw providerError; // Re-throw outside test
-  }
-    // --- End Instantiate Search Provider ---
+
+    this.searchProvider = null;
+    if (this.braveApiKey) {
+      try {
+        this.searchProvider = new BraveSearchProvider({ apiKey: this.braveApiKey, debugHandler: this.debugHandler });
+        this.debug('[ResearchEngine] Search provider initialised successfully.');
+      } catch (providerError) {
+        this.error(`[ResearchEngine] CRITICAL: Failed to initialise search provider: ${providerError.message}`);
+        if (!process.env.VITEST) throw providerError;
+      }
+    } else {
+      this.debug('[ResearchEngine] Search provider not initialised due to missing Brave API key (test mode).');
+    }
 
     this.debug(`[ResearchEngine] Initialized for user: ${this.user.username}`);
     if (this.overrideQueries) {
@@ -129,9 +151,6 @@ export class ResearchEngine {
     const llmModel = this.llmClient?.config?.model || llmConfig.model || 'mock-model';
     this.debugHandler(`ResearchEngine LLMClient initialized. API Key Set: ${!!this.veniceApiKey}, Model: ${llmModel}, Character for Research: ${this.researchCharacterSlug || 'Default (from provider)'}`);
 
-    if (this.braveApiKey) {
-      this.searchProvider = new BraveSearchProvider({ apiKey: this.braveApiKey, debugHandler: this.debugHandler });
-    }
     this.rateLimiter = new RateLimiter(5, 1000);
 
     if (!this.braveApiKey) {
@@ -240,7 +259,15 @@ export class ResearchEngine {
         this.path.updateProgress({ totalQueries: estimatedTotal > 0 ? estimatedTotal : this.overrideQueries.length }); // Use estimate or fallback
 
         // Pass runtime depth/breadth to the override execution logic
-        result = await this.executeWithOverrideQueries(pathInstance, currentDepth, currentBreadth, this.overrideQueries); // Pass overrideQueries
+        result = await runOverrideQueries({
+          overrideQueries: this.overrideQueries,
+          pathInstance,
+          depth: currentDepth,
+          breadth: currentBreadth,
+          log: this.output,
+          emitStatus: (payload) => this.telemetry?.emitStatus?.(payload),
+          emitThought: (payload) => this.telemetry?.emitThought?.(payload)
+        });
       } else {
         // Execute standard research flow using the path instance
         this.output(`[ResearchEngine] Starting standard research flow for query: "${contextQuery.original}" (Depth: ${currentDepth}, Breadth: ${currentBreadth})`);
@@ -300,14 +327,13 @@ export class ResearchEngine {
         message: 'Formatting final research report.'
       });
 
-      const resultData = await this.generateMarkdownResult(
-        contextQuery.original, // Save using the original context query
-        // --- FIX: Use uniqueLearnings and uniqueSources ---
-        uniqueLearnings,
-        uniqueSources,
-        // --- END FIX ---
-        summary
-      );
+      const resultData = await buildResearchMarkdown({
+        query: contextQuery.original,
+        learnings: uniqueLearnings,
+        sources: uniqueSources,
+        summary,
+        logger: { info: this.output, error: this.error }
+      });
       if (!resultData) throw new Error('Failed to generate markdown result content.');
 
       progressData.status = 'Complete';
@@ -367,51 +393,6 @@ export class ResearchEngine {
    * @param {Array<Object>} overrideQueries - The list of override query objects { original: string, metadata?: any }.
    * @returns {Promise<Object>} Research results.
    */
-  async executeWithOverrideQueries(pathInstance, depth, breadth, overrideQueries) {
-    const learnings = [];
-    const sources = new Set(); // Use Set for unique sources
-
-    // Process each override query sequentially for now to manage progress updates better
-    for (let i = 0; i < overrideQueries.length; i++) {
-      const queryObj = overrideQueries[i]; // Already in { original: string, metadata?: any } format
-
-      // Add detailed check for queryObj structure
-      if (!queryObj || typeof queryObj.original !== 'string') {
-          this.error(`[executeWithOverrideQueries] Skipping invalid override query object at index ${i}: ${JSON.stringify(queryObj)}`);
-          continue; // Skip this invalid query
-      }
-
-      this.output(`[ResearchEngine] Processing override query ${i+1}/${overrideQueries.length}: "${queryObj.original}"`);
-      this.telemetry?.emitThought({
-        text: `Override query ${i + 1}: ${queryObj.original}`,
-        stage: 'engine-override',
-        meta: { index: i + 1, total: overrideQueries.length }
-      });
-
-      // Use the path instance's research method for each override query
-      // This will handle the recursive search for each starting query.
-      const pathResult = await pathInstance.research({
-        query: queryObj,
-        depth: depth, // Use runtime depth for this path
-        breadth: breadth // Use runtime breadth for this path
-      });
-
-      // Accumulate results
-      learnings.push(...pathResult.learnings);
-      pathResult.sources.forEach(source => sources.add(source));
-      this.telemetry?.emitStatus({
-        stage: 'engine-override',
-        message: `Completed override query ${i + 1} of ${overrideQueries.length}.`
-      });
-
-      // Results are accumulated directly in learnings/sources by processQuery
-    }
-
-    this.output(`[ResearchEngine] Completed processing ${overrideQueries.length} override queries.`);
-    // Deduplicate learnings before returning
-    return { learnings: Array.from(new Set(learnings)), sources: Array.from(sources) };
-  }
-
   /**
    * Generate research queries from chat context
    * ... JSDoc ...
@@ -440,47 +421,6 @@ export class ResearchEngine {
    * @param {string} [summary='No summary available.'] - The research summary.
    * @returns {Promise<{suggestedFilename: string, markdownContent: string}|null>} Object containing suggested filename and markdown content, or null on error.
    */
-  async generateMarkdownResult(query, learnings, sources, summary = 'No summary available.') {
-    try {
-      // Ensure 'research' directory exists for potential temporary use if needed, but not for saving final result
-      // await ensureDir('research'); // Can be removed if no temp files are ever created
-
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      // Sanitize query for filename more robustly
-      const subject = (query || 'untitled-research') // Ensure a default subject
-          .replace(/[^a-zA-Z0-9\s-]+/g, '') // Remove non-alphanumeric (allow spaces and hyphens)
-          .replace(/\s+/g, '-') // Replace spaces with hyphens
-          .toLowerCase()
-          .substring(0, 50); // Limit length
-      // Suggest a filename based on the 'research' directory structure, even if not saved there
-      const suggestedFilename = path.join('research', `research-${subject}-${timestamp}.md`).replace(/\\/g, '/'); // Use forward slashes
-
-      // Generate markdown
-      const markdownContent = [
-        '# Research Results',
-        '---',
-        `## Query\n\n${query}`,
-        '',
-        `## Summary\n\n${summary}`,
-        '',
-        `## Key Learnings\n`,
-        // Use bullet points for learnings
-        ...(learnings || []).map(l => `- ${l}`), // Handle potentially undefined learnings
-        '',
-        `## References\n`,
-        ...(sources || []).map(s => `- ${s}`), // Handle potentially undefined sources
-      ].join('\n');
-
-      // await fs.writeFile(filename, markdownContent); // REMOVED: Do not save file locally
-      this.output(`[ResearchEngine] Markdown content generated (suggested filename: ${suggestedFilename})`); // Use engine's output handler
-      return { suggestedFilename: suggestedFilename, markdownContent: markdownContent }; // Return filename suggestion and content
-    } catch (error) {
-      this.error(`[ResearchEngine] Error generating markdown result: ${error.message}`); // Use engine's error handler
-      console.error(error.stack);
-      return null;
-    }
-  }
-
   async generateQueries(query, numQueries, learnings = [], metadata = null) {
     this.debugHandler(`Generating ${numQueries} queries for: "${query.original}" using character: ${this.researchCharacterSlug}`);
     try {
@@ -533,5 +473,3 @@ export class ResearchEngine {
     }
   }
 }
-
-export default ResearchEngine;
