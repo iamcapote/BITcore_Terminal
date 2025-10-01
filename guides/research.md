@@ -2,6 +2,8 @@
 
 This document is the source of truth for how the current Deep Research pipeline works across CLI and WebSocket entry points. It reflects the implementation in `/app` as of September 2025.
 
+For roadmap-level planning of upcoming retrieval and RAG enhancements, see [`guides/retrieval-roadmap.md`](./retrieval-roadmap.md).
+
 ---
 
 ## 1. High-Level Architecture
@@ -92,7 +94,7 @@ Both flows share the same engine/controller; the only difference is how prompts 
 
 ## 5. Configuration & Secrets
 
-- **API Keys**: Retrieved from `userManager` (`app/features/auth/user-manager.mjs`). If a logged-in user has encrypted Brave/Venice keys, they are decrypted on-demand; otherwise the engine falls back to environment variables (`BRAVE_API_KEY`, `VENICE_API_KEY`).
+- **API Keys**: Resolved through `app/utils/api-keys.mjs`, which checks the active session cache, the single-user profile (`userManager`), and finally environment fallbacks (`BRAVE_API_KEY`, `VENICE_API_KEY`). Consumers (chat, research controller/CLI, WebSocket flows) should always call `resolveServiceApiKey` / `resolveApiKeys` instead of reaching into `userManager` directly.
 - **GitHub Uploads**: Require GitHub owner/repo/token fields on the authenticated user profile (or environment fallbacks). Uploads are routed through `github.utils.mjs`.
 - **Timeouts & Limits**: Depth, breadth, and concurrency defaults live in `research.engine.mjs` and are overridden via CLI flags or Web prompts.
 
@@ -156,6 +158,16 @@ The hardened GitHub workflow gives operators a single surface to validate connec
 - Unit coverage: `app/tests/github-sync.test.mjs` mocks the infrastructure adapter to assert happy paths and validation failures.
 - `npm test -- github-sync` exercises the new suite in isolation; full `npm test` remains under ~11 seconds.
 - The CLI leverages the shared `cli-error-handler` so sync events flow into the same telemetry/logging pipeline as research operations.
+
+### 7.5 Activity Feed APIs
+- Snapshot feed: `GET /api/research/github-activity/snapshot` returns the last 40 entries by default. Query params:
+    - `limit` (<=200) caps the number of entries.
+    - `levels` filters by comma-separated severity (`debug,info,warn,error`).
+    - `since` accepts epoch milliseconds or ISO-8601 strings for time slicing.
+    - `search` performs case-insensitive substring matching on messages.
+    - `sample` (1-10) down-samples large streams for dashboards.
+- Stats endpoint: `GET /api/research/github-activity/stats` aggregates totals per level and respects the optional `since` filter.
+- Both endpoints require authentication and emit `x-correlation-id` headers so dashboards can stitch responses to downstream logging.
 
 ---
 

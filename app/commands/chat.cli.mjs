@@ -23,6 +23,8 @@ import { generateQueries as generateResearchQueriesLLM } from '../features/ai/re
 import config from '../config/index.mjs';
 import { getChatHistoryController } from '../features/chat-history/index.mjs';
 import { getChatPersonaController } from '../features/chat/index.mjs';
+import { resolveResearchDefaults } from '../features/research/research.defaults.mjs';
+import { resolveApiKeys, resolveServiceApiKey } from '../utils/api-keys.mjs';
 
 const BOOLEAN_TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -652,14 +654,7 @@ async function generateResearchQueriesFromContext(chatHistory, memoryBlocks = []
 
     let effectiveKey = veniceApiKey;
     if (!effectiveKey) {
-        try {
-            effectiveKey = await userManager.getApiKey('venice');
-        } catch (err) {
-            effectiveError(`[generateResearchQueriesFromContext] Unable to read stored Venice key: ${err.message}`);
-        }
-    }
-    if (!effectiveKey && process.env.VENICE_API_KEY) {
-        effectiveKey = process.env.VENICE_API_KEY;
+        effectiveKey = await resolveServiceApiKey('venice');
     }
 
     const memoryContext = Array.isArray(memoryBlocks) && memoryBlocks.length > 0
@@ -739,8 +734,9 @@ export async function startResearchFromChat(...args) {
   const {
     chatHistory = [],
     memoryBlocks = [],
-    depth = 2,
-    breadth = 3,
+        depth: depthOverride,
+        breadth: breadthOverride,
+        isPublic: visibilityOverride,
     verbose = false,
     classificationMetadata = null,
     overrideQueries,
@@ -749,9 +745,19 @@ export async function startResearchFromChat(...args) {
     progressHandler,
     isWebSocket = false,
     webSocketClient = null,
-        user: providedUser,
-        telemetry = null
+      user: providedUser,
+      telemetry = null
   } = options;
+
+    const sessionRef = options.session ?? null;
+
+  const { depth, breadth, isPublic } = await resolveResearchDefaults({
+    depth: depthOverride,
+    breadth: breadthOverride,
+    isPublic: visibilityOverride,
+  });
+
+  Object.assign(options, { depth, breadth, isPublic });
 
   const effectiveOutput = typeof outputFn === 'function' ? outputFn : outputManagerInstance.log;
   const effectiveError = typeof errorFn === 'function' ? errorFn : outputManagerInstance.error;
@@ -810,24 +816,24 @@ export async function startResearchFromChat(...args) {
     }
     userInfo = userInfo || userManager.getCurrentUser();
 
-    let braveKey = null;
-    let veniceKey = null;
-    try {
-        braveKey = await userManager.getApiKey('brave');
-    } catch (err) {
-        effectiveOutput(`[startResearchFromChat] Unable to read stored Brave key: ${err.message}`);
-    }
-    try {
-        veniceKey = await userManager.getApiKey('venice');
-    } catch (err) {
-        effectiveOutput(`[startResearchFromChat] Unable to read stored Venice key: ${err.message}`);
+    const { brave: braveKey, venice: veniceKey } = await resolveApiKeys({ session: sessionRef });
+
+    if (!braveKey) {
+        effectiveError('Brave API key is missing. Configure it via /keys set brave <value> or set BRAVE_API_KEY.');
+        return {
+            success: false,
+            error: 'Missing Brave API key',
+            keepDisabled: false,
+        };
     }
 
-    if (!braveKey && process.env.BRAVE_API_KEY) {
-        braveKey = process.env.BRAVE_API_KEY;
-    }
-    if (!veniceKey && process.env.VENICE_API_KEY) {
-        veniceKey = process.env.VENICE_API_KEY;
+    if (!veniceKey) {
+        effectiveError('Venice API key is missing. Configure it via /keys set venice <value> or set VENICE_API_KEY.');
+        return {
+            success: false,
+            error: 'Missing Venice API key',
+            keepDisabled: false,
+        };
     }
 
     const wrappedProgressHandler = (progressData = {}) => {
@@ -853,7 +859,7 @@ export async function startResearchFromChat(...args) {
     telemetryChannel?.emitStatus({
         stage: 'running',
         message: 'Initializing research engine for chat-derived mission.',
-        meta: { depth, breadth, queries: queries.length }
+        meta: { depth, breadth, queries: queries.length, visibility: isPublic ? 'public' : 'private' }
     });
 
     const engine = new ResearchEngine({
@@ -878,7 +884,7 @@ export async function startResearchFromChat(...args) {
         telemetry: telemetryChannel
     });
 
-    effectiveOutput(`Starting research based on ${queries.length} generated queries (derived from chat history).`);
+    effectiveOutput(`Starting research based on ${queries.length} generated queries (derived from chat history). Visibility: ${isPublic ? 'public' : 'private'}.`);
 
     const placeholderQueryObj = {
         original: representativeQuery,
@@ -925,9 +931,30 @@ export async function startResearchFromChat(...args) {
  * @returns {Promise<Object>} Command result indicating success/failure and input state.
  */
 export async function executeExitResearch(options = {}) {
-    const { session, output: outputFn, error: errorFn, currentUser, password: providedPassword, isWebSocket, webSocketClient, telemetry = null } = options;
+    const {
+        session,
+        output: outputFn,
+        error: errorFn,
+        currentUser,
+        password: providedPassword,
+        isWebSocket,
+        webSocketClient,
+        telemetry = null,
+        depth: depthOverride,
+        breadth: breadthOverride,
+        isPublic: visibilityOverride
+    } = options;
     const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
     const wsPrompt = options.wsPrompt;
+
+    const { depth: resolvedDepth, breadth: resolvedBreadth, isPublic } = await resolveResearchDefaults({
+        depth: depthOverride,
+        breadth: breadthOverride,
+        isPublic: visibilityOverride,
+    });
+
+    Object.assign(options, { depth: resolvedDepth, breadth: resolvedBreadth, isPublic });
+
     if (isWebSocket && !wsPrompt) {
         errorFn('Internal Error: wsPrompt function not provided for executeExitResearch.');
         if (session) {
@@ -967,12 +994,17 @@ export async function executeExitResearch(options = {}) {
 
     telemetryChannel?.emitStatus({
         stage: 'chat-transition',
-        message: 'Transitioning from chat dialogue to research pipeline.'
+        message: 'Transitioning from chat dialogue to research pipeline.',
+        meta: {
+            depth: researchDepth,
+            breadth: researchBreadth,
+            visibility: researchVisibility ? 'public' : 'private'
+        }
     });
 
     const transitionStartedAt = Date.now();
 
-    effectiveOutput('Exiting chat and starting research based on chat history...');
+    effectiveOutput(`Exiting chat and starting research based on chat history... (depth ${researchDepth}, breadth ${researchBreadth}, ${researchVisibility ? 'public' : 'private'} visibility)`);
     if (isWebSocket && webSocketClient) {
         safeSend(webSocketClient, { type: 'research_start' });
     }
@@ -1019,31 +1051,14 @@ export async function executeExitResearch(options = {}) {
     // --- Continue with research as before, but using researchQueryString as the context ---
     let researchResult = { success: false, error: 'Research initialization failed' };
     let userPassword = providedPassword || session.password;
-    let researchBreadth = 3;
-    let researchDepth = 2;
+    let researchBreadth = resolvedBreadth;
+    let researchDepth = resolvedDepth;
+    let researchVisibility = isPublic;
     let useClassification = false;
     let classificationMetadata = null;
     let generatedQueries = [];
 
     try {
-        if (!userPassword) {
-            try {
-                if (isWebSocket && webSocketClient && wsPrompt) {
-                    effectiveOutput('Password required for research API keys.');
-                    userPassword = await wsPrompt(webSocketClient, session, "Password needed for research API key: ", PROMPT_TIMEOUT_MS, true);
-                    if (!userPassword) throw new Error("Password prompt cancelled or failed.");
-                    session.password = userPassword;
-                } else if (!isWebSocket) {
-                    effectiveError("Password required for API keys. Cannot prompt in this context.");
-                    throw new Error("Password required and cannot prompt.");
-                } else {
-                    throw new Error("Password required but prompting mechanism unavailable.");
-                }
-            } catch (promptError) {
-                throw new Error(`Password prompt failed: ${promptError.message}`);
-            }
-        }
-
         if (isWebSocket && webSocketClient && wsPrompt) {
             try {
                 const breadthInput = await wsPrompt(webSocketClient, session, `Enter query generation breadth [1-5, default: ${researchBreadth}]: `, PROMPT_TIMEOUT_MS);
@@ -1069,16 +1084,12 @@ export async function executeExitResearch(options = {}) {
                 effectiveError(`Research parameter prompt failed: ${promptError.message}. Using defaults.`);
             }
         } else if (!isWebSocket) {
-            effectiveOutput(`Using default research parameters: Query Breadth=${researchBreadth}, Depth=${researchDepth}, Classification=${useClassification}`);
+            effectiveOutput(`Using default research parameters: Query Breadth=${researchBreadth}, Depth=${researchDepth}, Visibility=${researchVisibility ? 'public' : 'private'}, Classification=${useClassification}`);
         }
 
-        let veniceKey;
-        try {
-            if (!userPassword) throw new Error("Password required for Venice API key.");
-            veniceKey = await userManager.getApiKey({ username: session.username, password: userPassword, service: 'venice' });
-            if (!veniceKey) throw new Error("Failed to get/decrypt Venice API key.");
-        } catch (keyError) {
-            throw new Error(`Venice API key retrieval failed: ${keyError.message}`);
+        const veniceKey = await resolveServiceApiKey('venice', { session });
+        if (!veniceKey) {
+            throw new Error("Venice API key is missing. Configure it via /keys set venice <value> or set VENICE_API_KEY.");
         }
 
         if (useClassification) {
@@ -1114,6 +1125,7 @@ export async function executeExitResearch(options = {}) {
         const researchOptions = {
             depth: researchDepth,
             breadth: researchBreadth,
+            isPublic: researchVisibility,
             password: userPassword,
             currentUser: currentUser,
             isWebSocket: isWebSocket,

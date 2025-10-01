@@ -3,18 +3,25 @@
 ```plaintext
 commands/
   admin.cli.mjs
+  chat-history.cli.mjs
   chat.cli.mjs
   diagnose.cli.mjs
   index.mjs
   keys.cli.mjs
   login.cli.mjs
   logout.cli.mjs
+  logs.cli.mjs
   memory.cli.mjs
+  missions.cli.mjs
   password.cli.mjs
+  prompts.cli.mjs
+  research-github.cli.mjs
   research.cli.mjs
   research.command.mjs
+  research.github-sync.cli.mjs
   research.mjs
   status.cli.mjs
+  terminal.cli.mjs
   users.cli.mjs
 
 config/
@@ -24,6 +31,12 @@ config/
 current_app_folder_file_tree.md
 features/
   ai/
+    model-browser/
+      index.mjs
+      model-browser.controller.mjs
+      model-browser.routes.mjs
+      model-browser.service.mjs
+
     research.providers.mjs
 
   auth/
@@ -33,10 +46,86 @@ features/
     user-manager.mjs.bak
 
   chat/
+    chat-persona.controller.mjs
+    chat-persona.routes.mjs
+    chat-persona.schema.mjs
+    chat-persona.service.mjs
+    handlers.mjs
+    index.mjs
+    routes.mjs
+    ws-chat-handler.mjs
+
+  chat-history/
+    chat-history.controller.mjs
+    chat-history.repository.mjs
+    chat-history.schema.mjs
+    chat-history.service.mjs
+    index.mjs
+    routes.mjs
+
+  config/
+    config.schema.mjs
+
+  logs/
+    routes.mjs
+
+  memory/
+    index.mjs
+    memory.controller.mjs
+    memory.enricher.mjs
+    memory.schema.mjs
+    memory.service.mjs
+    memory.telemetry.mjs
+    memory.types.mjs
+    routes.mjs
+
+  missions/
+    github-sync.service.mjs
+    index.mjs
+    mission.controller.mjs
+    mission.github-sync.controller.mjs
+    mission.repository.mjs
+    mission.scheduler-state.repository.mjs
+    mission.scheduler.mjs
+    mission.schema.mjs
+    mission.service.mjs
+    mission.telemetry.mjs
+    mission.templates.repository.mjs
+    routes.mjs
+
+  preferences/
+    index.mjs
+    terminal-preferences.controller.mjs
+    terminal-preferences.routes.mjs
+    terminal-preferences.service.mjs
+
+  prompts/
+    index.mjs
+    prompt.controller.mjs
+    prompt.github-sync.controller.mjs
+    prompt.github-sync.service.mjs
+    prompt.repository.mjs
+    prompt.schema.mjs
+    prompt.service.mjs
+    routes.mjs
 
   research/
+    github-sync/
+      controller.mjs
+      routes.mjs
+      service.mjs
+
     research.controller.mjs
+    research.github-sync.controller.mjs
+    research.github-sync.service.mjs
+    research.telemetry.mjs
     routes.mjs
+
+  status/
+    index.mjs
+    routes.mjs
+    status.controller.mjs
+    status.service.mjs
 
 
 filetree.mjs
@@ -47,11 +136,18 @@ infrastructure/
     venice.models.mjs
     venice.response-processor.mjs
 
+  config/
+    encrypted-config.store.mjs
+
   memory/
     github-memory.integration.mjs
     memory.manager.mjs
 
+  missions/
+    github-sync.mjs
+
   research/
+    github-sync.mjs
     research.engine.mjs
     research.path.mjs
 
@@ -61,17 +157,75 @@ infrastructure/
 
 
 public/
+  chat-history/
+    chat-history.js
+    index.html
+
   chat.js
   command-processor.js
+  css/
+    base.css
+    chat-history.css
+    github-sync.css
+    memory.css
+    model-browser.css
+    organizer.css
+    prompts.css
+    research.css
+    telemetry.css
+    terminal-core.css
+    terminal-persona.css
+    terminal-preferences.css
+    terminal-status.css
+    terminal.css
+    wiki-shell.css
+
+  github-sync/
+    github-sync.js
+    index.html
+
   index.html
-  js/
+  logs/
+    index.html
+    logs.js
+
+  memory/
+    index.html
+    memory.js
+
+  organizer/
+    index.html
+    organizer.js
+
+  prompts/
+    index.html
+    prompts.js
 
   research/
     index.html
+    research.js
 
   research.js
+  status.js
   style.css
+  terminal/
+    terminal.bootstrap.js
+    terminal.chat.persona.js
+    terminal.core.events.js
+    terminal.core.handlers.js
+    terminal.core.js
+    terminal.core.output.js
+    terminal.memory.telemetry.js
+    terminal.model.browser.js
+    terminal.preferences.js
+    terminal.prompts.js
+    terminal.research.handlers.js
+    terminal.research.render.js
+    terminal.research.state.js
+
   terminal.js
+  theme-preload.js
+  theme-toggle.js
   webcomm.js
 
 start.mjs
@@ -80,6 +234,7 @@ tests/
   brave-search-provider.test.mjs
   chat.test.mjs
   fix-validation-issues.mjs
+  github-sync.test.mjs
   output-manager.test.mjs
   provider.test.mjs
   rate-limiter.test.mjs
@@ -95,9 +250,12 @@ utils/
   cli-error-handler.mjs
   cli-runner.mjs
   github.utils.mjs
+  log-channel.mjs
+  object.freeze.mjs
   research.clean-query.mjs
   research.ensure-dir.mjs
   research.file-utils.mjs
+  research.memory-intelligence.mjs
   research.object-utils.mjs
   research.output-manager.mjs
   research.prompt.mjs

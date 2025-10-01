@@ -1,7 +1,7 @@
 import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
-import { userManager } from '../features/auth/user-manager.mjs'; // Import userManager
 import { callVeniceWithTokenClassifier } from '../utils/token-classifier.mjs';
 import { cleanQuery } from '../utils/research.clean-query.mjs';
+import { resolveApiKeys } from '../utils/api-keys.mjs';
 
 /**
  * Research command handler.
@@ -28,13 +28,6 @@ export async function research(options) {
       return { success: false, error: 'Permission denied for public user', keepDisabled: false };
   }
 
-  if (!password) {
-      error('Internal Error: Password was not provided or retrieved for API key decryption.');
-      // This case should ideally be caught by the password prompt logic in routes.mjs,
-      // but added here as a safeguard.
-      return { success: false, error: 'Missing password for API keys', keepDisabled: false };
-  }
-
   output('Starting research pipeline...');
   if (isWebSocket) {
     // Send a start message to keep input disabled
@@ -44,26 +37,20 @@ export async function research(options) {
   try {
     // --- Fetch API Keys ---
     output('Retrieving API keys...');
-    let braveApiKey, veniceApiKey;
-    try {
-        braveApiKey = await userManager.getApiKey('brave', password, session.username);
-        veniceApiKey = await userManager.getApiKey('venice', password, session.username);
-
-        if (!braveApiKey) {
-            throw new Error("Brave API key is not configured for this user.");
-        }
-        if (!veniceApiKey) {
-            throw new Error("Venice API key is not configured for this user.");
-        }
-        output('API keys retrieved successfully.');
-    } catch (keyError) {
-        error(`Failed to retrieve API keys: ${keyError.message}`);
-        // Ensure input is re-enabled on error if using WebSocket
+    const { brave: braveApiKey, venice: veniceApiKey } = await resolveApiKeys({ session });
+    if (!braveApiKey || !veniceApiKey) {
+        const missing = [
+            !braveApiKey ? 'Brave' : null,
+            !veniceApiKey ? 'Venice' : null,
+        ].filter(Boolean).join(', ');
+        const message = missing ? `Missing API key(s): ${missing}. Configure them via /keys set or environment variables.` : 'Required API keys are unavailable.';
+        error(message);
         if (isWebSocket) {
-            webSocketClient.send(JSON.stringify({ type: 'research_complete', error: keyError.message, keepDisabled: false }));
+            webSocketClient.send(JSON.stringify({ type: 'research_complete', error: message, keepDisabled: false }));
         }
-        return { success: false, error: keyError.message, keepDisabled: false };
+        return { success: false, error: message, keepDisabled: false };
     }
+    output('API keys retrieved successfully.');
     // --- API Keys Fetched ---
 
     let enhancedQuery = { original: cleanQuery(query) };

@@ -19,8 +19,10 @@ import { executeResearch } from '../../commands/research.cli.mjs';
 // --- FIX: Removed incorrect import ---
 // import { wsPrompt } from './ws-prompt.util.mjs'; // wsPrompt is defined in this file
 import { outputManager } from '../../utils/research.output-manager.mjs'; // Use outputManager for logging
+import { resolveServiceApiKey } from '../../utils/api-keys.mjs';
 import { createResearchTelemetry } from './research.telemetry.mjs';
 import { getGitHubResearchSyncController } from './research.github-sync.controller.mjs';
+import { createGitHubActivityWebComm } from './github-activity.webcomm.mjs';
 import { getStatusController } from '../status/index.mjs';
 import { getChatHistoryController } from '../chat-history/index.mjs';
 import { logChannel } from '../../utils/log-channel.mjs';
@@ -37,6 +39,18 @@ const SESSION_INACTIVITY_TIMEOUT = 60 * 60 * 1000;
 // Timeout for pending prompts (e.g., 2 minutes)
 const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
 const STATUS_REFRESH_INTERVAL_MS = 60 * 1000;
+
+function cloneUserRecord(user) {
+    if (!user) return null;
+    try {
+        return typeof structuredClone === 'function'
+            ? structuredClone(user)
+            : JSON.parse(JSON.stringify(user));
+    } catch (error) {
+        console.warn(`[WebSocket] Failed to clone user record: ${error.message}`);
+        return { ...user };
+    }
+}
 
 // --- NEW: Helper to explicitly control client input state ---
 function enableClientInput(ws) {
@@ -60,79 +74,16 @@ function disableClientInput(ws) {
 }
 // ---
 
-function respondWithGitHubError(res, error) {
-    const status = typeof error?.status === 'number'
-        ? error.status
-        : (/404/.test(error?.message || '') ? 404 : (error instanceof RangeError ? 412 : 500));
-    outputManager.error?.(`[GitHubResearch] ${error?.message || 'unknown error'} (status ${status})`);
-    res.status(status).json({ error: error.message });
-}
-
-router.get('/github/verify', async (req, res) => {
-    try {
-        const controller = getGitHubResearchSyncController();
-        const result = await controller.verify();
-        outputManager.log?.(`[GitHubResearch] Verified ${result.config.owner}/${result.config.repo} on branch ${result.config.branch}`);
-        res.json(result);
-    } catch (error) {
-        respondWithGitHubError(res, error);
-    }
-});
-
-router.get('/github/files', async (req, res) => {
-    try {
-        const controller = getGitHubResearchSyncController();
-        const result = await controller.listEntries({ path: req.query.path || '', ref: req.query.ref });
-        outputManager.log?.(`[GitHubResearch] Listed ${result.entries.length} entries at ${result.path || '/'} (${result.ref || 'default'})`);
-        res.json(result);
-    } catch (error) {
-        respondWithGitHubError(res, error);
-    }
-});
-
-router.get('/github/file', async (req, res) => {
-    const { path, ref } = req.query;
-    if (!path) {
-        return res.status(400).json({ error: 'query parameter "path" is required' });
-    }
-    try {
-        const controller = getGitHubResearchSyncController();
-        const file = await controller.fetchFile({ path, ref });
-        outputManager.log?.(`[GitHubResearch] Fetched ${path}${ref ? `@${ref}` : ''}`);
-        res.json(file);
-    } catch (error) {
-        respondWithGitHubError(res, error);
-    }
-});
-
-router.post('/github/push', async (req, res) => {
-    const { files, message, branch } = req.body || {};
-    if (!Array.isArray(files) || files.length === 0) {
-        return res.status(400).json({ error: 'Request body must include a non-empty "files" array.' });
-    }
-    try {
-        const controller = getGitHubResearchSyncController();
-        const result = await controller.pushBatch({ files, message, branch });
-        outputManager.log?.(`[GitHubResearch] Pushed ${files.length} file(s)${branch ? ` to ${branch}` : ''}`);
-        res.json(result);
-    } catch (error) {
-        respondWithGitHubError(res, error);
-    }
-});
-
-router.post('/github/upload', async (req, res) => {
-    const { path, content, message, branch } = req.body || {};
-    if (!path || typeof content !== 'string') {
-        return res.status(400).json({ error: 'Body must include "path" and string "content".' });
-    }
-    try {
-        const controller = getGitHubResearchSyncController();
-        const result = await controller.uploadFile({ path, content, message, branch });
-        outputManager.log?.(`[GitHubResearch] Uploaded ${path}${branch ? ` to ${branch}` : ''}`);
-        res.json(result);
-    } catch (error) {
-        respondWithGitHubError(res, error);
-    }
+router.all('/github/:legacyAction', (req, res) => {
+    res.status(410).json({
+        error: 'Legacy GitHub sync endpoints have been retired. Use POST /api/research/github-sync instead.',
+        path: req.path,
+        action: req.params.legacyAction,
+        hint: {
+            endpoint: '/api/research/github-sync',
+            payload: '{ action, path?, files?, message?, branch?, ref? }'
+        }
+    });
 });
 
 router.post('/', async (req, res) => {
@@ -208,7 +159,9 @@ export function handleWebSocketConnection(ws, req) {
             telemetryChannel.emitStatus({ stage: 'reconnected', message: 'Telemetry channel resumed after reconnect.' });
         }
 
-        const sessionData = {
+            const currentUser = cloneUserRecord(current) || null;
+
+            const sessionData = {
       sessionId: sessionId,
       webSocketClient: ws,
       isChatActive: false,
@@ -222,8 +175,9 @@ export function handleWebSocketConnection(ws, req) {
       promptTimeoutId: null,
       promptIsPassword: false, // Added flag for prompt type
       promptContext: null, // Added flag for prompt context (e.g., 'post_research_action')
-      promptData: null, // Added data associated with prompt context
-      currentUser: null, // Cached user data (including potentially decrypted keys)
+            promptData: null, // Added data associated with prompt context
+            password: null,
+            currentUser,
       currentResearchResult: null, // Store last research result content
       currentResearchFilename: null, // Store last research result suggested filename
       // --- ADDED FOR MODEL/CHARACTER ---
@@ -231,7 +185,10 @@ export function handleWebSocketConnection(ws, req) {
       sessionCharacter: null,  // To store the character for the session (chat/research)
       // Classifier model/character are handled by the classifier utility itself or ResearchEngine
       // --- END ADDED ---
-    researchTelemetry: telemetryChannel,
+            researchTelemetry: telemetryChannel,
+        githubActivityStream: null,
+        githubActivityStreamDisposer: null,
+            lastGitHubActivityTimestamp: null,
     };
     activeChatSessions.set(sessionId, sessionData);
     wsSessionMap.set(ws, sessionId);
@@ -250,6 +207,26 @@ export function handleWebSocketConnection(ws, req) {
         if (initialLogSnapshot.length) {
             safeSend(ws, { type: 'log-snapshot', logs: initialLogSnapshot });
         }
+
+        const githubActivityStream = createGitHubActivityWebComm({
+            send: (eventType, payload) => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    safeSend(ws, { type: eventType, data: payload });
+                }
+            },
+            snapshotLimit: 80,
+            logger: console
+        });
+
+        githubActivityStream.attach({ limit: 80 });
+        sessionData.githubActivityStream = githubActivityStream;
+        const disposeListener = githubActivityStream.onEntry((entry) => {
+            sessionData.lastGitHubActivityTimestamp = entry?.timestamp ?? Date.now();
+        });
+        sessionData.githubActivityStreamDisposer = typeof disposeListener === 'function'
+            ? disposeListener
+            : null;
+
     enableClientInput(ws); // Explicitly enable input after initial setup
 
     telemetryChannel.emitStatus({ stage: 'connected', message: 'Research telemetry channel ready.' });
@@ -351,6 +328,19 @@ export function handleWebSocketConnection(ws, req) {
                         || (typeof validateFlag === 'string' && ['1', 'true', 'yes', 'on'].includes(validateFlag.toLowerCase()));
                     pushStatusSummary({ validate: shouldValidate, reason: 'client' });
                     enableInputAfterProcessing = true;
+            } else if (message.type === 'github-activity:command') {
+                const stream = currentSession.githubActivityStream;
+                if (stream && typeof stream.handleRequest === 'function') {
+                    const result = stream.handleRequest(message);
+                    if (result && result.ok === false) {
+                        safeSend(ws, {
+                            type: 'github-activity:error',
+                            data: { error: result.error || 'Invalid GitHub activity command.', command: message.command ?? null }
+                        });
+                        wsErrorHelper(ws, result.error || 'Invalid GitHub activity command.', true);
+                    }
+                }
+                enableInputAfterProcessing = true;
             } else if (message.type === 'command') {
           // If in chat mode, let handleChatMessage decide how to process the command
           if (currentSession.isChatActive) {
@@ -436,9 +426,23 @@ export function handleWebSocketConnection(ws, req) {
 
     if (closedSessionId && activeChatSessions.has(closedSessionId)) {
       const session = activeChatSessions.get(closedSessionId);
-            if (session.researchTelemetry) {
-                session.researchTelemetry.updateSender(null);
+        if (session.researchTelemetry) {
+            session.researchTelemetry.updateSender(null);
+        }
+        if (typeof session.githubActivityStreamDisposer === 'function') {
+            try {
+                session.githubActivityStreamDisposer();
+            } catch (unsubscribeError) {
+                outputManager.warn(`[WebSocket] Failed to dispose GitHub activity listener for session ${closedSessionId}: ${unsubscribeError.message}`);
             }
+        }
+        if (session.githubActivityStream) {
+            try {
+                session.githubActivityStream.dispose?.();
+            } catch (streamError) {
+                outputManager.warn(`[WebSocket] Failed to dispose GitHub activity stream for session ${closedSessionId}: ${streamError.message}`);
+            }
+        }
       // Ensure pending prompt is rejected if connection closes unexpectedly
       if (session.pendingPromptReject) {
         console.log(`[WebSocket] Rejecting pending server-side prompt for closed session ${closedSessionId}.`);
@@ -466,9 +470,27 @@ export function handleWebSocketConnection(ws, req) {
                 }
             }
       // --- FIX: Clear currentUser and lastResearchResult on close ---
-      session.currentUser = null;
+    session.password = null;
+    session.currentUser = null;
       session.currentResearchResult = null;
-      session.currentResearchFilename = null;
+            session.currentResearchFilename = null;
+            if (typeof session.githubActivityStreamDisposer === 'function') {
+                try {
+                    session.githubActivityStreamDisposer();
+                } catch (disposeError) {
+                    outputManager.warn(`[WebSocket] Failed to dispose GitHub activity listener for session ${closedSessionId}: ${disposeError.message}`);
+                }
+            }
+            if (session.githubActivityStream) {
+                try {
+                    session.githubActivityStream.dispose?.();
+                } catch (streamError) {
+                    outputManager.warn(`[WebSocket] Failed to dispose GitHub activity stream for session ${closedSessionId}: ${streamError.message}`);
+                }
+            }
+            session.githubActivityStream = null;
+            session.githubActivityStreamDisposer = null;
+            session.lastGitHubActivityTimestamp = null;
       activeChatSessions.delete(closedSessionId);
       wsSessionMap.delete(ws);
       console.log(`[WebSocket] Cleaned up session: ${closedSessionId}`);
@@ -510,6 +532,8 @@ export function handleWebSocketConnection(ws, req) {
             rejectFn(new Error("WebSocket connection error during prompt."));
         }
 
+        session.password = null;
+
         if (session.memoryManager) {
             console.log(`[WebSocket] Releasing memory manager for session ${errorSessionId}.`);
             session.memoryManager = null; // Release memory manager resources
@@ -525,10 +549,27 @@ export function handleWebSocketConnection(ws, req) {
         if (session.researchTelemetry) {
                     session.researchTelemetry.updateSender(null);
                 }
+        if (typeof session.githubActivityStreamDisposer === 'function') {
+            try {
+                session.githubActivityStreamDisposer();
+            } catch (unsubscribeError) {
+                outputManager.warn(`[WebSocket] Failed to dispose GitHub activity listener after error for session ${errorSessionId}: ${unsubscribeError.message}`);
+            }
+        }
+        if (session.githubActivityStream) {
+            try {
+                session.githubActivityStream.dispose?.();
+            } catch (streamError) {
+                outputManager.warn(`[WebSocket] Failed to dispose GitHub activity stream after error for session ${errorSessionId}: ${streamError.message}`);
+            }
+        }
         // --- FIX: Clear currentUser and lastResearchResult on error ---
         session.currentUser = null;
         session.currentResearchResult = null;
         session.currentResearchFilename = null;
+        session.githubActivityStream = null;
+        session.githubActivityStreamDisposer = null;
+        session.lastGitHubActivityTimestamp = null;
 
         activeChatSessions.delete(errorSessionId);
         wsSessionMap.delete(ws);
@@ -614,6 +655,33 @@ async function handleCommandMessage(ws, message, session) {
         wsErrorHelper(ws, 'Invalid command format.', true);
         return false; // wsErrorHelper handles enabling
     }
+
+    const commandFunction = commands[commandName];
+    if (typeof commandFunction !== 'function') {
+        wsErrorHelper(ws, `Unknown command: /${commandName}. Type /help for available commands.`, true);
+        return false;
+    }
+
+    const payloadPassword = typeof passwordFromPayload === 'string' && passwordFromPayload.trim().length > 0
+        ? passwordFromPayload
+        : null;
+    if (payloadPassword) {
+        session.password = payloadPassword;
+    }
+    const effectivePassword = payloadPassword ?? session.password ?? null;
+
+    if (!session.currentUser) {
+        try {
+            const resolvedUser = userManager.getCurrentUser?.();
+            const clonedUser = cloneUserRecord(resolvedUser);
+            if (clonedUser) {
+                session.currentUser = clonedUser;
+            }
+        } catch (userResolveError) {
+            console.warn(`[WebSocket] Failed to hydrate session user for command '/${commandName}' (Session ${session.sessionId}): ${userResolveError.message}`);
+        }
+    }
+    const sessionUser = session.currentUser ?? null;
     // --- End Refactored Start ---
 
     // --- FIX: Prevent top-level commands during active chat ---
@@ -718,6 +786,9 @@ async function handleCommandMessage(ws, message, session) {
         model: effectiveModel,
         // Pass null if character is 'None', otherwise pass the character string
         character: (effectiveCharacter === 'None' ? null : effectiveCharacter),
+        password: effectivePassword,
+        currentUser: sessionUser,
+        requestingUser: sessionUser,
     };
     // --- End Options Setup ---
 
@@ -804,6 +875,20 @@ async function handleCommandMessage(ws, message, session) {
 
         // Execute the command function
         const result = await commandFunction(options); // Pass options including handlers
+
+        if (result && typeof result === 'object') {
+            if (result.user) {
+                const updatedUser = cloneUserRecord(result.user);
+                if (updatedUser) {
+                    session.currentUser = updatedUser;
+                }
+            } else if (result.currentUser) {
+                const updatedUser = cloneUserRecord(result.currentUser);
+                if (updatedUser) {
+                    session.currentUser = updatedUser;
+                }
+            }
+        }
 
         // --- Determine input state based on command result ---
         // Default: enable input unless command indicates otherwise
@@ -970,26 +1055,14 @@ async function handleChatMessage(ws, message, session) {
     }
 
     try {
-        let veniceApiKey = null;
-        try {
-            outputManager.debug(`[WebSocket][Chat] Attempting to retrieve Venice API key (single-user mode)`);
-            veniceApiKey = await userManager.getApiKey({ service: 'venice' });
-            if (veniceApiKey) {
-                outputManager.debug(`[WebSocket][Chat] Successfully retrieved Venice API key.`);
-            } else {
-                outputManager.warn(`[WebSocket][Chat] Venice API key not set. Using default or will fail if none.`);
-            }
-        } catch (keyError) {
-            outputManager.error(`[WebSocket][Chat] Error retrieving Venice API key: ${keyError.message}. Chat will use fallback.`);
+        const veniceApiKey = await resolveServiceApiKey('venice', { session });
+        if (veniceApiKey) {
+            outputManager.debug(`[WebSocket][Chat] Venice API key resolved for ${session.currentUser.username}.`);
+        } else {
+            outputManager.warn('[WebSocket][Chat] Venice API key not configured. Chat will rely on environment defaults and may fail.');
         }
 
-        const llmConfig = {};
-        if (veniceApiKey) {
-            llmConfig.apiKey = veniceApiKey;
-            outputManager.debug(`[WebSocket][Chat] LLMClient will use user-specific Venice API key for ${session.currentUser.username}.`);
-        } else {
-            outputManager.debug('[WebSocket][Chat] LLMClient will use default (environment) Venice API key.');
-        }
+        const llmConfig = veniceApiKey ? { apiKey: veniceApiKey } : {};
 
         const llm = new LLMClient(llmConfig);
         const model = session.sessionModel || 'qwen-2.5-qwq-32b'; // Ensure fallback
@@ -1083,6 +1156,12 @@ async function handleInputMessage(ws, message, session) {
         // Use suggested filename from promptData if available, otherwise from session
         const suggestedFilename = promptData?.suggestedFilename || session.currentResearchFilename || 'research-result.md';
 
+        if (!markdownContent) {
+            wsErrorHelper(ws, 'No research result is available for post-research actions. Please rerun /research to generate content.', true);
+            enableInputAfter = true;
+            return enableInputAfter;
+        }
+
         try {
             switch (action) {
                 case 'download':
@@ -1093,6 +1172,7 @@ async function handleInputMessage(ws, message, session) {
                         content: markdownContent
                     });
                     // Input enabled by default
+                    enableInputAfter = true;
                     break;
 
                 case 'upload': {
@@ -1119,14 +1199,17 @@ async function handleInputMessage(ws, message, session) {
 
                 case 'keep':
                     wsOutputHelper(ws, "Research result kept in session (will be lost on disconnect/logout).");
+                    enableInputAfter = true;
                     break;
 
                 case 'discard':
                     wsOutputHelper(ws, "Research result discarded.");
+                    enableInputAfter = true;
                     break;
 
                 default:
                     wsOutputHelper(ws, `Invalid action: '${action}'. Please choose Download, Upload, Keep, or Discard.`);
+                    enableInputAfter = true;
                     break;
             }
         } catch (actionError) {
@@ -1281,7 +1364,8 @@ export function cleanupInactiveSessions() { // --- FIX: Added export ---
           session.memoryManager = null; // Release memory manager resources
       }
       // --- FIX: Clear currentUser and lastResearchResult on timeout ---
-      session.currentUser = null;
+    session.password = null;
+    session.currentUser = null;
       session.currentResearchResult = null;
       session.currentResearchFilename = null;
       activeChatSessions.delete(sessionId);
@@ -1299,91 +1383,3 @@ export function cleanupInactiveSessions() { // --- FIX: Added export ---
 setInterval(cleanupInactiveSessions, 5 * 60 * 1000);
 
 export default router;
-
-// WebSocket message handler
-async function handleWebSocketMessage(ws, message) {
-    // ... existing code ...
-
-    try {
-        // ... existing message parsing ...
-
-        if (parsedMessage.type === 'command') {
-            outputManager.debug(`[WS][${ws.id}] Received command message: ${parsedMessage.command}`); // Log raw command
-            ws.isProcessing = true; // Mark as processing
-            wsSend(ws, { type: 'disable_input' }); // Disable input during processing
-
-            const { commandName, positionalArgs, flags } = parseCommandArgs(parsedMessage.command);
-            outputManager.debug(`[WS][${ws.id}] Parsed command: name='${commandName}', args=${JSON.stringify(positionalArgs)}, flags=${JSON.stringify(flags)}`); // Log parsed parts
-
-            // Ensure commandName is valid before proceeding
-            if (!commandName) {
-                 wsErrorHelper(ws, 'Invalid command format.');
-                 wsSend(ws, { type: 'enable_input' });
-                 ws.isProcessing = false;
-                 return;
-            }
-
-            // --- Updated Command Execution ---
-            // Find the command function in the imported map
-            const commandFunction = commands[commandName];
-
-            if (commandFunction) {
-                // Prepare options for the command function
-                const commandOptions = {
-                    positionalArgs,
-                    flags,
-                    isWebSocket: true,
-                    session: ws, // Pass WebSocket session object
-                    output: (msg) => wsSend(ws, { type: 'output', message: msg }),
-                    error: (errMsg) => wsErrorHelper(ws, errMsg), // Use helper for errors
-                    currentUser: ws.currentUser, // Pass authenticated user data
-                    password: ws.currentPassword // Pass cached password if available
-                };
-
-                // Execute the specific command function
-                const result = await commandFunction(commandOptions);
-
-                // Handle command result (optional: specific actions based on result)
-                outputManager.debug(`[WS][${ws.id}] Command '${commandName}' execution result:`, result);
-
-                // Re-enable input unless command explicitly requests otherwise
-                if (!result?.keepDisabled) {
-                    wsSend(ws, { type: 'enable_input' });
-                }
-            } else if (commandName === 'help') {
-                // Handle /help specifically if not in the map or as a fallback
-                wsSend(ws, { type: 'output', message: getHelpText() });
-                wsSend(ws, { type: 'enable_input' });
-            } else {
-                wsErrorHelper(ws, `Unknown command: /${commandName}. Type /help for available commands.`);
-                wsSend(ws, { type: 'enable_input' });
-            }
-            // --- End Updated Command Execution ---
-
-            ws.isProcessing = false; // Mark processing finished
-
-        } else if (parsedMessage.type === 'chat-message') {
-            // ... existing chat message handling ...
-        } else if (parsedMessage.type === 'prompt_response') {
-            // ... existing prompt response handling ...
-        } else if (parsedMessage.type === 'input') {
-             // Handle generic input when in specific modes (like chat)
-             // ... existing input handling ...
-        } else {
-            outputManager.warn(`[WS][${ws.id}] Received unknown message type: ${parsedMessage.type}`);
-            wsErrorHelper(ws, `Unknown message type: ${parsedMessage.type}`);
-        }
-
-    } catch (error) {
-        // ... existing error handling ...
-        wsErrorHelper(ws, `Internal server error processing message: ${error.message}`);
-        if (!ws.isProcessing) { // Ensure input is re-enabled if error happens before processing flag is set
-             wsSend(ws, { type: 'enable_input' });
-        } else {
-             ws.isProcessing = false; // Reset flag on error
-             wsSend(ws, { type: 'enable_input' }); // Attempt to re-enable input
-        }
-    }
-}
-
-// ... rest of the file ...

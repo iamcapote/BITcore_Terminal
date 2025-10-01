@@ -162,7 +162,15 @@ Test checklist:
 - Reference related guides in `guides/` when helpful.
 - Keep examples updated and runnable.
 - Summarize architecture and behavior only; keep comments concise, precise, timeless, and never use them for TODOs or meta-notes.
+- Write comments that are as short as clarity allows and as detailed as precision demands; favor declarative descriptions of architecture, data flow, and invariants, and never use comments for status updates, placeholders, or conversational tone.
 - Prompt hygiene: encourage requesters to specify target formats, length, and reasoning style; offer positive/negative examples and point them to published prompt-engineering references when useful.
+
+### Comment Philosophy Summary
+
+- Describe every file up front with a compact Why/What/How docblock so readers grasp the module at a glance.
+- Annotate sections only to explain structure, data flow, and invariants; keep prose timeless, high-signal, and assume an expert audience.
+- Ban meta-status notes and TODOs in code comments—use dedicated tracking files instead.
+- Condense information: enough detail for precision, no filler, no conversational tone.
 
 ## Coding Standards (ESM + async)
 

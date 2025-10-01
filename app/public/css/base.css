@@ -10,33 +10,85 @@
 }
 
 :root {
-    --bg: #fff;
-    --fg: #222;
-    --lnk: #0645ad;
-    --border: #a2a9b1;
+    color-scheme: light;
+    --page-bg: #f2f4fa;
+    --bg: var(--page-bg);
+    --page-fg: #141b2c;
+    --fg: var(--page-fg);
+    --fg-muted: #4b5c7a;
+    --fg-subtle: #6c7b97;
+    --lnk: #1f62d0;
+    --lnk-visited: #7545d8;
+    --surface-0: #ffffff;
+    --surface-1: #edf1f9;
+    --surface-2: #e1e7f3;
+    --surface-glow: rgba(36, 64, 112, 0.08);
+    --border-soft: rgba(25, 40, 65, 0.1);
+    --border-strong: rgba(25, 40, 65, 0.18);
+    --border: var(--border-soft);
+    --subtle-border: rgba(25, 40, 65, 0.08);
     --tab-bg: transparent;
-    --tab-active-bg: var(--bg);
+    --tab-active-bg: var(--surface-0);
     --tab-border: transparent;
-    --subtle-border: #e9e9e9;
+    --accent-primary: #1f9cf0;
+    --accent-primary-soft: rgba(31, 156, 240, 0.12);
+    --accent-secondary: #6f7dff;
+    --shadow-soft: 0 12px 32px rgba(19, 33, 56, 0.08);
+    --shadow-strong: 0 28px 60px rgba(13, 21, 42, 0.22);
+    --terminal-shell-bg: linear-gradient(160deg, rgba(223, 231, 245, 0.9) 0%, rgba(203, 214, 239, 0.92) 40%, rgba(193, 206, 235, 0.98) 100%);
+    --terminal-shell-border: rgba(102, 132, 198, 0.35);
+    --terminal-screen-bg: #0f1729;
+    --terminal-screen-border: rgba(104, 154, 220, 0.42);
+    --terminal-text: #d9e6ff;
+    --terminal-text-muted: rgba(217, 230, 255, 0.62);
+    --terminal-input-bg: rgba(15, 25, 42, 0.82);
+    --focus-ring: 0 0 0 3px rgba(31, 156, 240, 0.25);
 }
 
 :root.dark {
-    --bg: #111;
-    --fg: #ddd;
-    --lnk: #88c0ff;
-    --border: #555;
+    color-scheme: dark;
+    --page-bg: #05070d;
+    --bg: var(--page-bg);
+    --page-fg: #dde4f9;
+    --fg: var(--page-fg);
+    --fg-muted: #95a4c7;
+    --fg-subtle: #7081a8;
+    --lnk: #79b9ff;
+    --lnk-visited: #9f86ff;
+    --surface-0: #0b111d;
+    --surface-1: #101b2f;
+    --surface-2: #182640;
+    --surface-glow: rgba(87, 131, 214, 0.12);
+    --border-soft: rgba(126, 173, 255, 0.14);
+    --border-strong: rgba(120, 182, 255, 0.28);
+    --border: var(--border-soft);
+    --subtle-border: rgba(126, 173, 255, 0.12);
     --tab-bg: transparent;
-    --tab-active-bg: var(--bg);
+    --tab-active-bg: var(--surface-0);
     --tab-border: transparent;
-    --subtle-border: #333;
+    --accent-primary: #59b0ff;
+    --accent-primary-soft: rgba(89, 176, 255, 0.22);
+    --accent-secondary: #7f87ff;
+    --shadow-soft: 0 18px 52px rgba(6, 12, 28, 0.55);
+    --shadow-strong: 0 32px 80px rgba(4, 12, 32, 0.65);
+    --terminal-shell-bg: linear-gradient(150deg, rgba(9, 16, 28, 0.94) 0%, rgba(11, 21, 37, 0.97) 45%, rgba(15, 28, 49, 0.98) 100%);
+    --terminal-shell-border: rgba(97, 147, 219, 0.35);
+    --terminal-screen-bg: #060b14;
+    --terminal-screen-border: rgba(87, 146, 215, 0.45);
+    --terminal-text: #d9e6ff;
+    --terminal-text-muted: rgba(217, 230, 255, 0.6);
+    --terminal-input-bg: rgba(8, 16, 29, 0.92);
+    --focus-ring: 0 0 0 3px rgba(89, 176, 255, 0.35);
 }
 
 body {
-    font-family: sans-serif;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
     line-height: 1.6;
     color: var(--fg);
-    background: var(--bg);
+    background: var(--page-bg);
     padding: 0;
+    min-height: 100vh;
+    transition: background-color 0.4s ease, color 0.4s ease;
 }
 
 a {
@@ -49,13 +101,37 @@ a:hover {
 }
 
 a:visited {
-    color: #5a3696;
-}
-
-:root.dark a:visited {
-    color: #b8a1e3;
+    color: var(--lnk-visited);
 }
 
 .hidden {
     display: none !important;
+}
+
+body,
+.wiki-container,
+.terminal-container,
+.terminal-screen,
+.status-chip,
+.control-button,
+.preferences-panel,
+.model-browser,
+.memory-telemetry,
+.research-telemetry {
+    transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body,
+    .wiki-container,
+    .terminal-container,
+    .terminal-screen,
+    .status-chip,
+    .control-button,
+    .preferences-panel,
+    .model-browser,
+    .memory-telemetry,
+    .research-telemetry {
+        transition: none;
+    }
 }

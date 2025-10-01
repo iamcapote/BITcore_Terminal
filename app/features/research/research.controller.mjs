@@ -1,18 +1,26 @@
 import ResearchEngine from '../../infrastructure/research/research.engine.mjs';
 import { callVeniceWithTokenClassifier } from '../../utils/token-classifier.mjs';
-import { userManager } from '../auth/user-manager.mjs'; // Assuming userManager is exported
+import { resolveResearchDefaults } from './research.defaults.mjs';
+import { resolveApiKeys } from '../../utils/api-keys.mjs';
 
 /**
  * Fetches research data based on a query
  */
-export async function getResearchData(query = 'default research topic', depth = 2, breadth = 3) {
+export async function getResearchData(query = 'default research topic', depthOverride, breadthOverride, visibilityOverride) {
   try {
     const queryObject = typeof query === 'string'
       ? { original: query }
       : { original: query?.original || 'default research topic', metadata: query?.metadata || null };
 
+    const { depth, breadth, isPublic } = await resolveResearchDefaults({
+      depth: depthOverride,
+      breadth: breadthOverride,
+      isPublic: visibilityOverride,
+    });
+
     const engine = new ResearchEngine({ query: queryObject, depth, breadth });
-    return await engine.research({ query: queryObject, depth, breadth });
+    const result = await engine.research({ query: queryObject, depth, breadth });
+    return { ...result, visibility: isPublic ? 'public' : 'private' };
   } catch (error) {
     console.error('Error in getResearchData:', error);
     return {
@@ -45,45 +53,23 @@ export async function getResearchByPath(path) {
  * @param {string} password - Password for retrieving API keys
  * @returns {Promise<Object>} Research results
  */
-export async function runResearch(query, breadth = 3, depth = 2, useTokenClassifier = false, outputFn = console.log, errorFn = console.error, progressFn = null, username = null, password = null) {
+export async function runResearch(query, breadthOverride, depthOverride, useTokenClassifier = false, outputFn = console.log, errorFn = console.error, progressFn = null, username = null, password = null) {
   let enhancedQuery = typeof query === 'string' ? { original: query } : { ...query }; // Clone query object
 
-  let braveApiKey = process.env.BRAVE_API_KEY;
-  let veniceApiKey = process.env.VENICE_API_KEY;
+  const { depth, breadth, isPublic } = await resolveResearchDefaults({
+    depth: depthOverride,
+    breadth: breadthOverride,
+  });
 
-  // Attempt to get user-specific keys if username and password provided
-  if (username && password) {
-    try {
-      outputFn(`[Controller] Attempting to retrieve API keys for user ${username}...`);
-      const userBraveKey = await userManager.getApiKey('brave', password, username);
-      if (userBraveKey) {
-        braveApiKey = userBraveKey;
-        outputFn('[Controller] Using user-specific Brave API key.');
-      } else {
-        outputFn('[Controller] User-specific Brave key not found or decryption failed, falling back to environment variable.');
-      }
-      const userVeniceKey = await userManager.getApiKey('venice', password, username);
-      if (userVeniceKey) {
-        veniceApiKey = userVeniceKey;
-        outputFn('[Controller] Using user-specific Venice API key.');
-      } else {
-        outputFn('[Controller] User-specific Venice key not found or decryption failed, falling back to environment variable.');
-      }
-    } catch (err) {
-      errorFn(`[Controller] Error retrieving API keys for user ${username}: ${err.message}. Falling back to environment variables.`);
-      // Continue with potentially undefined keys from env vars, ResearchEngine/Providers will throw if needed
-    }
-  } else {
-    outputFn('[Controller] No user credentials provided, using API keys from environment variables.');
-  }
+  const { brave: braveApiKey, venice: veniceApiKey } = await resolveApiKeys();
 
   if (!braveApiKey) {
-      errorFn('[Controller] Brave API Key is missing. Research cannot proceed.');
-      throw new Error('Brave API Key is missing.');
+      errorFn('[Controller] Brave API key is missing. Configure it via environment variables or /keys set brave.');
+      throw new Error('Brave API key is missing.');
   }
-   if (!veniceApiKey) {
-      errorFn('[Controller] Venice API Key is missing. Research cannot proceed without LLM.');
-      throw new Error('Venice API Key is missing.');
+  if (!veniceApiKey) {
+      errorFn('[Controller] Venice API key is missing. Configure it via environment variables or /keys set venice.');
+      throw new Error('Venice API key is missing.');
   }
 
 
@@ -104,12 +90,14 @@ export async function runResearch(query, breadth = 3, depth = 2, useTokenClassif
   }
 
   // Create research engine
-  outputFn(`\nStarting research...\nQuery: "${enhancedQuery.original}"\nDepth: ${depth} Breadth: ${breadth}\n${enhancedQuery.metadata ? "Using enhanced metadata from token classification" : ""}\n`);
+  outputFn(`\nStarting research...\nQuery: "${enhancedQuery.original}"\nDepth: ${depth} Breadth: ${breadth}\nVisibility: ${isPublic ? 'Public' : 'Private'}\n${enhancedQuery.metadata ? "Using enhanced metadata from token classification" : ""}\n`);
 
   const engine = new ResearchEngine({
     query: enhancedQuery,
     breadth,
     depth,
+    visibility: isPublic ? 'public' : 'private',
+    isPublic,
     braveApiKey, // Pass key
     veniceApiKey, // Pass key
     outputFn, // Pass outputFn for internal logging
@@ -140,5 +128,5 @@ export async function runResearch(query, breadth = 3, depth = 2, useTokenClassif
   // }
   // outputFn(`\nResults saved to: ${result.filename || "research folder"}`); // Logged by engine
 
-  return result; // Return the full result object including markdownContent and filename
+  return { ...result, visibility: isPublic ? 'public' : 'private' }; // Return the full result with visibility annotation
 }

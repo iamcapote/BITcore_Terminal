@@ -12,3 +12,18 @@ export {
   getTerminalPreferencesController,
   resetTerminalPreferencesController,
 } from './terminal-preferences.controller.mjs';
+
+export {
+  getResearchPreferences,
+  updateResearchPreferences,
+  replaceResearchPreferences,
+  resetResearchPreferences,
+  clearResearchPreferencesCache,
+  getDefaultResearchPreferences,
+} from './research-preferences.service.mjs';
+
+export {
+  createResearchPreferencesController,
+  getResearchPreferencesController,
+  resetResearchPreferencesController,
+} from './research-preferences.controller.mjs';

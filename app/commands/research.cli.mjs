@@ -30,6 +30,8 @@ import {
     deriveMemoryFollowUpQueries,
     projectMemorySuggestions
 } from '../utils/research.memory-intelligence.mjs';
+import { resolveResearchDefaults } from '../features/research/research.defaults.mjs';
+import { resolveServiceApiKey } from '../utils/api-keys.mjs';
 
 // --- Remove freshUserManager import ---
 // import { userManager as freshUserManager } from '../features/auth/user-manager.mjs';
@@ -81,8 +83,9 @@ export async function executeResearch(options = {}) {
     const {
         positionalArgs = [],
         query: queryFromOptions,
-        depth = 2,
-        breadth = 3,
+        depth: depthOverride,
+        breadth: breadthOverride,
+        isPublic: visibilityOverride,
         classify = false,
         verbose = false,
         password, // This is the password passed in options (from cache, payload, or prompt)
@@ -92,13 +95,21 @@ export async function executeResearch(options = {}) {
         error: cmdError,   // Renamed from options.error
         currentUser,
         webSocketClient,
-    telemetry,
+        telemetry,
         // --- FIX: Add wsPrompt ---
         wsPrompt: cmdPrompt, // Renamed from options.wsPrompt
         // --- Ensure debug is correctly destructured and has a default ---
         debug = options.verbose ? outputManagerInstance.debug.bind(outputManagerInstance) : () => {}, // Default to no-op if not verbose
         progressHandler: providedProgressHandler
     } = options;
+
+    const { depth, breadth, isPublic } = await resolveResearchDefaults({
+        depth: depthOverride,
+        breadth: breadthOverride,
+        isPublic: visibilityOverride,
+    });
+
+    Object.assign(options, { depth, breadth, isPublic });
 
     const telemetryChannel = telemetry ?? null;
 
@@ -245,45 +256,32 @@ export async function executeResearch(options = {}) {
 
         // --- Get API Keys (Requires Password - already handled above) ---
         let braveKey, veniceKey;
-         if (!userPassword) {
-             // This should not happen due to the check/prompt above
-             effectiveError('Internal Error: Password missing after check.');
-             return { success: false, error: 'Password missing', handled: true, keepDisabled: false };
-         }
         try {
-            effectiveDebug(`[executeResearch] Attempting to get API keys for ${currentUsername}...`);
-            // Use the userPassword obtained above (from options or prompt)
-            const braveOptions = { username: currentUser.username, password: userPassword, service: 'brave' };
-            const veniceOptions = { username: currentUser.username, password: userPassword, service: 'venice' };
+            effectiveDebug(`[executeResearch] Resolving API keys for ${currentUsername}...`);
+            braveKey = await resolveServiceApiKey('brave', { session });
+            veniceKey = await resolveServiceApiKey('venice', { session });
 
-            effectiveDebug(`[executeResearch] PRE-CALL 1 (Brave) - Options:`, { ...braveOptions, password: braveOptions.password ? '******' : 'MISSING' });
-            braveKey = await userManager.getApiKey(braveOptions);
-            effectiveDebug(`[executeResearch] POST-CALL 1 (Brave) - Brave Key: ${braveKey ? '******' : 'NULL/EMPTY'}`);
+            if (!braveKey || !veniceKey) {
+                const missing = [
+                    !braveKey ? 'Brave' : null,
+                    !veniceKey ? 'Venice' : null,
+                ].filter(Boolean).join(', ');
+                throw new Error(`Missing required API key(s): ${missing || 'unknown'}`);
+            }
 
-            effectiveDebug(`[executeResearch] PRE-CALL 2 (Venice) - Options:`, { ...veniceOptions, password: veniceOptions.password ? '******' : 'MISSING' });
-            veniceKey = await userManager.getApiKey(veniceOptions);
-            effectiveDebug(`[executeResearch] POST-CALL 2 (Venice) - Venice Key: ${veniceKey ? '******' : 'NULL/EMPTY'}`); // Restored debug log
-
-            if (!braveKey || !veniceKey) throw new Error('Failed to retrieve one or more required API keys.');
-             // Re-cache password on success if WebSocket (already done during prompt, but good to ensure)
-            if (isWebSocket && session && !session.password) session.password = userPassword;
-            effectiveDebug(`[executeResearch] API keys successfully decrypted.`);
-        } catch (decryptionError) {
-            // Clear cached password in session if decryption fails
-            if (isWebSocket && session) session.password = null;
-            effectiveError(`Failed to decrypt API key(s): ${decryptionError.message}. Please check your password.`);
-            effectiveError(`[executeResearch] RAW ERROR caught during API key retrieval:`);
-            console.error(decryptionError);
+            effectiveDebug('[executeResearch] API keys resolved successfully.');
+        } catch (keyResolutionError) {
+            effectiveError(`Unable to resolve API key(s): ${keyResolutionError.message}. Configure them via /keys set or environment variables.`);
             telemetryChannel?.emitStatus({
                 stage: 'blocked',
-                message: 'Unable to decrypt API keys.',
-                detail: decryptionError.message
+                message: 'Missing required API keys.',
+                detail: keyResolutionError.message
             });
-            return { success: false, error: `API key decryption failed: ${decryptionError.message}`, handled: true, keepDisabled: false };
+            return { success: false, error: keyResolutionError.message, handled: true, keepDisabled: false };
         }
         telemetryChannel?.emitStatus({
             stage: 'auth',
-            message: 'API keys decrypted successfully.'
+            message: 'API keys resolved successfully.'
         });
 
         // --- Final Query Check ---
@@ -309,8 +307,9 @@ export async function executeResearch(options = {}) {
             stage: 'planning',
             message: 'Research query accepted.',
             meta: {
-                depth: parseInt(depth, 10) || 2,
-                breadth: parseInt(breadth, 10) || 3
+                depth,
+                breadth,
+                visibility: isPublic ? 'public' : 'private'
             }
         });
 
@@ -461,14 +460,15 @@ export async function executeResearch(options = {}) {
         const controller = new ResearchEngine(engineConfig);
 
         // --- Run Research ---
-        effectiveOutput('Starting research pipeline...', true);
+    effectiveOutput(`Starting research pipeline... (depth ${depth}, breadth ${breadth}, ${isPublic ? 'public' : 'private'} visibility)`, true);
         telemetryChannel?.emitStatus({
             stage: 'running',
             message: 'Executing research pipeline.',
             meta: {
-                depth: parseInt(depth, 10) || 2,
-                breadth: parseInt(breadth, 10) || 3,
-                query: enhancedQuery.original
+                depth,
+                breadth,
+                query: enhancedQuery.original,
+                visibility: isPublic ? 'public' : 'private'
             }
         });
         telemetryChannel?.emitThought({
@@ -483,8 +483,8 @@ export async function executeResearch(options = {}) {
 
         const results = await controller.research({
             query: enhancedQuery,
-            depth: parseInt(depth, 10) || 2,
-            breadth: parseInt(breadth, 10) || 3
+            depth,
+            breadth
         });
 
         // --- Output Results ---

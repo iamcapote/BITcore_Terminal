@@ -9,6 +9,8 @@ import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
 import { resetChatPersonaController } from '../features/chat/index.mjs';
 let tempDir;
 let originalStorageDir;
+let originalBraveKey;
+let originalVeniceKey;
 
 beforeEach(async () => {
   if (!tempDir) {
@@ -16,6 +18,10 @@ beforeEach(async () => {
   }
   originalStorageDir = process.env.BITCORE_STORAGE_DIR;
   process.env.BITCORE_STORAGE_DIR = tempDir;
+  originalBraveKey = process.env.BRAVE_API_KEY;
+  originalVeniceKey = process.env.VENICE_API_KEY;
+  process.env.BRAVE_API_KEY = 'test-brave-key';
+  process.env.VENICE_API_KEY = 'test-venice-key';
   resetChatPersonaController();
 });
 
@@ -29,6 +35,16 @@ afterEach(async () => {
   if (tempDir) {
     await fs.rm(tempDir, { recursive: true, force: true });
     tempDir = undefined;
+  }
+  if (originalBraveKey === undefined) {
+    delete process.env.BRAVE_API_KEY;
+  } else {
+    process.env.BRAVE_API_KEY = originalBraveKey;
+  }
+  if (originalVeniceKey === undefined) {
+    delete process.env.VENICE_API_KEY;
+  } else {
+    process.env.VENICE_API_KEY = originalVeniceKey;
   }
 });
 

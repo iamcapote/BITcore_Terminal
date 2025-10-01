@@ -2,38 +2,227 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>GitHub Research Sync</title>
-  <link rel="stylesheet" href="/css/github-sync.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitHub Research Sync | BITwiki</title>
+  <script src="/theme-preload.js"></script>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <nav>
-    <a href="/">Terminal</a> |
-    <a href="/memory/">Memory</a> |
-    <a href="/prompts/">Prompts</a> |
-    <a href="/research/">Research</a> |
-  <a href="/organizer/">Self Organizer</a> |
-  <b>GitHub Sync</b> |
-  <a href="/chat-history/">Chat History</a>
-  </nav>
-  <h1>GitHub Research Sync</h1>
-  <form id="github-sync-form">
-    <label>Action:
-      <select name="action">
-        <option value="verify">Verify</option>
-        <option value="pull">Pull</option>
-        <option value="push">Push</option>
-        <option value="upload">Upload</option>
-      </select>
-    </label>
-    <label>Repo URL or Path:
-      <input name="repo" required>
-    </label>
-    <label>Files (comma-separated, for upload):
-      <input name="files">
-    </label>
-    <button type="submit">Run</button>
-  </form>
-  <pre id="github-sync-result"></pre>
-  <script src="github-sync.js"></script>
+  <div class="wiki-container">
+    <div class="wiki-header">
+      <div class="wiki-logo"><a href="/">BITwiki</a></div>
+      <div class="wiki-actions">
+        <div class="wiki-nav">
+          <ul>
+            <li><a href="/">Research Terminal</a></li>
+            <li><a href="/memory/">Memory Dashboard</a></li>
+            <li><a href="/prompts/">Prompt Library</a></li>
+            <li><a href="/organizer/">Self Organizer</a></li>
+            <li class="active"><a href="/github-sync/">GitHub Sync</a></li>
+            <li><a href="/research/">My Research</a></li>
+            <li><a href="/chat-history/">Chat History</a></li>
+            <li><a href="/logs/">Logs</a></li>
+          </ul>
+        </div>
+        <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false">
+          <span class="theme-toggle-icon" aria-hidden="true">🌙</span>
+          <span class="theme-toggle-label">Dark mode</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="wiki-content">
+      <h1>GitHub Research Sync</h1>
+      <div class="wiki-article-info">Bridge BITCORE research artifacts with your GitHub repositories.</div>
+
+      <div class="status-chip-row" aria-label="System status overview">
+        <span class="status-chip status-unknown" data-status-key="venice" data-status-label="Venice LLM">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-chip-label" data-status-role="label">Venice LLM</span>
+          <span class="status-chip-message" data-status-role="message">Checking…</span>
+        </span>
+        <span class="status-chip status-unknown" data-status-key="brave" data-status-label="Brave Search">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-chip-label" data-status-role="label">Brave Search</span>
+          <span class="status-chip-message" data-status-role="message">Checking…</span>
+        </span>
+        <span class="status-chip status-unknown" data-status-key="github" data-status-label="GitHub Sync">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-chip-label" data-status-role="label">GitHub Sync</span>
+          <span class="status-chip-message" data-status-role="message">Checking…</span>
+        </span>
+        <span class="status-chip status-unknown" data-status-key="memory" data-status-label="Memory Core">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-chip-label" data-status-role="label">Memory Core</span>
+          <span class="status-chip-message" data-status-role="message">Checking…</span>
+        </span>
+        <span class="status-chip status-unknown" data-presence-key="telemetry" data-status-label="Telemetry Feed">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-chip-label" data-status-role="label">Telemetry Feed</span>
+          <span class="status-chip-message" data-status-role="message">Idle</span>
+        </span>
+        <span class="status-chip status-unknown" data-presence-key="logs" data-status-label="Log Stream">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-chip-label" data-status-role="label">Log Stream</span>
+          <span class="status-chip-message" data-status-role="message">Idle</span>
+        </span>
+      </div>
+
+      <section class="github-sync-overview" aria-label="Sync overview">
+        <p>Coordinate GitHub research automation from a single surface. Verify repository connectivity, browse the remote research tree, pull individual files for editing, and publish updates after reviewing staged changes. The live activity feed mirrors CLI telemetry so you never miss a commit, warning, or error.</p>
+        <ul class="github-sync-guidance">
+          <li><strong>Verify</strong> validates your stored GitHub credentials, repository permissions, and branch status.</li>
+          <li><strong>List</strong> inspects the remote research directory to plan pulls or uploads.</li>
+          <li><strong>Fetch</strong> stages the latest remote copy of an artifact for editing.</li>
+          <li><strong>Upload</strong> publishes the active staged file, while <strong>Push</strong> commits every dirty staged change in one batch.</li>
+        </ul>
+      </section>
+
+      <div class="github-sync-dashboard" data-github-sync-root>
+        <div class="github-sync-grid">
+          <section class="github-sync-panel" aria-labelledby="github-sync-actions-title">
+            <header class="github-sync-panel-header">
+              <h2 id="github-sync-actions-title">Sync Console</h2>
+              <p>Queue an action and inspect the structured response before committing.</p>
+            </header>
+            <form class="github-sync-form" data-sync-form autocomplete="off">
+              <div class="github-sync-field">
+                <label for="github-sync-repo">Repository hint (optional)</label>
+                <input id="github-sync-repo" name="repo" type="text" placeholder="org/repo or https://github.com/org/repo" data-sync-field="repo">
+              </div>
+              <div class="github-sync-field-group">
+                <div class="github-sync-field">
+                  <label for="github-sync-branch">Branch override</label>
+                  <input id="github-sync-branch" name="branch" type="text" placeholder="main" data-sync-field="branch">
+                </div>
+                <div class="github-sync-field">
+                  <label for="github-sync-path">Target path</label>
+                  <input id="github-sync-path" name="path" type="text" placeholder="research/notes.md" data-sync-field="path">
+                </div>
+              </div>
+              <div class="github-sync-field">
+                <label for="github-sync-message">Commit message</label>
+                <input id="github-sync-message" name="message" type="text" placeholder="Describe the changes" data-sync-field="message">
+              </div>
+              <div class="github-sync-actions">
+                <button type="button" class="memory-primary-btn" data-sync-action="verify">Verify credentials</button>
+                <button type="button" class="memory-secondary-btn" data-sync-action="list">List directory</button>
+                <button type="button" class="memory-secondary-btn" data-sync-action="fetch">Fetch file</button>
+                <button type="button" class="memory-secondary-btn" data-sync-action="upload">Upload active file</button>
+                <button type="button" class="memory-secondary-btn" data-sync-action="push">Push dirty files</button>
+              </div>
+              <p class="github-sync-help">Upload/Push operate on the staging panel. Stage a file (or edit an existing staged entry) before publishing.</p>
+            </form>
+
+            <div class="github-sync-result" data-sync-result>
+              <div class="github-sync-result__status" data-sync-status>Idle — awaiting action.</div>
+              <div class="github-sync-result__meta" data-sync-meta></div>
+              <pre class="github-sync-result__output" data-sync-output aria-live="polite">Choose an action to see structured responses.</pre>
+            </div>
+          </section>
+
+          <section class="github-sync-panel github-sync-panel--staging" aria-labelledby="github-sync-staging-title" data-staging-root>
+            <header class="github-sync-panel-header">
+              <h2 id="github-sync-staging-title">Staging Workspace</h2>
+              <p>Collect files for review, edit content, and decide what to publish.</p>
+            </header>
+            <div class="github-sync-staging-toolbar">
+              <button type="button" class="memory-secondary-btn" data-staging-action="stage-blank">New staged file</button>
+              <button type="button" class="memory-secondary-btn" data-staging-action="refresh-active">Reload active remote</button>
+              <button type="button" class="memory-secondary-btn" data-staging-action="remove-active" data-staging-remove disabled>Remove active</button>
+              <button type="button" class="memory-secondary-btn" data-staging-action="clear-all">Clear staging</button>
+            </div>
+            <div class="github-sync-staging-grid">
+              <div class="github-sync-staging-column">
+                <section class="github-sync-remote-browser" aria-labelledby="github-sync-remote-title" data-remote-browser>
+                  <header class="github-sync-remote-toolbar" data-remote-actions>
+                    <div class="github-sync-remote-path" data-remote-path>Remote: —</div>
+                    <div class="github-sync-remote-buttons">
+                      <button type="button" class="memory-secondary-btn" data-remote-action="refresh">Refresh</button>
+                      <button type="button" class="memory-secondary-btn" data-remote-action="up">Up one level</button>
+                    </div>
+                  </header>
+                  <ul class="github-sync-remote-list" data-remote-list aria-live="polite"></ul>
+                  <div class="github-sync-remote-empty" data-remote-empty>Run “List directory” to browse the remote repository.</div>
+                </section>
+
+                <section class="github-sync-staging-list" aria-labelledby="github-sync-staging-list-title">
+                  <header class="github-sync-staging-list-header">
+                    <h3 id="github-sync-staging-list-title">Staged files</h3>
+                    <p>Files staged for push/upload. Select one to edit.</p>
+                  </header>
+                  <ul data-staging-list></ul>
+                </section>
+              </div>
+              <div class="github-sync-staging-editor">
+                <div class="github-sync-field">
+                  <label for="github-sync-active-path">Active path</label>
+                  <input id="github-sync-active-path" type="text" data-staging-path readonly>
+                </div>
+                <div class="github-sync-staging-meta">
+                  <span data-staging-origin>Origin: —</span>
+                  <span data-staging-dirty>Clean</span>
+                  <span data-staging-updated hidden>Updated: —</span>
+                </div>
+                <textarea class="github-sync-staging-editor__textarea" data-staging-editor rows="14" placeholder="Select a staged file or fetch a remote artifact to begin editing." aria-label="Staged file contents"></textarea>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section class="github-sync-panel github-sync-panel--activity" aria-labelledby="github-sync-activity-title" data-activity-root>
+          <header class="github-sync-panel-header">
+            <h2 id="github-sync-activity-title">Live Activity Feed</h2>
+            <p>Monitor verification, pulls, uploads, and pushes streamed from the GitHub activity channel.</p>
+            <div class="activity-status" data-activity-status data-state="offline">
+              <span class="activity-status__dot" aria-hidden="true"></span>
+              <span class="activity-status__label">Offline</span>
+              <span class="activity-status__hint"></span>
+            </div>
+          </header>
+
+          <div class="activity-controls">
+            <div class="activity-buttons">
+              <button type="button" class="memory-secondary-btn" data-activity-action="refresh">Refresh snapshot</button>
+              <button type="button" class="memory-secondary-btn" data-activity-action="export">Export JSON</button>
+            </div>
+            <form class="activity-filters" data-activity-filters>
+              <fieldset>
+                <legend class="sr-only">Filter by severity</legend>
+                <label><input type="checkbox" value="error" data-activity-level> Errors</label>
+                <label><input type="checkbox" value="warn" data-activity-level> Warnings</label>
+                <label><input type="checkbox" value="info" data-activity-level> Info</label>
+                <label><input type="checkbox" value="debug" data-activity-level> Debug</label>
+              </fieldset>
+              <label class="activity-filter__sample">Sample
+                <select data-activity-sample>
+                  <option value="1">Every entry</option>
+                  <option value="2">Every 2nd</option>
+                  <option value="3">Every 3rd</option>
+                  <option value="5">Every 5th</option>
+                </select>
+              </label>
+            </form>
+            <div class="activity-search">
+              <label for="github-sync-activity-search">Search messages</label>
+              <input id="github-sync-activity-search" type="search" placeholder="Filter activity…" data-activity-search>
+            </div>
+          </div>
+
+          <div class="activity-stats" data-activity-stats aria-live="polite"></div>
+          <ul class="activity-list" data-activity-list aria-live="polite"></ul>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script src="/webcomm.js"></script>
+  <script src="/status/status.constants.js"></script>
+  <script src="/status/status.dom.js"></script>
+  <script src="/status/status.presence.js"></script>
+  <script src="/status/status.client.js"></script>
+  <script src="/status/status.bootstrap.js"></script>
+  <script src="/theme-toggle.js"></script>
+  <script type="module" src="/github-sync/modules/dashboard.js"></script>
 </body>
 </html>

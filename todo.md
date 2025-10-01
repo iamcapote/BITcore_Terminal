@@ -16,20 +16,19 @@
     *   [COMPLETED] Add robust error handling for config retrieval and upload.
     *   [COMPLETED] Handle nested password prompt for GitHub token if needed.
 *   [COMPLETED] Ensure `promptData` (like `suggestedFilename`) is correctly set in `executeResearch` before prompting for post-research action.
+*   [COMPLETED] Web-CLI `startResearchFromChat` now pulls Brave/Venice keys from the single-user profile with environment fallbacks (`app/commands/chat.cli.mjs`).
+*   [COMPLETED] WebSocket `exitMemory` reuses injected output/error handlers and re-enables input on completion (`app/commands/chat.cli.mjs`).
+*   [COMPLETED] Hardened `handleChatMessage` prompt/error flow for memory and LLM operations (`app/features/research/routes.mjs`).
+*   [COMPLETED] Guarded `generateQueries` input contract to prevent undefined arguments in `/research test` (`app/features/ai/research.providers.mjs`).
+*   [COMPLETED] Implemented `userManager.checkApiKeys`/`testApiKeys` and `/keys stat` alias resolution (`app/features/auth/user-manager.mjs`, `app/commands/keys.cli.mjs`).
+*   [COMPLETED] `/diagnose` consumes environment-backed API checks without password prompts and uses the single-user compatibility shim (`app/commands/diagnose.cli.mjs`, `app/features/auth/user-manager.mjs`).
+*   [COMPLETED] Centralised Brave/Venice API-key resolution via `app/utils/api-keys.mjs` and refactored chat/research flows to consume the helper.
 
 ---
 
 
 ## High-Priority Bug Backlog
 
-- [ ] Web-CLI: review `startResearchFromChat` API-key handling + chat integration.
-- [ ] Ensure `exitMemory` uses correct output/error handlers in WebSocket context.
-- [ ] Harden `handleChatMessage` input-state + error flow around memory & LLM.
-- [ ] `generateQueries` receives `undefined` args in `/research test` (investigate call-site).
-- [ ] Implement `userManager.checkApiKeys` and `userManager.testApiKeys`. (Partially done via `hasApiKey`/`hasGitHubConfig`, but full test logic needed).
-- [ ] Fix `/keys stat` alias mapping (if still needed after `check` implementation).
-- [ ] Pass password through `/diagnose` → `checkApi`.
-- [ ] Centralise provider API-key injection (`BraveSearchProvider`, etc.).
 - [ ] Double-check `enableClientInput` / `disableClientInput` pairing across all flows (prompts, errors, success).
 - [ ] Add GitHub-token tests to `/keys test`, `/diagnose`.
 - [ ] Web-CLI: full `/research`-in-chat flow (password, memory, prompts).
@@ -72,10 +71,10 @@
 
 
 - [ ] **Storage Command (`/storage`):**
-    - [ ] Implement `/storage save <filename.md>`: Takes the content stored in `session.currentResearchResult` and uploads it to GitHub using the configured settings and the provided filename. Requires login and potentially password for GitHub token.
-    - [ ] Implement `/storage list`: Lists files in the configured GitHub repo's research directory (requires login/token).
-    - [ ] Implement `/storage get <filename.md>`: Downloads a specific file from the GitHub repo (requires login/token).
-    - [ ] Implement `/storage delete <filename.md>`: Deletes a specific file from the GitHub repo (requires login/token, potentially admin role).
+    - [ ] Implement `/storage save <filename.md>`: Takes the content stored in `session.currentResearchResult` and uploads it to GitHub using the configured settings and the provided filename. Requires a configured GitHub token (single-user profile or environment).
+    - [ ] Implement `/storage list`: Lists files in the configured GitHub repo's research directory (requires GitHub token).
+    - [ ] Implement `/storage get <filename.md>`: Downloads a specific file from the GitHub repo (requires GitHub token).
+    - [ ] Implement `/storage delete <filename.md>`: Deletes a specific file from the GitHub repo (requires GitHub token, optionally guarded by feature flag).
 - [ ] **Export Command (`/export`):**
     - [ ] Implement `/export`: Triggers a download of the content stored in `session.currentResearchResult` using the `download_file` WebSocket message.
 - [ ] **Refine Error Handling:** Improve consistency and detail in error messages sent to the client.

@@ -43,7 +43,8 @@ This application automates research using AI-driven querying and summarization. 
    - Real-time output and input via WebSockets, mirroring the console CLI (`app/public/terminal.js`, `app/public/webcomm.js`).
    - Handles commands (`/research`, `/chat`, `/keys`, etc.) parsed client-side (`app/public/command-processor.js`) and sent to the backend via structured messages (`command`, `chat-message`, `input`).
    - Supports interactive prompts initiated by the backend (for passwords, research parameters, or post-research actions) via `wsPrompt` (`app/features/research/routes.mjs`) and the corresponding handlers in `app/public/terminal.js`.
-   - Manages distinct interaction modes ('command', 'chat', 'research', 'prompt') to route user input correctly. The server drives state changes via messages (`mode_change`, `chat-ready`, `prompt`, etc.), and the client toggles input state when it receives `enable_input` / `disable_input` events.
+   - Manages distinct interaction modes ('command', 'chat', 'research', 'prompt') to route user input correctly. The server now emits `disable_input` when a message begins processing and only re-enables the UI through the dedicated `enableClientInput` helper once the handler confirms it is safe to resume typing. This guarantees that prompts and long-running commands do not leave the client stuck in the wrong state.
+   - Session metadata (user clone, cached password, telemetry emitters) lives in `activeChatSessions`; lifecycle hooks (`close`, `error`, inactivity cleanup) clear secrets and tear down telemetry so reconnects always start from a clean slate.
 
 3. **Research Engine**
    - Orchestrated by `app/infrastructure/research/research.engine.mjs` (multi-path coordination) and `app/infrastructure/research/research.path.mjs` (single-path execution).
@@ -240,6 +241,7 @@ Authentication is removed. The system operates as a single global user:
 2. **Key Checks**
    - `/keys check` or `/keys stat`: Lists configuration status for Brave, Venice, and GitHub.
    - `/keys test`: Attempts to use keys/token to validate them against the respective APIs.
+   - Internally, credential lookups flow through `app/utils/api-keys.mjs` so every feature (chat, research, diagnostics) shares the same session/profile/env fallback chain.
 
 3. **Encryption**
    - AES-256-GCM with salts per user (`app/features/auth/encryption.mjs`).
@@ -379,6 +381,7 @@ The chat system enables interactive conversations with an AI, featuring context 
 ## Security Considerations
 - **API Key Protection**: In single-user mode, keys are stored in plain JSON. Prefer environment variables in production or secure the storage directory.
 - **Password Security**: Passwords are not used in single-user mode.
+- **Session Hygiene**: WebSocket sessions cache decrypted credentials only long enough to satisfy the in-flight command. On socket close, error, or idle timeout `cleanupInactiveSessions` clears `session.password`, research artifacts, and telemetry hooks before dropping the session from `activeChatSessions`.
 - **Server Hardening**: Use standard practices (firewall, non-root user, updates).
 - **HTTPS**: Essential in production.
 - **Input Sanitization**: Query cleaning (`app/utils/research.clean-query.mjs`) exists, but review command parsing and inputs for potential injection risks.

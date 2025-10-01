@@ -4,25 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat History | BITwiki</title>
+    <script src="/theme-preload.js"></script>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <div class="wiki-container">
         <div class="wiki-header">
             <div class="wiki-logo"><a href="/">BITwiki</a></div>
-            <div class="wiki-nav">
-                <ul>
-                    <li><a href="/">Research Terminal</a></li>
-                    <li><a href="/memory/">Memory Dashboard</a></li>
-                    <li><a href="/prompts/">Prompt Library</a></li>
-                    <li><a href="/organizer/">Self Organizer</a></li>
-                    <li><a href="/github-sync/">GitHub Sync</a></li>
-                    <li><a href="/research/">My Research</a></li>
-                    <li class="active"><a href="/chat-history/">Chat History</a></li>
-                    <li><a href="https://bitwiki.org/wiki/Main_Page">Main Wiki</a></li>
-                    <li><a href="https://psychophilosophy.gitbook.io/corebit-systems/">Learn More</a></li>
-                    <li><a href="https://hub.bitwiki.org/">Join The Community</a></li>
-                </ul>
+            <div class="wiki-actions">
+                <div class="wiki-nav">
+                    <ul>
+                        <li><a href="/">Research Terminal</a></li>
+                        <li><a href="/memory/">Memory Dashboard</a></li>
+                        <li><a href="/prompts/">Prompt Library</a></li>
+                        <li><a href="/organizer/">Self Organizer</a></li>
+                        <li><a href="/github-sync/">GitHub Sync</a></li>
+                        <li><a href="/research/">My Research</a></li>
+                        <li class="active"><a href="/chat-history/">Chat History</a></li>
+                        <li><a href="/logs/">Logs</a></li>
+                    </ul>
+                </div>
+                <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false">
+                    <span class="theme-toggle-icon" aria-hidden="true">🌙</span>
+                    <span class="theme-toggle-label">Dark mode</span>
+                </button>
             </div>
         </div>
 
@@ -111,7 +116,12 @@
     </div>
 
     <script src="/webcomm.js"></script>
-    <script src="/status.js"></script>
+    <script src="/status/status.constants.js"></script>
+    <script src="/status/status.dom.js"></script>
+    <script src="/status/status.presence.js"></script>
+    <script src="/status/status.client.js"></script>
+    <script src="/status/status.bootstrap.js"></script>
+    <script src="/theme-toggle.js"></script>
     <script src="/chat-history/chat-history.js"></script>
 </body>
 </html>

@@ -118,6 +118,11 @@ class UserManager {
 		return this.currentUser;
 	}
 
+	async getUserCount() {
+		if (!this.currentUser) await this.initialize();
+		return 1;
+	}
+
 	async getFeatureFlags() {
 		if (!this.currentUser) await this.initialize();
 		return { ...(this.currentUser.features || {}) };

@@ -4,27 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Research Library | BITwiki</title>
-    <!-- Corrected path to main stylesheet -->
+    <script src="/theme-preload.js"></script>
     <link rel="stylesheet" href="/style.css">
-    <!-- Removed inline styles, now in style.css -->
 </head>
 <body>
     <div class="wiki-container">
         <div class="wiki-header">
-            <div class="wiki-logo">BITwiki</div>
-            <div class="wiki-nav">
-                <ul>
-                    <li><a href="/">Research Terminal</a></li>
-                    <li><a href="/memory/">Memory Dashboard</a></li>
-                    <li><a href="/prompts/">Prompt Library</a></li>
-                    <li><a href="/organizer/">Self Organizer</a></li>
-                    <li><a href="/github-sync/">GitHub Sync</a></li>
-                    <li class="active"><a href="/research/">My Research</a></li>
-                    <li><a href="/chat-history/">Chat History</a></li>
-                    <li><a href="https://bitwiki.org/wiki/Main_Page">Main Page</a></li>
-                    <li><a href="https://bitwiki.org/wiki/Special:Random">Random Article</a></li>
-                    <li><a href="https://bitwiki.org/wiki/Main_Page">About BITwiki</a></li>
-                </ul>
+            <div class="wiki-logo"><a href="/">BITwiki</a></div>
+            <div class="wiki-actions">
+                <div class="wiki-nav">
+                    <ul>
+                        <li><a href="/">Research Terminal</a></li>
+                        <li><a href="/memory/">Memory Dashboard</a></li>
+                        <li><a href="/prompts/">Prompt Library</a></li>
+                        <li><a href="/organizer/">Self Organizer</a></li>
+                        <li><a href="/github-sync/">GitHub Sync</a></li>
+                        <li class="active"><a href="/research/">My Research</a></li>
+                        <li><a href="/chat-history/">Chat History</a></li>
+                        <li><a href="/logs/">Logs</a></li>
+                    </ul>
+                </div>
+                <button type="button" class="theme-toggle" data-theme-toggle aria-pressed="false">
+                    <span class="theme-toggle-icon" aria-hidden="true">🌙</span>
+                    <span class="theme-toggle-label">Dark mode</span>
+                </button>
             </div>
         </div>
 
@@ -39,6 +42,36 @@
                 <a href="/">BITwiki</a> &raquo;
                 <span>Research Library</span>
             </div>
+
+            <section class="research-preferences" id="research-preferences-panel" aria-labelledby="research-preferences-title">
+                <div class="research-preferences-header">
+                    <h2 id="research-preferences-title">Default research settings</h2>
+                    <p class="research-preferences-description">Tune the fallback depth, breadth, and visibility applied when you launch new research missions from the terminal, scheduler, or API.</p>
+                </div>
+                <form id="research-preferences-form" class="research-preferences-form" novalidate>
+                    <div class="research-preferences-grid">
+                        <label class="research-preferences-field" for="research-default-depth">
+                            <span class="research-preferences-label">Default depth</span>
+                            <input type="number" id="research-default-depth" name="depth" min="1" max="6" required>
+                            <span class="research-preferences-help">How many hops deep each branch explores.</span>
+                        </label>
+                        <label class="research-preferences-field" for="research-default-breadth">
+                            <span class="research-preferences-label">Default breadth</span>
+                            <input type="number" id="research-default-breadth" name="breadth" min="1" max="6" required>
+                            <span class="research-preferences-help">How many sibling branches spawn per depth level.</span>
+                        </label>
+                        <label class="research-preferences-toggle" for="research-default-visibility">
+                            <input type="checkbox" id="research-default-visibility" name="isPublic">
+                            <span class="research-preferences-toggle-label">Mark new research runs as public by default</span>
+                        </label>
+                    </div>
+                    <div class="research-preferences-actions">
+                        <button type="submit" class="research-preferences-save">Save changes</button>
+                        <button type="button" id="research-preferences-reset" class="research-preferences-reset">Reset to defaults</button>
+                        <span id="research-preferences-status" class="research-preferences-status" role="status" aria-live="polite"></span>
+                    </div>
+                </form>
+            </section>
 
             <!-- User indicator -->
             <div class="user-indicator">
@@ -260,7 +293,28 @@
     </div>
 
     <script src="/webcomm.js"></script>
-    <script src="/status.js"></script>
+    <script src="/status/status.constants.js"></script>
+    <script src="/status/status.dom.js"></script>
+    <script src="/status/status.presence.js"></script>
+    <script src="/status/status.client.js"></script>
+    <script src="/status/status.bootstrap.js"></script>
+    <script src="/theme-toggle.js"></script>
+    <script src="/research/research.preferences.js"></script>
+    <script src="/research/research.state.js"></script>
+    <script src="/research/research.utils.js"></script>
+    <script src="/research/render/status-progress.js"></script>
+    <script src="/research/render/thoughts.js"></script>
+    <script src="/research/render/memory.js"></script>
+    <script src="/research/render/suggestions.js"></script>
+    <script src="/research/render/summary.js"></script>
+    <script src="/research/render/stats.js"></script>
+    <script src="/research/render/reports.js"></script>
+    <script src="/research/research.render.github.js"></script>
+    <script src="/research/research.telemetry.js"></script>
+    <script src="/research/research.prompts.js"></script>
+    <script src="/research/research.github.js"></script>
+    <script src="/research/research.ws.js"></script>
+    <script src="/research/research.interactions.js"></script>
     <script src="/research/research.js"></script>
     <!-- Placeholder for Markdown rendering library -->
     <!-- <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script> -->
