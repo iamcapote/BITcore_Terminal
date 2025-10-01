@@ -30,27 +30,13 @@
 ## High-Priority Bug Backlog
 
 - [ ] Double-check `enableClientInput` / `disableClientInput` pairing across all flows (prompts, errors, success).
-- [ ] Add GitHub-token tests to `/keys test`, `/diagnose`.
+- [x] Add GitHub-token tests to `/keys test`, `/diagnose`.
 - [ ] Web-CLI: full `/research`-in-chat flow (password, memory, prompts).
 - [ ] Rate-limit WebSocket & add CSRF (if forms introduced).
 - [ ] **(Testing)** Verify GitHub upload works after user sets a valid token with `repo` scope.
 - [ ] **(Testing)** Verify public profile restrictions for `/research`, `/keys`, and `/chat`.
 - [ ] **(Testing)** Verify `/chat` command works correctly for logged-in users in Web-CLI.
-
-
----
-
-## Medium Priority
-
-*   Implement persistent storage for research results beyond session/GitHub (e.g., local DB or files tied to user).
-    *   Add `/research list` command.
-    *   Add `/research download <id>` command.
-*   Refactor `executeResearch` to reduce complexity.
-*   Add more robust input validation for command arguments (e.g., depth/breadth ranges).
-*   Implement basic API token usage tracking (e.g., count calls per session).
-*   Review and enhance security aspects (input sanitization, rate limiting).
-
----
+- [ ] Is the app ready for live production? live test? 
 
 
 ### Chat & Memory
@@ -59,33 +45,13 @@
 - [ ] Persist sessions beyond memory-store (DB/kv).
 
 
----
-
-
 ### Infrastructure / Refactor
 
-- [ ] Consolidate command-execution logic (`start.mjs`, `routes.mjs`).
+- [ ] Consolidate command-execution logic (`start.mjs`, `routes.mjs`). Obviously without hitting LoC limits.
 - [ ] Merge/replace duplicate arg-parsers.
 - [ ] Replace ad-hoc `console.*` with structured handlers everywhere.
 - [ ] Accept shared `LLMClient` in `research.providers.mjs`.
 
-
-- [ ] **Storage Command (`/storage`):**
-    - [ ] Implement `/storage save <filename.md>`: Takes the content stored in `session.currentResearchResult` and uploads it to GitHub using the configured settings and the provided filename. Requires a configured GitHub token (single-user profile or environment).
-    - [ ] Implement `/storage list`: Lists files in the configured GitHub repo's research directory (requires GitHub token).
-    - [ ] Implement `/storage get <filename.md>`: Downloads a specific file from the GitHub repo (requires GitHub token).
-    - [ ] Implement `/storage delete <filename.md>`: Deletes a specific file from the GitHub repo (requires GitHub token, optionally guarded by feature flag).
-- [ ] **Export Command (`/export`):**
-    - [ ] Implement `/export`: Triggers a download of the content stored in `session.currentResearchResult` using the `download_file` WebSocket message.
-- [ ] **Refine Error Handling:** Improve consistency and detail in error messages sent to the client.
-- [ ] **Improve Progress Reporting:** Make progress updates more granular, especially during LLM calls and search result processing within `ResearchPath`.
-- [ ] **CLI Mode Parity:** Ensure CLI mode (`executeResearch` without WebSocket) handles results appropriately (e.g., prints markdown to console).
-- [ ] **Configuration Management:** Consider a more robust way to manage API keys and GitHub settings beyond simple environment variables or user prompts (e.g., encrypted config file).
-- [ ] **Testing:** Add unit and integration tests for the research engine, command handlers, and WebSocket interactions.
-- [ ] **Documentation:** Update `/help` command text to mirror current docs/features.
-
-
----
 
 
 ###  Scheduler for Research Missions
@@ -108,12 +74,45 @@ cron.schedule('0 * * * *', async () => {
 });
 ```
 
-# Future
 
-- [ ] Length of files. According to #AGENTS.md , the max size for files should be 300-500 LoC . We need to review file by file for the entire codebase to verify it is following this rule. the more modular and micro-architecture structure the better it is for the developers that debug. First start by identifying the files to fix and then related files that are connectedd to this long file. since files are connected and reference each other you have to edit meticulously and intelligently. You can separate files by nodes and modules and divide everything into micro structures (routers, orchestrators, managers, systems) . One big example file that needs a lot of tender love and care is the terminal file... we should be dividing this into several nodes so that this function is better displayed. 
+---
 
-- [ ] Related to the last item -> each file in our codebase should have at the top a descriptive and comprehensive comments written in a precise brief and accurate way that describes at a glance what each file does. Additionally each sections should have their own comments to explain and expandd what each functiion is doing . The text should be as short as possible to be clear but as long as poossible to be precise. Information must be condensed. Comments should be timeless and not hard to undertstand. Comments should not be meta-commentary. signal-posting or similar. It must be straight forward to the point and assume the reader is intelligent. Short precise sentences. Posting fixes and to dos in comments is prohibited, there are files for this. use the appropriate channels. comments are there to explain and describe the code architecture structure functional systemic behaviors and similar. After reading this include a summarized version of this philosophy described in this paragraph in the #AGENTS.md 
+## Next Steps leave for future - Data Handling
 
-- [ ] Every function and every setting should be displayed and easily accessed from both the terminal and the web-cli display . This creates power users that understand EXACTLY what is under the hood. 
+*   Implement persistent storage for research results beyond session/GitHub (e.g., local DB or files tied to user).
+    *   Add `/research list` command.
+    *   Add `/research download <id>` command.
+*   Refactor `executeResearch` to reduce complexity.
+*   Add more robust input validation for command arguments (e.g., depth/breadth ranges).
+*   Implement basic API token usage tracking (e.g., count calls per session).
+*   Review and enhance security aspects (input sanitization, rate limiting).
+
+---
+
+- [ ] **Storage Command (`/storage`):**
+    - [ ] Implement `/storage save <filename.md>`: Takes the content stored in `session.currentResearchResult` and uploads it to GitHub using the configured settings and the provided filename. Requires a configured GitHub token (single-user profile or environment).
+    - [ ] Implement `/storage list`: Lists files in the configured GitHub repo's research directory (requires GitHub token).
+    - [ ] Implement `/storage get <filename.md>`: Downloads a specific file from the GitHub repo (requires GitHub token).
+    - [ ] Implement `/storage delete <filename.md>`: Deletes a specific file from the GitHub repo (requires GitHub token, optionally guarded by feature flag).
+- [ ] **Export Command (`/export`):**
+    - [ ] Implement `/export`: Triggers a download of the content stored in `session.currentResearchResult` using the `download_file` WebSocket message.
+- [ ] **Refine Error Handling:** Improve consistency and detail in error messages sent to the client.
+- [ ] **Improve Progress Reporting:** Make progress updates more granular, especially during LLM calls and search result processing within `ResearchPath`.
+- [ ] **CLI Mode Parity:** Ensure CLI mode (`executeResearch` without WebSocket) handles results appropriately (e.g., prints markdown to console).
+- [ ] **Configuration Management:** Consider a more robust way to manage API keys and GitHub settings beyond simple environment variables or user prompts (e.g., encrypted config file).
+- [ ] **Testing:** Add unit and integration tests for the research engine, command handlers, and WebSocket interactions.
+- [ ] **Documentation:** Update `/help` command text to mirror current docs/features.
+
+---
+
+
+---
+
+Important to remember:
+- Length of files. According to #AGENTS.md , the max size for files should be 300-500 LoC . We need to review file by file for the entire codebase to verify it is following this rule. the more modular and micro-architecture structure the better it is for the developers that debug. First start by identifying the files to fix and then related files that are connectedd to this long file. since files are connected and reference each other you have to edit meticulously and intelligently. You can separate files by nodes and modules and divide everything into micro structures (routers, orchestrators, managers, systems) . One big example file that needs a lot of tender love and care is the terminal file... we should be dividing this into several nodes so that this function is better displayed. 
+
+- Related to the last item -> each file in our codebase should have at the top a descriptive and comprehensive comments written in a precise brief and accurate way that describes at a glance what each file does. Additionally each sections should have their own comments to explain and expandd what each functiion is doing . The text should be as short as possible to be clear but as long as poossible to be precise. Information must be condensed. Comments should be timeless and not hard to undertstand. Comments should not be meta-commentary. signal-posting or similar. It must be straight forward to the point and assume the reader is intelligent. Short precise sentences. Posting fixes and to dos in comments is prohibited, there are files for this. use the appropriate channels. comments are there to explain and describe the code architecture structure functional systemic behaviors and similar. After reading this include a summarized version of this philosophy described in this paragraph in the #AGENTS.md 
+
+- Every function and every setting should be displayed and easily accessed from both the terminal and the web-cli display . This creates power users that understand EXACTLY what is under the hood. 
 
 > **Note:** Treat this plan as additive context. Engineers should feel empowered to iterate, split, or parallelize tasks as bandwidth allows while preserving BITcore’s architectural standards and security posture.

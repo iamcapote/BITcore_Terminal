@@ -1,9 +1,26 @@
 /**
- * MCP System Diagnostic Tool
- *
- * This CLI tool provides administrators with system health checks
- * and diagnostics for the MCP application. It can be used to
- * quickly identify and potentially repair common system issues.
+ * Contract
+ * Inputs:
+ *   - options: {
+ *       positionalArgs?: string[];
+ *       session?: object;
+ *       currentUser?: { username: string; role: string };
+ *       output: (line: string | object) => void;
+ *       error: (line: string | object) => void;
+ *       password?: string;
+ *       isWebSocket?: boolean;
+ *     }
+ * Outputs:
+ *   - Promise<{ success: boolean; handled: true; keepDisabled: boolean; results?: Record<string, unknown> }>
+ * Error modes:
+ *   - Permission denied when currentUser.role !== 'admin'.
+ *   - Propagates unexpected errors from filesystem or API probes with context message.
+ * Performance:
+ *   - time: soft 2s, hard 5s (API checks have 7s timeout internally);
+ *     memory: <10 MB (small directory scans only).
+ * Side effects:
+ *   - Reads filesystem metadata; issues HTTP requests to Brave/Venice/GitHub for credential validation.
+ *   - Writes no data; logs structured strings through provided output handler.
  */
 
 import fs from 'fs/promises';
@@ -19,8 +36,10 @@ const RESEARCH_DIR = path.join(USER_FILES_DIR, 'research');
 // --- End Placeholder Constants ---
 
 /**
- * Check API connectivity and keys (Internal helper for executeDiagnose)
- * @param {Object} options - Command options, potentially including session/password/currentUser.
+ * Contract: validates Brave/Venice/GitHub connectivity using configured credentials.
+ * Inputs: { output: Function; error: Function }
+ * Returns: Promise<boolean> where false indicates at least one credential failure.
+ * Errors: surfaces network/timeout errors via error handler and returns false.
  */
 async function checkApi({ output, error }) {
   output('\n--- API Connectivity & Key Check ---');
@@ -30,7 +49,7 @@ async function checkApi({ output, error }) {
 
   const describe = (label, result) => {
     if (result.success === true) {
-    output(`� ${label}: OK`);
+    output(`🟢 ${label}: OK`);
     } else if (result.success === false) {
     output(`🔴 ${label}: Failed (${result.error || 'Unknown error'})`);
     } else {
@@ -53,12 +72,15 @@ async function checkApi({ output, error }) {
 
 
 /**
- * Check file and directory permissions (Internal helper)
+ * Contract: verifies read/write access to critical directories (user storage, research, temp).
+ * Inputs: output Function for logging.
+ * Returns: Promise<boolean> summarising overall accessibility.
  */
 async function checkPermissions(output) {
   // ... (Keep internal checkPermissions function as is) ...
   output('\n🔍 Checking file and directory permissions...');
 
+  let allAccessible = true;
   const checkDirAccess = async (dirPath, dirName) => {
     try {
       await fs.mkdir(dirPath, { recursive: true }); // Ensure directory exists
@@ -67,6 +89,7 @@ async function checkPermissions(output) {
       return true;
     } catch (error) {
       output(`❌ ${dirName} directory (${dirPath}) is not accessible: ${error.message}`);
+      allAccessible = false;
       return false;
     }
   };
@@ -76,15 +99,20 @@ async function checkPermissions(output) {
 
   const tempDir = os.tmpdir();
   await checkDirAccess(tempDir, 'Temporary');
+
+  return allAccessible;
 }
 
 /**
- * Check storage usage and availability (Internal helper)
+ * Contract: reports size of user/research directories and disk capacity.
+ * Inputs: output Function for logging.
+ * Returns: Promise<boolean> true when metrics collected without fatal errors.
  */
 async function checkStorage(output) {
   // ... (Keep internal checkStorage function as is) ...
   output('\n🔍 Checking storage usage and availability...');
 
+  let metricsCollected = true;
   const getDirSize = async (dirPath) => {
     let totalSize = 0;
     try {
@@ -107,6 +135,7 @@ async function checkStorage(output) {
       // Only log error if it's not 'directory not found'
       if (error.code !== 'ENOENT') {
         output(`⚠️ Error calculating size of ${dirPath}: ${error.message}`);
+        metricsCollected = false;
       }
     }
     return totalSize;
@@ -159,18 +188,24 @@ async function checkStorage(output) {
             output(`📊 Disk space (fallback via df on '.'): ${formatBytes(availableKB * 1024)} free / ${formatBytes(totalKB * 1024)} total`);
           } else {
             output("⚠️ Could not parse 'df' output (non-numeric values).");
+            metricsCollected = false;
           }
         } else {
           output("⚠️ Could not parse 'df' output (unexpected format).");
+          metricsCollected = false;
         }
       } else {
         output("⚠️ Could not parse 'df' output (no lines).");
+        metricsCollected = false;
       }
     } catch (dfError) {
       output(`⚠️ Fallback 'df' command failed: ${dfError.message}`);
       output("⚠️ Could not determine disk space.");
+      metricsCollected = false;
     }
   }
+
+  return metricsCollected;
 }
 
 
@@ -266,24 +301,25 @@ export async function executeDiagnose(options) {
              cmdOutput(`[Diagnose] Checking API keys. Password provided: ${providedPassword ? 'Yes' : 'No (will try session cache)'}`);
 
              // Pass the full options object, which includes password, session, and currentUser
-             await checkApi(options);
-             // Note: checkApi logs its own success/failure messages. We don't explicitly track its success here.
-             results.api = { checked: true }; // Mark as checked
+       const apiOk = await checkApi(options);
+       // Note: checkApi logs its own success/failure messages. Track status for rollup.
+       results.api = { checked: true, success: apiOk };
+       overallSuccess = overallSuccess && apiOk;
         }
 
 
         // --- File Permissions ---
         if (runAll || checksToRun.includes('perms') || checksToRun.includes('permissions')) {
-             await checkPermissions(cmdOutput);
-             // Note: checkPermissions logs its own success/failure.
-             results.permissions = { checked: true };
+       const permsOk = await checkPermissions(cmdOutput);
+       results.permissions = { checked: true, success: permsOk };
+       overallSuccess = overallSuccess && permsOk;
         }
 
         // --- Storage ---
         if (runAll || checksToRun.includes('storage')) {
-             await checkStorage(cmdOutput);
-             // Note: checkStorage logs its own success/failure.
-             results.storage = { checked: true };
+       const storageOk = await checkStorage(cmdOutput);
+       results.storage = { checked: true, success: storageOk };
+       overallSuccess = overallSuccess && storageOk;
         }
 
 

@@ -1,3 +1,23 @@
+/**
+ * Contract
+ * Inputs:
+ *   - options: {
+ *       positionalArgs?: string[];
+ *       flags?: Record<string, string | boolean>;
+ *       output?: (line: string | object) => void;
+ *       error?: (line: string | object) => void;
+ *       isWebSocket?: boolean;
+ *     }
+ * Outputs:
+ *   - Promise<{ success: boolean; handled?: boolean; error?: string; keepDisabled: boolean }>
+ * Error modes:
+ *   - Validation errors for missing service/flags are surfaced via error handler with handled=true.
+ *   - Unexpected failures from userManager propagate through handleCliError.
+ * Performance:
+ *   - time: <200ms (local disk writes only); memory: trivial (<1 MB).
+ * Side effects:
+ *   - Reads/writes user credential store via userManager; logs to provided output handler.
+ */
 import { userManager } from '../features/auth/user-manager.mjs';
 import { handleCliError, logCommandStart } from '../utils/cli-error-handler.mjs';
 
