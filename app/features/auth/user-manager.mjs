@@ -4,6 +4,15 @@ import os from 'os';
 import fetch from 'node-fetch';
 import { Octokit } from '@octokit/rest';
 import { ensureDir } from '../../utils/research.ensure-dir.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+/**
+ * Why: Persist the single-operator profile while exposing hook points for optional multi-user adapters.
+ * What: Loads and saves credentials, feature flags, and API keys from disk with environment fallbacks, and
+ *       brokers access to pluggable user-directory adapters for self-hosted deployments.
+ * How: Initializes a JSON-backed store, enforces immutability at boundaries, and offers guarded registration
+ *       helpers for optional directory adapters without impacting the single-user baseline.
+ */
 
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
@@ -38,6 +47,8 @@ const DEFAULT_FEATURE_FLAGS = Object.freeze({
 const DEFAULT_STORAGE_DIR = process.env.BITCORE_STORAGE_DIR
   || path.join(os.homedir(), '.bitcore-terminal');
 const USER_FILE_NAME = 'global-user.json';
+
+const moduleLogger = createModuleLogger('auth.user-manager');
 
 const DEFAULT_USER = {
   username: DEFAULT_USERNAME,
@@ -81,6 +92,7 @@ class UserManager {
 		this.storageDir = DEFAULT_STORAGE_DIR;
 		this.userFile = path.join(this.storageDir, USER_FILE_NAME);
 		this.currentUser = null;
+		this.userDirectoryAdapter = null;
 	}
 
 	async initialize() {
@@ -92,8 +104,11 @@ class UserManager {
 			if (err.code === 'ENOENT') {
 				this.currentUser = mergeUserData(DEFAULT_USER);
 				await fs.writeFile(this.userFile, JSON.stringify(this.currentUser, null, 2));
-			} else {
-				console.warn(`[UserManager] Failed to read user file, using defaults: ${err.message}`);
+					} else {
+						moduleLogger.warn('Failed to read user file, using defaults.', {
+							message: err.message,
+							stack: err.stack || null
+						});
 				this.currentUser = mergeUserData(DEFAULT_USER);
 			}
 		}
@@ -309,6 +324,32 @@ class UserManager {
 		}
 
 		return results;
+	}
+
+	registerUserDirectoryAdapter(adapter) {
+		if (!adapter || typeof adapter !== 'object') {
+			throw new Error('User directory adapter must be an object with list/create/delete functions.');
+		}
+		const requiredFns = ['listUsers', 'createUser', 'deleteUser'];
+		requiredFns.forEach((fnName) => {
+			if (typeof adapter[fnName] !== 'function') {
+				throw new Error(`User directory adapter is missing required function: ${fnName}`);
+			}
+		});
+		this.userDirectoryAdapter = adapter;
+		return Object.freeze({ registered: true });
+	}
+
+	clearUserDirectoryAdapter() {
+		this.userDirectoryAdapter = null;
+	}
+
+	getUserDirectoryAdapter() {
+		return this.userDirectoryAdapter;
+	}
+
+	hasUserDirectoryAdapter() {
+		return !!this.userDirectoryAdapter;
 	}
 }
 

@@ -25,9 +25,13 @@
 
 import path from 'path';
 
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('research.markdown');
+
 const defaultLogger = {
-  info: console.log.bind(console),
-  error: console.error.bind(console)
+  info: (message, meta) => moduleLogger.info(message, meta),
+  error: (message, meta) => moduleLogger.error(message, meta)
 };
 
 export async function buildResearchMarkdown(params) {

@@ -1,9 +1,27 @@
 /**
- * CLI Runner - Utility for running CLI commands programmatically
+ * CLI Runner Utility
+ * Why: Provide reusable helpers to execute terminal commands programmatically and via an interactive REPL.
+ * What: Exposes a programmatic `run` helper and an interactive CLI loop that routes input to registered commands.
+ * How: Parses command strings, delegates to command handlers, and emits structured logs for default output paths.
  */
 
 import { commands, parseCommandArgs, getHelpText } from '../commands/index.mjs';
 import readline from 'readline';
+import { createModuleLogger } from './logger.mjs';
+
+const moduleLogger = createModuleLogger('utils.cli-runner');
+
+function defaultOutput(message) {
+  moduleLogger.info(message);
+}
+
+function defaultError(message) {
+  moduleLogger.error(message);
+}
+
+function defaultExit() {
+  moduleLogger.info('Interactive CLI session exited.');
+}
 
 /**
  * Run a CLI command programmatically
@@ -45,6 +63,8 @@ export async function run(commandStr, options = {}) {
   } catch (error) {
     if (options.onError) {
       options.onError(error.message);
+    } else {
+      defaultError(error.message);
     }
     return { success: false, error: error.message };
   }
@@ -64,8 +84,8 @@ export function interactiveCLI(options = {}) {
     terminal: true
   });
 
-  const onOutput = options.onOutput || console.log;
-  const onExit = options.onExit || (() => {});
+  const onOutput = typeof options.onOutput === 'function' ? options.onOutput : defaultOutput;
+  const onExit = typeof options.onExit === 'function' ? options.onExit : defaultExit;
 
   rl.on('line', async (input) => {
     if (input.startsWith('/')) {
@@ -78,8 +98,8 @@ export function interactiveCLI(options = {}) {
           onOutput(`Error executing command: ${error.message}`);
         }
       } else if (command === 'help') {
-        const helpCommand = options.positionalArgs[0];
-        logInfo(getHelpText(helpCommand));
+        const helpCommand = options.positionalArgs?.[0] ?? null;
+        onOutput(getHelpText(helpCommand));
         return;
       } else if (command === 'exit' || command === 'quit') {
         if (onExit) {
@@ -100,9 +120,7 @@ export function interactiveCLI(options = {}) {
   });
 
   rl.on('close', () => {
-    if (onExit) {
-      onExit();
-    }
+    onExit();
     process.exit(0);
   });
 

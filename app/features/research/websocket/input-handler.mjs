@@ -6,23 +6,40 @@
  */
 
 import { safeSend } from '../../../utils/websocket.utils.mjs';
+import { createModuleLogger } from '../../../utils/logger.mjs';
 import { getGitHubResearchSyncController } from '../research.github-sync.controller.mjs';
 import { wsErrorHelper, wsOutputHelper } from './client-io.mjs';
+
+const inputLogger = createModuleLogger('research.websocket.input-handler');
 
 export async function handleInputMessage(ws, message, session) {
   const inputValue = message.value;
   let enableInputAfter = false;
   session.lastActivity = Date.now();
 
-  console.log(`[WebSocket] Processing input response (Session ${session.sessionId}): ${session.promptIsPassword ? '******' : inputValue}`);
+  inputLogger.debug('Processing input response.', {
+    sessionId: session.sessionId,
+    promptPending: Boolean(session.pendingPromptResolve),
+    isPassword: session.promptIsPassword,
+    valuePreview: session.promptIsPassword ? '******' : inputValue
+  });
 
   if (!session.pendingPromptResolve) {
-    console.warn(`[WebSocket] Received input when no prompt was pending (Session ${session.sessionId}). Input: ${inputValue}`);
+    inputLogger.warn('Received input when no prompt was pending.', {
+      sessionId: session.sessionId,
+      valuePreview: inputValue
+    });
     wsErrorHelper(ws, 'Received unexpected input. No prompt was active.', true);
     return false;
   }
 
-  console.log(`[WebSocket] Handling input message. Pending prompt: ${!!session.pendingPromptResolve}, Context: ${session.promptContext}, Value: ${session.promptIsPassword ? '******' : inputValue}`);
+  inputLogger.debug('Handling input message.', {
+    sessionId: session.sessionId,
+    pendingPrompt: Boolean(session.pendingPromptResolve),
+    context: session.promptContext,
+    isPassword: session.promptIsPassword,
+    valuePreview: session.promptIsPassword ? '******' : inputValue
+  });
 
   const resolve = session.pendingPromptResolve;
   const reject = session.pendingPromptReject;
@@ -39,7 +56,10 @@ export async function handleInputMessage(ws, message, session) {
   session.promptData = null;
 
   if (context === 'post_research_action') {
-    console.log(`[WebSocket] Handling post-research action input: ${inputValue}`);
+    inputLogger.info('Handling post-research action input.', {
+      sessionId: session.sessionId,
+      action: inputValue
+    });
     const action = inputValue.toLowerCase().trim();
     const markdownContent = session.currentResearchResult;
     const suggestedFilename = promptData?.suggestedFilename || session.currentResearchFilename || 'research-result.md';
@@ -95,7 +115,11 @@ export async function handleInputMessage(ws, message, session) {
           break;
       }
     } catch (actionError) {
-      console.error(`[WebSocket] Error during post-research action '${action}': ${actionError.message}`, actionError.stack);
+      inputLogger.error('Error during post-research action.', {
+        sessionId: session.sessionId,
+        action,
+        error: actionError
+      });
       wsErrorHelper(ws, `Error performing action '${action}': ${actionError.message}`, true);
       enableInputAfter = false;
       if (action === 'upload' && actionError.message.toLowerCase().includes('password')) {
@@ -112,11 +136,18 @@ export async function handleInputMessage(ws, message, session) {
     resolve(inputValue);
     enableInputAfter = true;
   } else {
-    console.log(`[WebSocket] Resolving standard prompt (context: ${context || 'none'}) with value: ${promptIsPassword ? '******' : inputValue}`);
+    inputLogger.debug('Resolving standard prompt.', {
+      sessionId: session.sessionId,
+      context: context || 'none',
+      isPassword: promptIsPassword
+    });
     resolve(inputValue);
     enableInputAfter = false;
   }
 
-  console.log(`[WebSocket] Returning from handleInputMessage. Final enableInputAfter: ${enableInputAfter}`);
+  inputLogger.debug('Completed handleInputMessage.', {
+    sessionId: session.sessionId,
+    enableInputAfter
+  });
   return enableInputAfter;
 }

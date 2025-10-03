@@ -1,10 +1,10 @@
 /**
- * Why: Ensures the `/users` CLI command enforces administrator requirements and surfaces lists when
- *       the backing user manager provides data.
- * What: Verifies permission guards for non-admin callers and happy-path listing when an admin invokes
- *       the command with a stubbed directory.
- * How: Invokes `executeUsers` with captured output while patching the shared `userManager` to avoid
- *       touching real storage.
+ * Why: Ensures the `/users` CLI command enforces administrator requirements and delegates to
+ *       registered adapters only when present.
+ * What: Verifies permission guards for non-admin callers and happy-path listing when an adapter is
+ *       registered, without mutating real storage.
+ * How: Invokes `executeUsers` with captured output while temporarily installing an in-memory adapter
+ *       via `userManager.registerUserDirectoryAdapter`.
  */
 
 import { describe, beforeAll, beforeEach, afterEach, test, expect, vi } from 'vitest';
@@ -13,24 +13,27 @@ import { executeUsers } from '../../app/commands/users.cli.mjs';
 import { userManager } from '../../app/features/auth/user-manager.mjs';
 
 const ctx = createCliTestContext({ autoInitialize: false });
-let originalListUsers;
+let originalAdapter;
 
 describe('cli user management command', () => {
   beforeAll(async () => {
-    originalListUsers = userManager.listUsers;
+    originalAdapter = typeof userManager.getUserDirectoryAdapter === 'function'
+      ? userManager.getUserDirectoryAdapter()
+      : null;
     await ctx.initialize();
   });
 
   beforeEach(() => {
     ctx.flushOutput();
     vi.restoreAllMocks();
+    if (typeof userManager.clearUserDirectoryAdapter === 'function') {
+      userManager.clearUserDirectoryAdapter();
+    }
   });
 
   afterEach(() => {
-    if (originalListUsers === undefined) {
-      delete userManager.listUsers;
-    } else {
-      userManager.listUsers = originalListUsers;
+    if (originalAdapter && typeof userManager.registerUserDirectoryAdapter === 'function') {
+      userManager.registerUserDirectoryAdapter(originalAdapter);
     }
   });
 
@@ -47,10 +50,18 @@ describe('cli user management command', () => {
   });
 
   test('lists users for admin callers', async () => {
-    userManager.listUsers = vi.fn().mockResolvedValue([
+    const listUsers = vi.fn().mockResolvedValue([
       { username: 'admin', role: 'admin' },
       { username: 'operator', role: 'client' }
     ]);
+    const createUser = vi.fn();
+    const deleteUser = vi.fn();
+
+    userManager.registerUserDirectoryAdapter?.({
+      listUsers,
+      createUser,
+      deleteUser
+    });
 
     const { result, output } = await ctx.runCommand(executeUsers, {
       positionalArgs: ['list'],
@@ -59,8 +70,19 @@ describe('cli user management command', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(userManager.listUsers).toHaveBeenCalledTimes(1);
+    expect(listUsers).toHaveBeenCalledTimes(1);
     expect(output.join('\n')).toMatch(/user list/i);
     expect(output.join('\n')).toMatch(/admin \(admin\)/i);
+  });
+
+  test('explains single-user mode when no adapter is registered', async () => {
+    const { result, output } = await ctx.runCommand(executeUsers, {
+      positionalArgs: ['list'],
+      requestingUser: { username: 'admin', role: 'admin' },
+      error: ctx.captureOutput
+    });
+
+    expect(result.success).toBe(false);
+    expect(output.join('\n')).toMatch(/user management is disabled/i);
   });
 });

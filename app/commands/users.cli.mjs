@@ -1,9 +1,16 @@
-import readline from 'readline';
 import { userManager } from '../features/auth/user-manager.mjs';
-import { outputManager } from '../utils/research.output-manager.mjs';
-// Remove the problematic import as promptUser is not used
-// import { prompt as promptUser } from '../utils/research.prompt.mjs';
-import { ErrorTypes, handleCliError } from '../utils/cli-error-handler.mjs';
+import { handleCliError } from '../utils/cli-error-handler.mjs';
+
+/**
+ * Why: Preserve the `/users` entry point while single-user mode remains default and allow optional
+ *        self-hosted adapters to plug in multi-user functionality.
+ * What: Emits compatibility messaging when no adapter is registered and delegates to the adapter
+ *        when one is present.
+ * How: Guard → Do → Verify across admin checks, adapter detection, and delegated operations.
+ */
+
+const ACTIONS = new Set(['list', 'create', 'delete']);
+const DEFAULT_DISABLED_MESSAGE = 'User management is disabled in single-user mode. Install an adapter via userManager.registerUserDirectoryAdapter() to enable multi-user operations.';
 
 /**
  * Provides help text for the /users command.
@@ -11,17 +18,13 @@ import { ErrorTypes, handleCliError } from '../utils/cli-error-handler.mjs';
  */
 export function getUsersHelpText() {
     return `
-/users <action> [options] - Manage users (Admin only).
+/users <action> [options] - Admin-only compatibility wrapper.
 Actions:
-  list                     List all users.
-  create <username>        Create a new user interactively.
-  create <username> --role=<role> [--password=<password>]
-                           Create a new user non-interactively.
-                           Role must be 'client' or 'admin'.
-  delete <username>        Delete a user. Requires confirmation.
-Options:
-  --role=<role>            Specify user role ('client' or 'admin').
-  --password=<password>    Specify user password (use with caution).
+  list                     List users via the registered directory adapter.
+  create <username>        Create a user when an adapter is installed.
+  delete <username>        Delete a user when an adapter is installed.
+Notes:
+  Single-user deployments print "${DEFAULT_DISABLED_MESSAGE}" until an adapter is registered.
 `;
 }
 
@@ -31,91 +34,82 @@ Options:
  * @param {string[]} options.positionalArgs - Positional arguments (action, username, etc.)
  * @param {string} [options.role] - Role for create action (passed as flag --role=...)
  * @param {string} [options.password] - Password (for create action or admin confirmation)
- * @param {Function} options.output - Output function (log or WebSocket send)
- * @param {Function} options.error - Error function (error or WebSocket send)
- * @param {object} [options.currentUser] - User data object if authenticated (less relevant now, use requestingUser).
+ * @param {Function} [options.output] - Output function (log or WebSocket send)
+ * @param {Function} [options.error] - Error function (error or WebSocket send)
  * @param {object} [options.requestingUser] - User data object of the user making the request.
  */
 export async function executeUsers(options = {}) {
   const {
       positionalArgs = [],
-      role: roleFromFlag, // Role might come from --role flag
-      password: providedPassword, // Password from handleCommandMessage (for admin confirmation)
-      output: cmdOutput, // Use passed handlers
-      error: cmdError,   // Use passed handlers
-      // currentUser // Use requestingUser instead for permission checks
-      requestingUser // Use the user making the request
+      role: roleFromFlag,
+      password: providedPassword,
+      output: outputHandler,
+      error: errorHandler,
+      requestingUser,
+      isWebSocket = false
   } = options;
 
-  const action = positionalArgs[0]?.toLowerCase();
-  const usernameArg = positionalArgs[1]; // Username is typically the second arg
-  // Role can come from flag or potentially 3rd positional arg (less common)
+  const outputFn = typeof outputHandler === 'function' ? outputHandler : console.log;
+  const errorFn = typeof errorHandler === 'function' ? errorHandler : console.error;
+
+  const rawAction = positionalArgs[0]?.toLowerCase();
+  const normalizedAction = ACTIONS.has(rawAction) ? rawAction : 'list';
+  const usernameArg = positionalArgs[1];
   const roleArg = roleFromFlag || positionalArgs[2];
 
-  cmdOutput(`Executing command: users (Action: ${action || 'list'})`);
+  outputFn(`Executing command: users (action: ${normalizedAction})`);
 
-  // --- Admin Check ---
-  // Use the requestingUser passed in options
+  // Guard: Only administrators can continue.
   if (!requestingUser || requestingUser.role !== 'admin') {
-    cmdError('Error: Only administrators can manage users.');
+    errorFn('Error: Only administrators can manage users.');
     return { success: false, error: 'Permission denied', handled: true, keepDisabled: false };
   }
 
-  // Admin password confirmation might be needed for destructive actions (delete)
-  // This should be handled by handleCommandMessage prompting if necessary
-  const adminPassword = providedPassword; // Password passed is the admin's password
+  // Guard: Evaluate action-level capabilities to avoid invoking undefined helpers.
+  const adapter = typeof userManager.getUserDirectoryAdapter === 'function'
+    ? userManager.getUserDirectoryAdapter()
+    : null;
+
+  if (!adapter) {
+    outputFn(DEFAULT_DISABLED_MESSAGE);
+    return { success: false, error: 'User management disabled', handled: true, keepDisabled: false };
+  }
+
+  const adminPassword = providedPassword;
 
   try {
-      switch (action) {
+      switch (normalizedAction) {
         case 'create':
-          // For create, password in options is the *new* user's temp password if provided
-          // Role comes from roleArg
-          // Pass requestingUser for permission check inside userManager.createUser
-          return await createUser(usernameArg, roleArg, options.password, requestingUser, cmdOutput, cmdError); // Pass error handler and requestingUser
+          return await createUser(usernameArg, roleArg, options.password, requestingUser, adapter, outputFn, errorFn);
         case 'list':
-          // Pass requestingUser for permission check inside userManager.listUsers
-          return await listUsers(requestingUser, cmdOutput, cmdError); // Pass error handler and requestingUser
+          return await listUsers(requestingUser, adapter, outputFn, errorFn);
         case 'delete':
-           if (!adminPassword && !options.isWebSocket) { // Prompt for admin password in CLI if needed
-               // This prompt might interfere with Web-CLI flow if called incorrectly
-               // adminPassword = await promptForPassword('Enter your admin password to confirm deletion: ');
-               cmdError("Admin password confirmation required for delete (prompting not fully implemented here).");
-               return { success: false, error: "Admin password required", handled: true, keepDisabled: false };
-           } else if (!adminPassword && options.isWebSocket) {
-               cmdError("Internal Error: Admin password required for delete but missing.");
-               return { success: false, error: "Admin password required but missing", handled: true, keepDisabled: false };
+           if (!adminPassword && !isWebSocket) {
+               errorFn('Admin password confirmation required for delete.');
+               return { success: false, error: 'Admin password required', handled: true, keepDisabled: false };
+           } else if (!adminPassword && isWebSocket) {
+               errorFn('Admin password required but missing.');
+               return { success: false, error: 'Admin password required but missing', handled: true, keepDisabled: false };
            }
-           // Pass requestingUser for permission check inside userManager.deleteUser
-          return await deleteUser(usernameArg, requestingUser, cmdOutput, cmdError); // Pass error handler and requestingUser
+          return await deleteUser(usernameArg, requestingUser, adapter, outputFn, errorFn);
         default:
-          // If no action or unknown action, default to list
-          cmdOutput('Unknown or missing action. Defaulting to list users.');
-          // Pass requestingUser for permission check inside userManager.listUsers
-          return await listUsers(requestingUser, cmdOutput, cmdError);
+          outputFn(DEFAULT_DISABLED_MESSAGE);
+          return { success: false, error: 'Unknown action', handled: true, keepDisabled: false };
       }
   } catch (error) {
-      return handleCliError(error, { command: 'users', action, error: cmdError }); // Pass the error function
+      return handleCliError(error, { command: 'users', action: normalizedAction, error: errorFn });
   }
 }
 
 /**
- * Create a new user.
- * @param {string} username - Username for the new user.
- * @param {string} [role='client'] - Role for the new user ('client' or 'admin').
- * @param {string} [password] - Optional temporary password.
- * @param {object} requestingUser - The user object making the request.
- * @param {Function} output - Output function.
- * @param {Function} errorFn - Error function.
- * @returns {Promise<Object>} Result object.
+ * Create a new user when the backing directory exposes the helper.
  */
-async function createUser(username, role = 'client', password, requestingUser, output, errorFn) {
+async function createUser(username, role = 'client', password, requestingUser, adapter, output, errorFn) {
   if (!username) {
-    // TODO: Implement interactive creation for CLI if needed, or disallow in Web-CLI
     errorFn('Error: Username is required for create action.');
     return { success: false, error: 'Username required', handled: true, keepDisabled: false };
   }
 
-  // Validate username and role
   if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
     errorFn('Error: Username must contain only letters, numbers, underscores, and hyphens.');
     return { success: false, error: 'Invalid username format', handled: true, keepDisabled: false };
@@ -128,15 +122,11 @@ async function createUser(username, role = 'client', password, requestingUser, o
   }
 
   try {
-    // userManager.createUser handles password generation if not provided
-    // Pass requestingUser to userManager.createUser for permission check
-    const newUserResult = await userManager.createUser(username, normalizedRole, password, requestingUser);
+  const newUserResult = await adapter.createUser({ username, role: normalizedRole, password, requestingUser });
     output(`Created user "${username}" with role "${normalizedRole}".`);
-    // Access generatedPassword from the result object
     if (newUserResult.generatedPassword) {
         output(`Temporary password: ${newUserResult.generatedPassword}`);
     }
-    // Return only non-sensitive parts
     return { success: true, user: { username: newUserResult.username, role: newUserResult.role }, keepDisabled: false };
   } catch (error) {
      errorFn(`Error creating user: ${error.message}`);
@@ -145,27 +135,21 @@ async function createUser(username, role = 'client', password, requestingUser, o
 }
 
 /**
- * List all users.
- * @param {object} requestingUser - The user object making the request.
- * @param {Function} output - Output function.
- * @param {Function} errorFn - Error function.
- * @returns {Promise<Object>} Result object.
+ * List users from the backing directory.
  */
-async function listUsers(requestingUser, output, errorFn) {
+async function listUsers(requestingUser, adapter, output, errorFn) {
   try {
-    // Pass requestingUser to userManager.listUsers
-    const users = await userManager.listUsers(requestingUser);
+    const users = await adapter.listUsers({ requestingUser });
     output('--- User List ---');
     if (users.length === 0) {
         output('No users found.');
     } else {
-        // Ensure users array contains objects with username and role
         users.forEach(user => {
             if (user && user.username && user.role) {
                 output(`- ${user.username} (${user.role})`);
             } else {
                 output('- [Invalid user data]');
-                console.warn("Invalid user data found during list:", user);
+                console.warn('Invalid user data found during list:', user);
             }
         });
     }
@@ -178,32 +162,22 @@ async function listUsers(requestingUser, output, errorFn) {
 }
 
 /**
- * Delete a user by username.
- * @param {string} username - Username to delete.
- * @param {object} requestingUser - The user object making the request.
- * @param {Function} output - Output function.
- * @param {Function} errorFn - Error function.
- * @returns {Promise<Object>} Result object.
+ * Delete a user when the helper exists.
  */
-async function deleteUser(username, requestingUser, output, errorFn) {
+async function deleteUser(username, requestingUser, adapter, output, errorFn) {
   if (!username) {
-     // TODO: Implement interactive deletion for CLI if needed, or disallow in Web-CLI
     errorFn('Error: Username is required for delete action.');
     return { success: false, error: 'Username required', handled: true, keepDisabled: false };
   }
 
-   if (username === 'admin') { // Example safeguard
+   if (username === 'admin') {
        errorFn('Error: Cannot delete the primary admin user.');
        return { success: false, error: 'Cannot delete primary admin', handled: true, keepDisabled: false };
    }
 
   try {
-    // Optional: Add confirmation prompt here if needed, especially for CLI
-    // if (!options.isWebSocket) { ... confirm ... }
-
     output(`Attempting to delete user: ${username}...`);
-    // Pass requestingUser to userManager.deleteUser
-    await userManager.deleteUser(username, requestingUser); // Assumes userManager handles "not found" etc.
+  await adapter.deleteUser({ username, requestingUser });
     output(`Successfully deleted user: ${username}`);
     return { success: true, keepDisabled: false };
   } catch (error) {
@@ -211,58 +185,3 @@ async function deleteUser(username, requestingUser, output, errorFn) {
     return { success: false, error: error.message, handled: true, keepDisabled: false };
   }
 }
-
-
-// --- createAdmin and interactive functions are primarily for initial CLI setup ---
-// --- They might not be directly callable or suitable for the WebSocket interface ---
-
-/**
- * CLI command for creating an admin user (only if no admin exists).
- * @param {Object} options - Command options (less relevant here, uses readline).
- * @returns {Promise<Object>} Result of admin creation.
- */
-export async function createAdmin(options = {}) {
-    // This function uses console.log/error and readline directly.
-    // It's intended for initial setup via `npm start cli -- create-admin` or similar.
-    // It should NOT be called directly from the WebSocket handler.
-    if (options.isWebSocket) {
-        options.error?.('Error: create-admin command is not available via Web-CLI.');
-        return { success: false, error: 'Command not available', handled: true, keepDisabled: false };
-    }
-
-    // ... (rest of existing createAdmin logic using console and readline) ...
-    if (await userManager.adminExists()) {
-      console.error('Error: An admin user already exists.');
-      return { success: false, error: 'Admin already exists' };
-    }
-
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      const username = await new Promise((resolve) => rl.question('Enter admin username: ', resolve));
-
-      // Validate username format
-      if (!username || !/^[a-zA-Z0-9_-]+$/.test(username)) {
-        throw new Error('Username must contain only letters, numbers, underscores, and hyphens');
-      }
-
-      const password = await new Promise((resolve) => rl.question('Enter admin password: ', resolve));
-
-      // Validate password strength
-      if (!password || password.length < 8) {
-        throw new Error('Password must be at least 8 characters long');
-      }
-
-      rl.close();
-
-      const adminUser = await userManager.createInitialAdmin(username, password);
-      console.log(`Admin user '${adminUser.username}' created successfully.`);
-      return { success: true, user: adminUser };
-    } catch (error) {
-      rl.close();
-      console.error(`Error creating admin user: ${error.message}`);
-      return { success: false, error: error.message };
-    }
-}
-
-// Interactive functions (interactiveCreate, interactiveDelete) using readline
-// are also primarily for the Console CLI and should not be called from WebSocket.

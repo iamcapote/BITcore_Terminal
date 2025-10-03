@@ -1,7 +1,12 @@
 /**
- * Venice LLM Response Processor
- * Processes and transforms raw LLM responses for integration with the memory system
+ * Why: Normalise Venice LLM responses so downstream memory and chat pipelines can consume structured data reliably.
+ * What: Provides helpers to extract JSON/markdown payloads, clean chat transcripts, and shape memory scoring/summarisation outputs.
+ * How: Applies lightweight parsing heuristics with guarded error handling and emits structured logs when parsing fails.
  */
+
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const logger = createModuleLogger('venice.response-processor');
 
 /**
  * Extract structured data from an LLM response
@@ -127,7 +132,7 @@ export function processMemoryScoring(response) {
       };
     });
   } catch (error) {
-    console.error('Error processing memory scoring:', error);
+    logger.error('Error processing memory scoring', { message: error.message, stack: error.stack });
     return [];
   }
 }
@@ -160,7 +165,7 @@ export function processMemorySummarization(response) {
       };
     });
   } catch (error) {
-    console.error('Error processing memory summarization:', error);
+    logger.error('Error processing memory summarization', { message: error.message, stack: error.stack });
     return [];
   }
 }

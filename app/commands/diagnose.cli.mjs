@@ -28,12 +28,30 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 import { userManager } from '../features/auth/user-manager.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
 
 // --- Placeholder Constants ---
 // These should ideally be imported from a central config file if they exist elsewhere
 const USER_FILES_DIR = userManager.storageDir;
 const RESEARCH_DIR = path.join(USER_FILES_DIR, 'research');
 // --- End Placeholder Constants ---
+
+const moduleLogger = createModuleLogger('commands.diagnose.cli', { emitToStdStreams: false });
+
+function createEmitter(handler, level) {
+  const target = typeof handler === 'function' ? handler : null;
+  const stream = level === 'error' ? process.stderr : process.stdout;
+  return (value, meta = null) => {
+    const message = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    const payloadMeta = meta || (typeof value === 'object' && value !== null ? { payload: value } : null);
+    moduleLogger[level](message, payloadMeta);
+    if (target) {
+      target(value);
+    } else {
+      stream.write(`${message}\n`);
+    }
+  };
+}
 
 /**
  * Contract: validates Brave/Venice/GitHub connectivity using configured credentials.
@@ -43,30 +61,43 @@ const RESEARCH_DIR = path.join(USER_FILES_DIR, 'research');
  */
 async function checkApi({ output, error }) {
   output('\n--- API Connectivity & Key Check ---');
+  moduleLogger.info('Diagnose API check started.');
 
   try {
-  const results = await userManager.testApiKeys();
+    const results = await userManager.testApiKeys();
 
-  const describe = (label, result) => {
-    if (result.success === true) {
-    output(`🟢 ${label}: OK`);
-    } else if (result.success === false) {
-    output(`🔴 ${label}: Failed (${result.error || 'Unknown error'})`);
-    } else {
-    output(`🟡 ${label}: Not Configured`);
-    }
-  };
+    const describe = (label, result) => {
+      if (result.success === true) {
+        output(`🟢 ${label}: OK`, { label, status: 'ok' });
+      } else if (result.success === false) {
+        output(`🔴 ${label}: Failed (${result.error || 'Unknown error'})`, { label, status: 'failed', error: result.error || null });
+      } else {
+        output(`🟡 ${label}: Not Configured`, { label, status: 'missing' });
+      }
+    };
 
-  describe('Brave', results.brave);
-  describe('Venice', results.venice);
-  describe('GitHub', results.github);
+    describe('Brave', results.brave);
+    describe('Venice', results.venice);
+    describe('GitHub', results.github);
 
-  const anyFailure = Object.values(results).some((res) => res.success === false);
-  output(`API Check Result: ${anyFailure ? 'Issues found' : 'OK'}`);
-  return !anyFailure;
+    const anyFailure = Object.values(results).some((res) => res.success === false);
+    output(`API Check Result: ${anyFailure ? 'Issues found' : 'OK'}`, { anyFailure });
+    moduleLogger.info('Diagnose API check completed.', {
+      results: {
+        brave: results.brave?.success ?? null,
+        venice: results.venice?.success ?? null,
+        github: results.github?.success ?? null
+      },
+      anyFailure
+    });
+    return !anyFailure;
   } catch (err) {
-  error(`API test failed: ${err.message}`);
-  return false;
+    error(`API test failed: ${err.message}`, { message: err.message });
+    moduleLogger.error('Diagnose API check failed.', {
+      message: err.message,
+      stack: err.stack || null
+    });
+    return false;
   }
 }
 
@@ -85,10 +116,12 @@ async function checkPermissions(output) {
     try {
       await fs.mkdir(dirPath, { recursive: true }); // Ensure directory exists
       await fs.access(dirPath, fs.constants.R_OK | fs.constants.W_OK);
-      output(`✅ ${dirName} directory (${dirPath}) is readable and writable.`);
+      output(`✅ ${dirName} directory (${dirPath}) is readable and writable.`, { dirName, dirPath, status: 'ok' });
+      moduleLogger.info('Diagnose directory accessibility verified.', { dirName, dirPath, accessible: true });
       return true;
     } catch (error) {
-      output(`❌ ${dirName} directory (${dirPath}) is not accessible: ${error.message}`);
+      output(`❌ ${dirName} directory (${dirPath}) is not accessible: ${error.message}`, { dirName, dirPath, status: 'error', message: error.message });
+      moduleLogger.warn('Diagnose directory accessibility failed.', { dirName, dirPath, message: error.message });
       allAccessible = false;
       return false;
     }
@@ -100,6 +133,7 @@ async function checkPermissions(output) {
   const tempDir = os.tmpdir();
   await checkDirAccess(tempDir, 'Temporary');
 
+  moduleLogger.info('Diagnose permissions check completed.', { allAccessible });
   return allAccessible;
 }
 
@@ -111,6 +145,7 @@ async function checkPermissions(output) {
 async function checkStorage(output) {
   // ... (Keep internal checkStorage function as is) ...
   output('\n🔍 Checking storage usage and availability...');
+  moduleLogger.info('Diagnose storage check started.');
 
   let metricsCollected = true;
   const getDirSize = async (dirPath) => {
@@ -134,7 +169,7 @@ async function checkStorage(output) {
     } catch (error) {
       // Only log error if it's not 'directory not found'
       if (error.code !== 'ENOENT') {
-        output(`⚠️ Error calculating size of ${dirPath}: ${error.message}`);
+        output(`⚠️ Error calculating size of ${dirPath}: ${error.message}`, { dirPath, message: error.message });
         metricsCollected = false;
       }
     }
@@ -157,10 +192,12 @@ async function checkStorage(output) {
   };
 
   const userFilesSize = await getDirSize(USER_FILES_DIR);
-  output(`📊 User files size (${USER_FILES_DIR}): ${formatBytes(userFilesSize)}`);
+  const userFilesLabel = formatBytes(userFilesSize);
+  output(`📊 User files size (${USER_FILES_DIR}): ${userFilesLabel}`, { dirPath: USER_FILES_DIR, sizeBytes: userFilesSize });
 
   const researchFilesSize = await getDirSize(RESEARCH_DIR);
-  output(`📊 Research files size (${RESEARCH_DIR}): ${formatBytes(researchFilesSize)}`);
+  const researchFilesLabel = formatBytes(researchFilesSize);
+  output(`📊 Research files size (${RESEARCH_DIR}): ${researchFilesLabel}`, { dirPath: RESEARCH_DIR, sizeBytes: researchFilesSize });
 
   // Disk space check (keep existing logic)
   try {
@@ -169,9 +206,13 @@ async function checkStorage(output) {
     const stats = await fs.statfs(homeDir);
     const freeSpace = stats.bavail * stats.bsize;
     const totalSpace = stats.blocks * stats.bsize;
-    output(`📊 Disk space (home partition: ${homeDir}): ${formatBytes(freeSpace)} free / ${formatBytes(totalSpace)} total`);
+    output(`📊 Disk space (home partition: ${homeDir}): ${formatBytes(freeSpace)} free / ${formatBytes(totalSpace)} total`, {
+      homeDir,
+      freeBytes: freeSpace,
+      totalBytes: totalSpace
+    });
   } catch (statfsError) {
-    output(`⚠️ Could not get disk space using fs.statfs: ${statfsError.message}. Trying fallback...`);
+    output(`⚠️ Could not get disk space using fs.statfs: ${statfsError.message}. Trying fallback...`, { message: statfsError.message });
     try {
       // Fallback using 'df' command (more likely to work on Linux/macOS)
       // Use '.' to check the partition of the current working directory as fallback
@@ -185,26 +226,35 @@ async function checkStorage(output) {
           const availableKB = parseInt(values[3], 10);
           const totalKB = parseInt(values[1], 10);
           if (!isNaN(availableKB) && !isNaN(totalKB)) {
-            output(`📊 Disk space (fallback via df on '.'): ${formatBytes(availableKB * 1024)} free / ${formatBytes(totalKB * 1024)} total`);
+            output(`📊 Disk space (fallback via df on '.'): ${formatBytes(availableKB * 1024)} free / ${formatBytes(totalKB * 1024)} total`, {
+              freeBytes: availableKB * 1024,
+              totalBytes: totalKB * 1024,
+              method: 'df'
+            });
           } else {
-            output("⚠️ Could not parse 'df' output (non-numeric values).");
+            output("⚠️ Could not parse 'df' output (non-numeric values).", { method: 'df', reason: 'non_numeric' });
             metricsCollected = false;
           }
         } else {
-          output("⚠️ Could not parse 'df' output (unexpected format).");
+          output("⚠️ Could not parse 'df' output (unexpected format).", { method: 'df', reason: 'unexpected_format' });
           metricsCollected = false;
         }
       } else {
-        output("⚠️ Could not parse 'df' output (no lines).");
+        output("⚠️ Could not parse 'df' output (no lines).", { method: 'df', reason: 'no_lines' });
         metricsCollected = false;
       }
     } catch (dfError) {
-      output(`⚠️ Fallback 'df' command failed: ${dfError.message}`);
-      output("⚠️ Could not determine disk space.");
+      output(`⚠️ Fallback 'df' command failed: ${dfError.message}`, { message: dfError.message });
+      output('⚠️ Could not determine disk space.', { method: 'df', reason: 'fallback_failed' });
       metricsCollected = false;
     }
   }
 
+  moduleLogger.info('Diagnose storage check completed.', {
+    metricsCollected,
+    userFilesSize,
+    researchFilesSize
+  });
   return metricsCollected;
 }
 
@@ -221,26 +271,40 @@ async function checkStorage(output) {
  * @param {Function} options.error - Error function (error or WebSocket send)
  * @param {object} [options.currentUser] - User data object if authenticated.
  */
-export async function executeDiagnose(options) {
-    const {
-        positionalArgs = [],
-        session,
-        isWebSocket,
-        password: providedPassword, // Password from handleCommandMessage
-        output: cmdOutput, // Use passed handlers
-        error: cmdError,   // Use passed handlers
-        currentUser // Use passed user data
-    } = options;
+export async function executeDiagnose(options = {}) {
+  const {
+    positionalArgs = [],
+    session,
+    isWebSocket,
+    password: providedPassword, // Password from handleCommandMessage
+    output: outputHandler, // Use passed handlers
+    error: errorHandler,   // Use passed handlers
+    currentUser // Use passed user data
+  } = options;
+
+  const outputFn = createEmitter(outputHandler, 'info');
+  const errorFn = createEmitter(errorHandler, 'error');
 
     // Determine which checks to run
     const checksToRun = positionalArgs.length > 0 ? positionalArgs.map(a => a.toLowerCase()) : ['all'];
     const runAll = checksToRun.includes('all');
 
-    cmdOutput(`Executing command: diagnose (Checks: ${checksToRun.join(', ')})`);
+  outputFn(`Executing command: diagnose (Checks: ${checksToRun.join(', ')})`, { checks: checksToRun, runAll });
+  moduleLogger.info('Diagnose command invoked.', {
+    checks: checksToRun,
+    runAll,
+    isWebSocket: Boolean(isWebSocket),
+    username: currentUser?.username ?? null,
+    role: currentUser?.role ?? null
+  });
 
     // --- Admin Check ---
     if (!currentUser || currentUser.role !== 'admin') {
-        cmdError('Error: Only administrators can run diagnostics.');
+    errorFn('Error: Only administrators can run diagnostics.', { reason: 'not_admin' });
+    moduleLogger.warn('Diagnose command blocked for non-admin user.', {
+      username: currentUser?.username ?? null,
+      role: currentUser?.role ?? null
+    });
         return { success: false, error: 'Permission denied', handled: true, keepDisabled: false };
     }
 
@@ -250,7 +314,7 @@ export async function executeDiagnose(options) {
     try {
         // --- System Information ---
         if (runAll || checksToRun.includes('system')) {
-            cmdOutput('\n--- System Information ---');
+      outputFn('\n--- System Information ---');
             try {
                 results.system = {
                     platform: os.platform(),
@@ -261,11 +325,11 @@ export async function executeDiagnose(options) {
                     freeMemoryGB: (os.freemem() / (1024 ** 3)).toFixed(2),
                     uptimeSeconds: os.uptime().toFixed(0),
                 };
-                for (const [key, value] of Object.entries(results.system)) {
-                    cmdOutput(`${key}: ${value}`);
+        for (const [key, value] of Object.entries(results.system)) {
+          outputFn(`${key}: ${value}`, { section: 'system', key, value });
                 }
             } catch (err) {
-                 cmdError(`Error getting system info: ${err.message}`);
+         errorFn(`Error getting system info: ${err.message}`, { section: 'system', message: err.message });
                  overallSuccess = false;
                  results.system = { error: err.message };
             }
@@ -273,21 +337,26 @@ export async function executeDiagnose(options) {
 
         // --- User Configuration ---
         if (runAll || checksToRun.includes('users')) {
-            cmdOutput('\n--- User Configuration ---');
+      outputFn('\n--- User Configuration ---');
             try {
                 // Check if userManager instance exists (basic check)
                 const userManagerAvailable = !!userManager;
-                cmdOutput(`User Manager Available: ${userManagerAvailable}`);
+        outputFn(`User Manager Available: ${userManagerAvailable}`, { section: 'users', key: 'available', value: userManagerAvailable });
                 if (!userManagerAvailable) {
                     throw new Error("UserManager instance is not available.");
                 }
                 const userCount = await userManager.getUserCount(); // Ensure this is async if it reads files
                 const currentUsername = currentUser.username;
-                cmdOutput(`Total Users: ${userCount}`);
-                cmdOutput(`Current User (Context): ${currentUsername} (${currentUser.role})`);
+        outputFn(`Total Users: ${userCount}`, { section: 'users', key: 'count', value: userCount });
+        outputFn(`Current User (Context): ${currentUsername} (${currentUser.role})`, {
+          section: 'users',
+          key: 'currentUser',
+          user: currentUsername,
+          role: currentUser.role
+        });
                 results.users = { available: userManagerAvailable, count: userCount, currentUser: currentUsername };
             } catch (err) {
-                cmdError(`Error checking users: ${err.message}`);
+        errorFn(`Error checking users: ${err.message}`, { section: 'users', message: err.message });
                 overallSuccess = false;
                 results.users = { error: err.message };
             }
@@ -298,10 +367,13 @@ export async function executeDiagnose(options) {
              // Password should have been obtained by handleCommandMessage and put in options.password
              // The checkApi helper function will use options.password or session.password
              // No need for extra password checks here, rely on checkApi's internal logic.
-             cmdOutput(`[Diagnose] Checking API keys. Password provided: ${providedPassword ? 'Yes' : 'No (will try session cache)'}`);
+       outputFn(`[Diagnose] Checking API keys. Password provided: ${providedPassword ? 'Yes' : 'No (will try session cache)'}`, {
+        section: 'api',
+        passwordProvided: Boolean(providedPassword)
+       });
 
              // Pass the full options object, which includes password, session, and currentUser
-       const apiOk = await checkApi(options);
+  const apiOk = await checkApi({ output: outputFn, error: errorFn });
        // Note: checkApi logs its own success/failure messages. Track status for rollup.
        results.api = { checked: true, success: apiOk };
        overallSuccess = overallSuccess && apiOk;
@@ -310,14 +382,14 @@ export async function executeDiagnose(options) {
 
         // --- File Permissions ---
         if (runAll || checksToRun.includes('perms') || checksToRun.includes('permissions')) {
-       const permsOk = await checkPermissions(cmdOutput);
+     const permsOk = await checkPermissions(outputFn);
        results.permissions = { checked: true, success: permsOk };
        overallSuccess = overallSuccess && permsOk;
         }
 
         // --- Storage ---
         if (runAll || checksToRun.includes('storage')) {
-       const storageOk = await checkStorage(cmdOutput);
+     const storageOk = await checkStorage(outputFn);
        results.storage = { checked: true, success: storageOk };
        overallSuccess = overallSuccess && storageOk;
         }
@@ -325,15 +397,27 @@ export async function executeDiagnose(options) {
 
         // Add more checks as needed
 
-        cmdOutput(`\nDiagnosis complete. Review output above for status.`);
-        // Overall success is currently just tracking major exceptions, not individual check failures.
-        // Could be enhanced to aggregate status from helpers if needed.
+    outputFn(`\nDiagnosis complete. Review output above for status.`);
+    const failedChecks = Object.entries(results)
+      .filter(([, value]) => value?.success === false || value?.error)
+      .map(([key]) => key);
+    moduleLogger.info('Diagnose command completed.', {
+      success: overallSuccess,
+      checks: Object.keys(results),
+      failedChecks,
+      runAll
+    });
 
-        return { success: overallSuccess, results, handled: true, keepDisabled: false }; // Enable input
+    return { success: overallSuccess, results, handled: true, keepDisabled: false }; // Enable input
 
     } catch (error) {
-        cmdError(`Error during diagnosis: ${error.message}`);
-        console.error(error.stack); // Log stack trace server-side
+    errorFn(`Error during diagnosis: ${error.message}`, { message: error.message });
+    moduleLogger.error('Diagnose command failed.', {
+      message: error.message,
+      stack: error.stack || null,
+      checks: checksToRun,
+      runAll
+    });
         return { success: false, error: error.message, handled: true, keepDisabled: false }; // Enable input on error
     }
 }

@@ -43,6 +43,9 @@ import {
 import { getDefaultResearchCharacterSlug } from '../ai/venice.characters.mjs';
 import { buildResearchMarkdown } from './research.markdown.mjs';
 import { runOverrideQueries } from './research.override-runner.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const logger = createModuleLogger('research.engine');
 
 /**
  * Main research engine that coordinates research paths
@@ -54,9 +57,9 @@ export class ResearchEngine {
       veniceApiKey,
       verbose = false,
       user = {},
-      outputHandler = console.log,   // <= NEW default
-      errorHandler = console.error,  // <= NEW default
-      debugHandler = () => {},       // <= NEW default
+      outputHandler = (message, meta) => logger.info(message, meta),
+      errorHandler = (message, meta) => logger.error(message, meta),
+      debugHandler = (message, meta) => logger.debug(message, meta),
       progressHandler = () => {},    // <= NEW: Add progressHandler destructuring with default
       isWebSocket = false,
       webSocketClient = null,
@@ -71,9 +74,9 @@ export class ResearchEngine {
     this.user          = user;
 
     // --- NEW: ensure handlers are always functions ---
-    this.outputHandler = typeof outputHandler === 'function' ? outputHandler : console.log;
-    this.errorHandler  = typeof errorHandler  === 'function' ? errorHandler  : console.error;
-    this.debugHandler  = typeof debugHandler === 'function' ? debugHandler : () => {};
+  this.outputHandler = typeof outputHandler === 'function' ? outputHandler : (message, meta) => logger.info(message, meta);
+  this.errorHandler  = typeof errorHandler  === 'function' ? errorHandler  : (message, meta) => logger.error(message, meta);
+  this.debugHandler  = typeof debugHandler === 'function' ? debugHandler : (message, meta) => logger.debug(message, meta);
     // --- NEW: Assign progress handler ---
     this.progressHandler = typeof progressHandler === 'function' ? progressHandler : () => {}; // Assign from destructured var
 
@@ -105,7 +108,7 @@ export class ResearchEngine {
     }
 
     if (!this.user || !this.user.username) {
-      this.debug('[ResearchEngine] Warning: User information not provided in config.');
+  this.debug('[ResearchEngine] Warning: User information not provided in config.');
       this.user = this.user || { username: 'unknown', role: 'unknown' };
     }
 
@@ -122,7 +125,7 @@ export class ResearchEngine {
       this.debug('[ResearchEngine] Search provider not initialised due to missing Brave API key (test mode).');
     }
 
-    this.debug(`[ResearchEngine] Initialized for user: ${this.user.username}`);
+  this.debug(`[ResearchEngine] Initialized for user: ${this.user.username}`);
     if (this.overrideQueries) {
         this.debug(`[ResearchEngine] Initialized with ${this.overrideQueries.length} override queries.`);
     }
@@ -149,7 +152,7 @@ export class ResearchEngine {
       };
     }
     const llmModel = this.llmClient?.config?.model || llmConfig.model || 'mock-model';
-    this.debugHandler(`ResearchEngine LLMClient initialized. API Key Set: ${!!this.veniceApiKey}, Model: ${llmModel}, Character for Research: ${this.researchCharacterSlug || 'Default (from provider)'}`);
+  this.debugHandler(`ResearchEngine LLMClient initialized. API Key Set: ${!!this.veniceApiKey}, Model: ${llmModel}, Character for Research: ${this.researchCharacterSlug || 'Default (from provider)'}`);
 
     this.rateLimiter = new RateLimiter(5, 1000);
 
@@ -357,7 +360,9 @@ export class ResearchEngine {
 
     } catch (error) {
       this.error(`[ResearchEngine] Error during research: ${error.message}`);
-      console.error(error.stack); // Log stack for debugging
+      if (error?.stack) {
+        this.debug('[ResearchEngine] Stack trace captured for debugging.', { stack: error.stack });
+      }
        // Send final progress update indicating error
        // Ensure progressData is defined before accessing properties
        const errorProgress = {

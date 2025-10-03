@@ -26,6 +26,7 @@ For roadmap-level planning of retrieval and RAG enhancements, see [`guides/retri
 
 1. **Dispatch**
    - CLI command router or WebSocket handler recognises `/research` and invokes `executeResearch` with parsed flags (`--depth`, `--breadth`, `--classify`, `--public`, `--verbose`).
+   - WebSocket sessions without an explicit query now trigger an immediate `wsPrompt` asking the operator to supply the research question before continuing; the trimmed response is injected back into the command payload.
    - Chat conversations call the same helper through `startResearchFromChat`.
 
 2. **Guard**
@@ -52,7 +53,7 @@ For roadmap-level planning of retrieval and RAG enhancements, see [`guides/retri
 
 7. **Post-action**
    - CLI prints the Markdown and returns success metadata.
-   - WebSocket flow stores results in the session, emits `research_complete`, and prompts for `post_research_action` (Display / Download / Upload / Discard).
+   - WebSocket flow stores results in the session, caches the trimmed query for follow-up actions, emits `research_complete`, and prompts for `post_research_action` (Display / Download / Upload / Discard).
 
 ---
 
@@ -140,6 +141,36 @@ npm start
 - **Password prompts**: `/research` still prompts for a password despite plaintext key storage. Streamline once encryption is reinstated or remove the prompt when the vault remains disabled.
 - **HTTP endpoint**: `POST /api/research` returns `501`. Decide whether to implement authenticated research over HTTP or retire the route to avoid confusion.
 - **Multi-user readiness**: Engine currently assumes single-user mode (no per-user vault). Revisit when multi-user requirements return.
+
+---
+
+## 8. Research Request Scheduler
+
+The scheduler expands the research stack by polling GitHub for structured research requests and handing them to operators or downstream workers.
+
+### Architecture
+
+| Layer | Module | Responsibility |
+| --- | --- | --- |
+| Config | `app/config/index.mjs` | Reads `research.scheduler` and `research.github` defaults from env variables. |
+| Fetcher | `app/features/research/github-sync/request.fetcher.mjs` | Lists files in `requests/`, parses JSON/plaintext payloads, filters pending tasks. |
+| Scheduler | `app/features/research/github-sync/request.scheduler.mjs` | Wraps node-cron around the fetcher, enforces sequential execution, records state snapshots. |
+| Wiring | `app/features/research/github-sync/index.mjs` | Exposes singleton helpers (`getResearchRequestScheduler`, `getResearchSchedulerConfig`). |
+| Bootstrap | `app/start.mjs` | Starts the scheduler automatically when `RESEARCH_SCHEDULER_ENABLED=true` (server & CLI). |
+
+### Request Format
+
+- **JSON**: `{ "query": "Explore fusion reactors", "depth": 3, "breadth": 2, "status": "pending", "metadata": { ... } }`
+- **Plaintext**: file contents become the `query`; metadata defaults are inferred.
+- Allowed statuses considered pending: `pending`, `new`, `open`. Anything else is skipped.
+
+### CLI & Web Controls
+
+- `/research-scheduler status` – Inspect the latest snapshot, including last run timestamps and totals.
+- `/research-scheduler run` – Trigger an immediate fetch cycle (`trigger=manual`).
+- `/research-scheduler start|stop` – Toggle the cron worker at runtime (respects configured timezone and cron expression).
+
+The command is available in both CLI and web terminals, satisfying parity requirements. Future enhancements can hook the handler into the research pipeline or archive processed files using `RESEARCH_GITHUB_PROCESSED_PATH`.
 
 ---
 

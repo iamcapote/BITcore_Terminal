@@ -23,8 +23,9 @@ The Deep Research Privacy App is a privacy-focused research tool that automates 
 11. [Production Deployment](#production-deployment)
 12. [Security Considerations](#security-considerations)
 13. [Troubleshooting](#troubleshooting)
-14. [Validation & Accuracy Check](#validation--accuracy-check)
-15. [Development Guidelines (Agents & Modules)](#development-guidelines-agents--modules)
+14. [Research Request Scheduler](#research-request-scheduler)
+15. [Validation & Accuracy Check](#validation--accuracy-check)
+16. [Development Guidelines (Agents & Modules)](#development-guidelines-agents--modules)
 
 ---
 
@@ -86,6 +87,11 @@ This application automates research using AI-driven querying and summarization. 
    - After research completes, CLI users see a menu while Web users receive a prompt (`post_research_action`) to choose Display, Download, Upload (GitHub), or Discard.
    - Download leverages the `download_file` WebSocket event, while uploads run through `app/utils/github.utils.mjs` using decrypted user credentials.
 
+11. **Research Request Scheduler**
+   - Node-cron worker (disabled by default) that polls the configured GitHub research repository for pending request files.
+   - Configured through `app/config/index.mjs` defaults or environment variables (`RESEARCH_SCHEDULER_*`, `RESEARCH_GITHUB_*`).
+   - Controlled via the `/research-scheduler` command and starts automatically when enabled for both server and CLI modes.
+
 ---
 
 ## File Structure
@@ -108,7 +114,7 @@ app/
       research.mjs             – Research command entry-point wrapper
       status.cli.mjs           – `/status` reporting
       terminal.cli.mjs         – Terminal preference management
-      users.cli.mjs            – Legacy `/users` admin management (inoperative in single-user mode)
+   users.cli.mjs            – `/users` admin wrapper; prints single-user notice unless an adapter is registered
 
    config/
       index.mjs               – Runtime configuration loader
@@ -194,6 +200,8 @@ package.json, vitest.config.js, .env (optional), and other project metadata live
    - `npm start -- cli` or `node app/start.mjs cli`.
    - Interactive text-based prompts for commands and parameters.
 
+When `RESEARCH_SCHEDULER_ENABLED=true`, both modes automatically bootstrap the cron worker at launch; otherwise the scheduler remains idle until started manually via `/research-scheduler start`.
+
 ---
 
 ## Single-User Mode
@@ -213,7 +221,7 @@ Authentication is removed. The system operates as a single global user:
 
 ### Research Pipeline Overview
 
-1.  **Initiation:** User provides query via CLI prompt, Web-CLI prompt (`handleCommandMessage` -> `wsPrompt`), or `/research` command (with optional flags like `--depth`, `--breadth`, `--classify`). Handled by `app/commands/research.cli.mjs`.
+1.  **Initiation:** User provides a query via CLI prompt, Web-CLI prompt (`handleCommandMessage` -> `wsPrompt`), or `/research` command (with optional flags like `--depth`, `--breadth`, `--classify`). When the Web terminal receives `/research` with no query, it immediately issues an interactive prompt so the operator can supply one before the engine starts. Handled by `app/commands/research.cli.mjs`.
 2.  **Token Classification (Optional):** If enabled (via prompt or `--classify` flag), the query is sent to Venice API via `app/utils/token-classifier.mjs::callVeniceWithTokenClassifier`. Returned metadata is added to the query object.
 3.  **Query Generation:** `app/features/ai/research.providers.mjs::generateQueries` is intended to expand the query (and metadata, if present) into breadth/depth prompts. The current build ships with a placeholder implementation (see `guides/gaps.md`) until the Venice-backed variant is restored.
 4.  **Search Execution:** `app/infrastructure/research/research.path.mjs` uses `app/infrastructure/search/search.providers.mjs` (Brave) to execute queries, handling rate limits.
@@ -371,6 +379,18 @@ The chat system enables interactive conversations with an AI, featuring context 
    `npm start -- cli`
    Follow the interactive text-based session.
 
+### Scheduler Environment Variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RESEARCH_SCHEDULER_ENABLED` | `false` | Toggles the GitHub research request poller. |
+| `RESEARCH_SCHEDULER_CRON` | `*/15 * * * *` | Cron cadence for polling GitHub. |
+| `RESEARCH_SCHEDULER_TZ` | *(unset)* | Optional timezone passed to node-cron (e.g., `UTC`, `America/New_York`). |
+| `RESEARCH_SCHEDULER_RUN_ON_START` | `true` | Run a fetch immediately when the scheduler starts. |
+| `RESEARCH_SCHEDULER_MAX_REQUESTS` | `10` | Maximum requests processed per tick. |
+| `RESEARCH_GITHUB_REQUESTS_PATH` | `requests` | Directory inside the research repo containing pending requests. |
+| `RESEARCH_GITHUB_PROCESSED_PATH` | *(unset)* | Optional directory for archiving processed requests (future use). |
+
 ---
 
 ## Production Deployment
@@ -391,6 +411,32 @@ The chat system enables interactive conversations with an AI, featuring context 
 - **Input Sanitization**: Query cleaning (`app/utils/research.clean-query.mjs`) exists, but review command parsing and inputs for potential injection risks.
 - **Rate Limiting**: Implemented for login attempts (`app/features/auth/user-manager.mjs`) and external API calls (`app/utils/research.rate-limiter.mjs`).
 
+### Optional Multi-User Adapters
+
+Self-hosted deployments that need true multi-user management can register a directory adapter at startup:
+
+```js
+import { userManager } from './app/features/auth/user-manager.mjs';
+
+userManager.registerUserDirectoryAdapter({
+   async listUsers() {
+      return [
+         { username: 'admin', role: 'admin' },
+         { username: 'analyst', role: 'client' }
+      ];
+   },
+   async createUser({ username, role }) {
+      // persist user and return normalized record
+      return { username, role };
+   },
+   async deleteUser({ username }) {
+      // remove user from backing store
+   }
+});
+```
+
+With an adapter registered, the `/users` command (CLI and web terminal) delegates create/list/delete actions to the provided functions. Leave the adapter undefined to keep the default single-operator mode.
+
 ---
 
 ## Troubleshooting
@@ -398,6 +444,17 @@ The chat system enables interactive conversations with an AI, featuring context 
    - Check Node.js version (v18+ likely required).
    - Ensure required environment variables are set if needed (e.g., `PORT`). Check `.env` file.
    - Run `npm install` to ensure dependencies are met.
+
+## Research Request Scheduler
+
+The scheduler is implemented in `app/features/research/github-sync/request.scheduler.mjs` and activated when `RESEARCH_SCHEDULER_ENABLED=true`.
+
+- **Fetch**: Uses the GitHub research sync controller to list request files (JSON or plaintext) under the configured directory and parses them into normalized tasks.
+- **Filter**: Skips closed or malformed entries, only surfacing items with `status` markers such as `pending`, `new`, or `open`.
+- **Handle**: Invokes an injected handler for each request (the default logs discoveries). Extend this handler to enqueue jobs or trigger the research engine.
+- **Control**: `/research-scheduler status|run|start|stop` offers runtime management in both CLI and Web terminals. Programmatic consumers can call `getResearchRequestScheduler()` to interact directly.
+
+See [`guides/research.md`](./guides/research.md#research-request-scheduler) for architecture diagrams and extension guidance.
 
 2. **Research/Chat Command Fails**
    - Ensure you are logged in (`/status`).

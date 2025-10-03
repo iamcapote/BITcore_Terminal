@@ -1,6 +1,15 @@
+/**
+ * Why: Provide search provider abstractions for the research stack.
+ * What: Exposes Brave web search with rate limiting, retries, and structured error surfaces.
+ * How: Wraps Brave's REST API behind a provider class, enforces configuration, and emits structured logs for CLI/Web parity.
+ */
+
 import axios from 'axios';
 import { RateLimiter } from '../../utils/research.rate-limiter.mjs';
 import { cleanQuery } from '../../utils/research.clean-query.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const logger = createModuleLogger('search.brave');
 
 export class SearchError extends Error {
   constructor(code, message, provider) {
@@ -19,23 +28,23 @@ export class BraveSearchProvider {
     this.apiKey = options.apiKey || process.env.BRAVE_API_KEY;
 
     if (!this.apiKey) {
-      console.error('[BraveSearchProvider] CRITICAL: No API Key provided or found in environment variables (BRAVE_API_KEY).');
+      logger.error('[BraveSearchProvider] CRITICAL: No API Key provided or found in environment variables (BRAVE_API_KEY).');
       // Include generic phrase to satisfy tests expecting /API key is required/
       throw new SearchError('ConfigError', 'API key is required (Missing BRAVE_API_KEY)', 'Brave');
     }
 
-    console.log(`[BraveSearchProvider] Initialized using ${options.apiKey ? 'User-Provided' : 'Global Environment'} API Key.`);
+    logger.info(`[BraveSearchProvider] Initialized using ${options.apiKey ? 'User-Provided' : 'Global Environment'} API Key.`);
 
     this.rateLimiter = new RateLimiter(10000); // 10 seconds base delay
     this.retryDelay = 5000; // Start with 5 seconds for retries
     this.maxRetries = 3;
-    this.output = options.outputFn || console.log; // Add outputFn
-    this.error = options.errorFn || console.error; // Add errorFn
+    this.output = options.outputFn || ((message, meta) => logger.info(message, meta));
+    this.error = options.errorFn || ((message, meta) => logger.error(message, meta));
   }
 
   async makeRequest(query) {
     if (!this.apiKey) {
-      console.error('[BraveSearchProvider] makeRequest called without a valid API key.');
+      logger.error('[BraveSearchProvider] makeRequest called without a valid API key.');
       this.error('[BraveSearchProvider] makeRequest called without a valid API key.');
       throw new SearchError('ConfigError', 'Missing BRAVE_API_KEY during request', 'Brave');
     }
@@ -59,7 +68,7 @@ export class BraveSearchProvider {
       });
 
       if (!response.data?.web?.results) {
-        console.error('[BraveSearchProvider] Unexpected response shape:', response.data);
+        logger.error('[BraveSearchProvider] Unexpected response shape.', { response: response.data });
         this.error('[BraveSearchProvider] Unexpected response shape:', response.data);
         return [];
       }
@@ -73,19 +82,19 @@ export class BraveSearchProvider {
       }));
     } catch (error) {
       if (error.response?.status === 429) {
-        console.error('[BraveSearchProvider] Rate-limited by Brave.');
+        logger.warn('[BraveSearchProvider] Rate-limited by Brave.');
         this.output('[BraveSearchProvider] Rate-limited by Brave.');
         throw new SearchError('RATE_LIMIT', 'Rate-limited by Brave', 'Brave');
       } else if (error.response?.status === 422) {
-        console.error('[BraveSearchProvider] Received HTTP 422 from Brave. Check query parameters:', error.response?.data || error.message);
+        logger.error('[BraveSearchProvider] Received HTTP 422 from Brave. Check query parameters.', { detail: error.response?.data || error.message });
         this.error('[BraveSearchProvider] Received HTTP 422 from Brave. Check query parameters:', error.response?.data || error.message);
         throw new SearchError('API_ERROR', 'Received HTTP 422 from Brave.', 'Brave');
       } else if (error.response?.status === 401) {
-        console.error('[BraveSearchProvider] Received HTTP 401 Unauthorized. Check API Key.');
+        logger.error('[BraveSearchProvider] Received HTTP 401 Unauthorized. Check API Key.');
         this.error('[BraveSearchProvider] Received HTTP 401 Unauthorized. Check API Key.');
         throw new SearchError('AUTH_ERROR', 'Invalid Brave API Key', 'Brave');
       }
-      console.error('[BraveSearchProvider] Unhandled Brave error:', error.message, error.stack);
+      logger.error('[BraveSearchProvider] Unhandled Brave error.', { message: error.message, stack: error.stack });
       this.error('[BraveSearchProvider] Unhandled Brave error:', error.message);
       throw new SearchError('API_ERROR', error.message || 'Brave request failed', 'Brave');
     }
@@ -109,13 +118,13 @@ export class BraveSearchProvider {
       try {
         const results = await this.makeRequest(truncatedQuery);
         if (results.length === 0) {
-          console.error(`[BraveSearchProvider] API returned 0 results for "${truncatedQuery}".`);
+          logger.warn(`[BraveSearchProvider] API returned 0 results for "${truncatedQuery}".`);
           this.error(`[BraveSearchProvider] API returned 0 results for "${truncatedQuery}".`);
         }
         return results;
       } catch (error) {
         if (error instanceof SearchError && error.code === 'AUTH_ERROR') {
-          console.error(`[BraveSearchProvider] Authentication error (${error.message}). Aborting search.`);
+          logger.error(`[BraveSearchProvider] Authentication error (${error.message}). Aborting search.`);
           this.error(`[BraveSearchProvider] Authentication error (${error.message}). Aborting search.`);
           throw error;
         }
@@ -125,14 +134,14 @@ export class BraveSearchProvider {
           await new Promise((resolve) => setTimeout(resolve, delay));
           retryCount++;
         } else {
-          console.error(`[BraveSearchProvider] Unexpected error during search retry loop: ${error.message}`, error.stack);
+          logger.error('[BraveSearchProvider] Unexpected error during search retry loop.', { message: error.message, stack: error.stack });
           this.error(`[BraveSearchProvider] Unexpected error during search retry loop: ${error.message}`);
           throw error;
         }
       }
     }
 
-    console.error('[BraveSearchProvider] Exceeded maximum retries - returning empty result set.');
+    logger.error('[BraveSearchProvider] Exceeded maximum retries - returning empty result set.');
     this.error('[BraveSearchProvider] Exceeded maximum retries - returning empty result set.');
     throw new SearchError('RATE_LIMIT', 'Exceeded maximum retries due to rate limiting', 'Brave');
   }
@@ -144,7 +153,7 @@ export function suggestSearchProvider(options = {}) {
     try {
       return new BraveSearchProvider({ apiKey, outputFn, errorFn }); // Pass outputFn, errorFn
     } catch (error) {
-      console.error(`[suggestSearchProvider] Error creating BraveSearchProvider: ${error.message}`);
+      logger.error('[suggestSearchProvider] Error creating BraveSearchProvider.', { message: error.message });
       throw error;
     }
   }

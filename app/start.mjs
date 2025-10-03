@@ -1,3 +1,9 @@
+/**
+ * Why: Bootstrap entrypoint for the BITcore terminal, hosting both the web server and interactive CLI flows.
+ * What: Loads configuration, wires Express routes, stands up the WebSocket gateway, and conditionally starts either the HTTP server or CLI runtime.
+ * How: Shares a module-scoped logger across routes, schedulers, and output handlers to keep telemetry aligned between surfaces.
+ */
+
 import express from 'express';
 import http from 'http';
 import { WebSocketServer } from 'ws';
@@ -22,8 +28,12 @@ import { setupModelBrowserRoutes } from './features/ai/model-browser/index.mjs';
 import { setupChatHistoryRoutes } from './features/chat-history/routes.mjs';
 import { setupLogRoutes } from './features/logs/routes.mjs';
 import { setupChatPersonaRoutes } from './features/chat/chat-persona.routes.mjs';
+import { getResearchRequestScheduler, getResearchSchedulerConfig } from './features/research/github-sync/index.mjs';
+import { createModuleLogger } from './utils/logger.mjs';
 
 dotenv.config();
+
+const logger = createModuleLogger('app.start');
 
 // --- Configuration ---
 const __filename = fileURLToPath(import.meta.url);
@@ -40,25 +50,26 @@ app.use(express.static(path.join(__dirname, 'public'))); // Serve static files
 // --- Feature Routes ---
 setupMemoryRoutes(app);
 setupPromptRoutes(app);
-setupMissionRoutes(app, { logger: console });
-setupStatusRoutes(app, { logger: console });
+setupMissionRoutes(app, { logger: logger.child('routes.missions') });
+setupStatusRoutes(app, { logger: logger.child('routes.status') });
 setupGithubSyncRoutes(app);
-setupGithubActivityRoutes(app, { logger: console });
-setupTerminalPreferencesRoutes(app, { logger: console });
-setupResearchPreferencesRoutes(app, { logger: console });
-setupModelBrowserRoutes(app, { logger: console });
-setupChatHistoryRoutes(app, { logger: console });
-setupLogRoutes(app, { logger: console });
-setupChatPersonaRoutes(app, { logger: console });
+setupGithubActivityRoutes(app, { logger: logger.child('routes.github-activity') });
+setupTerminalPreferencesRoutes(app, { logger: logger.child('routes.terminal-preferences') });
+setupResearchPreferencesRoutes(app, { logger: logger.child('routes.research-preferences') });
+setupModelBrowserRoutes(app, { logger: logger.child('routes.model-browser') });
+setupChatHistoryRoutes(app, { logger: logger.child('routes.chat-history') });
+setupLogRoutes(app, { logger: logger.child('routes.logs') });
+setupChatPersonaRoutes(app, { logger: logger.child('routes.chat-persona') });
 
 // --- WebSocket Setup ---
 // Ensure the server object is correctly passed
-console.log('[WebSocket] Initializing WebSocketServer...');
+const wsLogger = logger.child('websocket');
+wsLogger.info('Initializing WebSocketServer.', { path: WEBSOCKET_PATH });
 const wss = new WebSocketServer({ server, path: WEBSOCKET_PATH });
-console.log(`[WebSocket] WebSocketServer created. Listening on path: ${WEBSOCKET_PATH}`);
+wsLogger.info('WebSocketServer created.', { path: WEBSOCKET_PATH });
 
 wss.on('error', (error) => {
-    console.error('[WebSocket] Server Error:', error);
+  wsLogger.error('WebSocket server error.', { message: error?.message, stack: error?.stack });
 });
 
 // --- Root Route ---
@@ -110,7 +121,7 @@ app.get('/logs', (req, res) => {
 
 // --- Error Handling Middleware (Basic) ---
 app.use((err, req, res, next) => {
-  console.error("Unhandled Error:", err.stack || err);
+  logger.error('Unhandled Express error.', { message: err?.message, stack: err?.stack });
   res.status(500).send('Something broke!');
 });
 
@@ -120,29 +131,37 @@ app.use((err, req, res, next) => {
  * Starts the application in Web Server mode.
  */
 async function startServer() {
-  console.log('Web-CLI mode active. Access via browser.');
+  logger.info('Web-CLI mode active. Access via browser.');
     await userManager.initialize();
     const currentUser = userManager.getCurrentUser();
-    console.log(`[Server] Operating in single-user mode as ${currentUser.username} (${currentUser.role}).`);
+    logger.info('Server operating in single-user mode.', { username: currentUser.username, role: currentUser.role });
 
   const missionConfig = getMissionConfig();
   if (missionConfig.schedulerEnabled) {
-    const missionScheduler = getMissionScheduler({ logger: console, intervalMs: missionConfig.pollingIntervalMs });
+    const missionScheduler = getMissionScheduler({ logger: logger.child('scheduler.missions'), intervalMs: missionConfig.pollingIntervalMs });
     missionScheduler.start();
   } else {
-    console.log('[Server] Mission scheduler disabled via feature flag.');
+    logger.info('Mission scheduler disabled via feature flag.');
+  }
+
+  const researchSchedulerConfig = getResearchSchedulerConfig();
+  if (researchSchedulerConfig.enabled) {
+    const researchScheduler = getResearchRequestScheduler({ logger: logger.child('scheduler.research') });
+    researchScheduler.start();
+  } else {
+    logger.info('Research request scheduler disabled via feature flag.');
   }
   // Use the HTTP server instance directly for listening
     server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Server] Express server running on http://0.0.0.0:${PORT}`);
-    console.log(`[Server] Attempting to listen for WebSocket connections on path: ${WEBSOCKET_PATH}`);
+    logger.info('Express server running.', { host: '0.0.0.0', port: PORT });
+    wsLogger.info('Listening for WebSocket connections.', { path: WEBSOCKET_PATH });
   });
 
   server.on('error', (error) => {
-      console.error(`[Server Error] ${error.message}`);
+      logger.error('Server listen error.', { message: error?.message, stack: error?.stack, code: error?.code });
       // Handle specific listen errors with friendly messages
       if (error.code === 'EADDRINUSE') {
-          console.error(`Port ${PORT} is already in use. Please close the other process or use a different port.`);
+          logger.error('Port already in use.', { port: PORT });
           process.exit(1);
       }
   });
@@ -150,7 +169,7 @@ async function startServer() {
   // --- RESTORE Original WebSocket Connection Handler ---
   wss.on('connection', (ws, req) => {
       // Use the original handler you imported
-      console.log(`[WebSocket] Passing connection to handleWebSocketConnection for path: ${req.url}`); // Add log
+      wsLogger.debug('Passing connection to handler.', { path: req.url });
       handleWebSocketConnection(ws, req);
   });
   // --- END RESTORED HANDLER ---
@@ -160,33 +179,41 @@ async function startServer() {
  * Starts the application in Console CLI mode.
  */
 async function startCli() {
-    console.log("Starting Console CLI mode...");
+  logger.info('Starting Console CLI mode.');
     // Set the log handler for the OutputManager in CLI mode
     output.setLogHandler((level, message) => {
-        // Simple console logging based on level
-        if (level === 'error') {
-            console.error(`[${level.toUpperCase()}] ${message}`);
-        } else if (level === 'warn') {
-            console.warn(`[${level.toUpperCase()}] ${message}`);
-        } else if (level === 'debug' && process.env.DEBUG_MODE === 'true') {
-            console.debug(`[${level.toUpperCase()}] ${message}`);
-        } else if (level !== 'debug') { // Log info and others
-            console.log(message); // Keep info logs clean
-        }
+    const normalized = typeof message === 'string' ? message : JSON.stringify(message);
+    if (level === 'error') {
+      logger.error(normalized);
+    } else if (level === 'warn') {
+      logger.warn(normalized);
+    } else if (level === 'debug') {
+      logger.debug(normalized);
+    } else {
+      logger.info(normalized);
+    }
     });
 
     try {
         await userManager.initialize();
         const currentUser = userManager.getCurrentUser();
-        console.log(`[CLI] Operating in single-user mode as ${currentUser.username} (${currentUser.role}).`);
-        console.log("Welcome to MCP Console CLI. Type /help for commands, /exit to quit.");
+    logger.info('CLI operating in single-user mode.', { username: currentUser.username, role: currentUser.role });
+    logger.info('Welcome to MCP Console CLI. Type /help for commands, /exit to quit.');
 
   const missionConfig = getMissionConfig();
   if (missionConfig.schedulerEnabled) {
-    const missionScheduler = getMissionScheduler({ logger: console, intervalMs: missionConfig.pollingIntervalMs });
+  const missionScheduler = getMissionScheduler({ logger: logger.child('scheduler.missions'), intervalMs: missionConfig.pollingIntervalMs });
     missionScheduler.start();
   } else {
-    console.log('[CLI] Mission scheduler disabled via feature flag.');
+  logger.info('CLI mission scheduler disabled via feature flag.');
+  }
+
+  const researchSchedulerConfig = getResearchSchedulerConfig();
+  if (researchSchedulerConfig.enabled) {
+  const researchScheduler = getResearchRequestScheduler({ logger: logger.child('scheduler.research') });
+    researchScheduler.start();
+  } else {
+  logger.info('CLI research request scheduler disabled via feature flag.');
   }
 
         // Use interactiveCLI, passing the command map and output function
@@ -194,14 +221,14 @@ async function startCli() {
             commands: commands, // Pass the imported commands map
             onOutput: output.log, // Use the output manager's log method
             onExit: () => {
-                console.log('Exiting MCP Console CLI.');
+        logger.info('Exiting MCP Console CLI.');
                 process.exit(0);
             }
         });
 
     } catch (error) {
         output.error(`[CLI] Failed to start: ${error.message}`); // Use output manager
-        console.error(error.stack); // Log stack trace for debugging
+    logger.error('CLI startup failure.', { message: error?.message, stack: error?.stack });
         process.exit(1);
     }
 }

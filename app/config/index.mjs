@@ -1,10 +1,20 @@
+/**
+ * Runtime Configuration Loader
+ * Why: Centralize environment, secure overlay, and default settings for server features.
+ * What: Builds a normalized config object consumed by features, optionally merging encrypted overrides.
+ * How: Parses env vars, applies type coercion helpers, and hydrates secure overlays with structured logging.
+ */
+
 import dotenv from 'dotenv';
 import path from 'path';
 import { loadEncryptedConfigSync } from '../infrastructure/config/encrypted-config.store.mjs';
 import { validateSecureConfigPayload, mergeSecureConfig } from '../features/config/config.schema.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
 
 // Load environment variables from .env file
 dotenv.config();
+
+const moduleLogger = createModuleLogger('config.index');
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -42,6 +52,19 @@ const baseConfig = {
   github: {
     // Add GitHub related configs if needed (e.g., default repo, path)
     // Note: User-specific tokens are handled by userManager
+  },
+  research: {
+    scheduler: {
+      enabled: parseBoolean(process.env.RESEARCH_SCHEDULER_ENABLED, false),
+      cron: process.env.RESEARCH_SCHEDULER_CRON || '*/15 * * * *',
+      timezone: process.env.RESEARCH_SCHEDULER_TZ || null,
+      runOnStart: parseBoolean(process.env.RESEARCH_SCHEDULER_RUN_ON_START, true),
+      maxRequestsPerTick: parseInteger(process.env.RESEARCH_SCHEDULER_MAX_REQUESTS, 10)
+    },
+    github: {
+      requestsPath: process.env.RESEARCH_GITHUB_REQUESTS_PATH || 'requests',
+      processedPath: process.env.RESEARCH_GITHUB_PROCESSED_PATH || null
+    }
   },
   chat: {
     history: {
@@ -119,7 +142,7 @@ if (secureSecret) {
     const overlay = loadEncryptedConfigSync({
       secret: secureSecret,
       validator: validateSecureConfigPayload,
-      logger: console,
+      logger: moduleLogger,
     });
 
     if (overlay && Object.keys(overlay).length) {
@@ -129,7 +152,10 @@ if (secureSecret) {
       resolvedConfig = { ...baseConfig, __secureOverlay: Object.freeze({ loaded: false }) };
     }
   } catch (error) {
-    console.warn(`[Config] Failed to apply secure configuration overlay: ${error.message}`);
+    moduleLogger.warn('Failed to apply secure configuration overlay.', {
+      message: error.message,
+      stack: error.stack || null
+    });
     resolvedConfig = baseConfig;
   }
 } else {

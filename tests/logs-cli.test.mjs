@@ -80,3 +80,48 @@ describe('executeLogs tail', () => {
     }
   });
 });
+
+describe('executeLogs admin subcommands', () => {
+  it('reports current settings', async () => {
+    const { output, error, outputs, errors } = createSpies();
+
+    const result = await executeLogs({ action: 'settings' }, output, error);
+
+    expect(result.success).toBe(true);
+    expect(outputs.some((line) => typeof line === 'string' && line.includes('Buffer Size'))).toBe(true);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('updates buffer retention size', async () => {
+    const { output, error, outputs, errors } = createSpies();
+
+    const result = await executeLogs({ action: 'retention', positionalArgs: ['650'] }, output, error);
+
+    expect(result.success).toBe(true);
+    expect(logChannel.getBufferSize()).toBe(650);
+    expect(outputs.find((line) => typeof line === 'string')).toContain('650');
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects invalid retention payloads', async () => {
+    const { output, error, errors } = createSpies();
+
+    const result = await executeLogs({ action: 'retention', positionalArgs: ['invalid'] }, output, error);
+
+    expect(result.success).toBe(false);
+    expect(errors).toHaveLength(1);
+    expect(result.error).toMatch(/finite integer/i);
+  });
+
+  it('clears the log buffer', async () => {
+    logChannel.push({ level: 'warn', message: 'to be purged' });
+    const { output, error, outputs, errors } = createSpies();
+
+    const result = await executeLogs({ action: 'purge' }, output, error);
+
+    expect(result.success).toBe(true);
+    expect(logChannel.getSnapshot()).toHaveLength(0);
+    expect(outputs.find((line) => typeof line === 'string')).toContain('cleared');
+    expect(errors).toHaveLength(0);
+  });
+});

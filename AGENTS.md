@@ -19,6 +19,14 @@ Pragmatic guidance for building, extending, and maintaining agents and modules i
 - Agent is autopoeitic, indendependent and self-evolving.
 - Ideally, you always try to min-max.
 - Every feature, setting, option and similar toggles should be included in the terminal cli and in the web gui as well. Users must be able to use the ENTIRE app from the CLI and be able to use the ENTIRE app from the web gui.
+- Optional extensions (like multi-user directories) must wire through adapters that are easy to register and keep the single-user baseline untouched.
+- Comment doctrine: summarize behavior with terse, timeless sentences; open every file with a Why/What/How docblock, annotate sections only for structure, and keep comments free of TODOs or status chatter.
+
+### Comment & Surface Doctrine (2025-10-02 refresh)
+
+- Enforce 300–500 LOC envelopes per module and split responsibilities into micro modules (routers, orchestrators, managers, systems) before they sprawl.
+- Lead every file with a concise Why/What/How docblock, reinforce sections with timeless structural comments, and ban TODOs or status chatter from code comments.
+- Mirror feature coverage across the terminal CLI and Web GUI so every toggle, setting, and capability is visible and operable in both experiences.
 
 ## Repository Conventions (Context-aware)
 

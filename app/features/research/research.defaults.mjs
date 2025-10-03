@@ -9,6 +9,7 @@ import {
   getResearchPreferences,
   getDefaultResearchPreferences,
 } from '../preferences/index.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
 
 const INTEGER_RANGE = Object.freeze({
   depth: Object.freeze({ min: 1, max: 6 }),
@@ -17,6 +18,8 @@ const INTEGER_RANGE = Object.freeze({
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on', 'public']);
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off', 'private']);
+
+const moduleLogger = createModuleLogger('research.defaults');
 
 function parseIntegerInRange(value, { min, max }) {
   if (value == null) {
@@ -83,7 +86,10 @@ export async function resolveResearchDefaults(overrides = {}, options = {}) {
   try {
     snapshot = await getResearchPreferences({ storageDir, refresh });
   } catch (error) {
-    console.warn('[ResearchDefaults] Falling back to default preferences:', error?.message);
+    moduleLogger.warn('Falling back to default preferences.', {
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
     snapshot = null;
   }
 

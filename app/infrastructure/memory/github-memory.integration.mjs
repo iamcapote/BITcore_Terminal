@@ -1,8 +1,7 @@
 /**
- * GitHub Memory Integration for MCP
- * 
- * Provides integration with GitHub repositories for persistent memory storage.
- * Manages long-term memory and meta-memory repositories.
+ * Why: Persist conversational memories to GitHub (with local fallback) for long-term recall across sessions.
+ * What: Wraps GitHub content APIs and local storage utilities to store, retrieve, and validate memory registries.
+ * How: Maintains repository metadata per user, pushes structured markdown/JSON entries, and emits structured logs for errors and fallbacks.
  */
 
 import fetch from 'node-fetch';
@@ -10,6 +9,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import { execSync } from 'child_process';
 import crypto from 'crypto';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('memory.github');
 
 // Default memory repository settings
 const DEFAULT_SETTINGS = {
@@ -52,6 +54,7 @@ export class GitHubMemoryIntegration {
     this.apiToken = apiToken;
     this.enabled = enabled;
     this.dataDir = dataDir;
+    this.logger = moduleLogger.withMeta({ username, repoName, enabled });
     
     // Create local directory structure
     this.ensureDirectoryExists();
@@ -71,7 +74,7 @@ export class GitHubMemoryIntegration {
       await fs.mkdir(path.join(this.dataDir, 'long_term'), { recursive: true });
       await fs.mkdir(path.join(this.dataDir, 'meta'), { recursive: true });
     } catch (error) {
-      console.error(`Failed to create memory directory: ${error.message}`);
+      this.logger.error('Failed to create memory directory.', { message: error.message, stack: error.stack });
     }
   }
   
@@ -111,15 +114,15 @@ export class GitHubMemoryIntegration {
           
           // Update registry file
           const updateResult = await this.updateRegistryFile(registryPath, registry);
-          console.log(`[GitHubMemory] Stored memory ${memoryData.id} in ${registryPath}. Commit SHA: ${updateResult.sha}`);
+          this.logger.info('Stored memory in GitHub registry.', { memoryId: memoryData.id, registryPath, sha: updateResult.sha });
           return { success: true, memoryId: memoryData.id, sha: updateResult.sha };
         } catch (error) {
-          console.error(`GitHub memory storage failed: ${error.message}`);
+          this.logger.error('GitHub memory storage failed.', { message: error.message, stack: error.stack, memoryId: memoryData.id });
           // Fall back to local storage if GitHub fails
           if (!DEFAULT_SETTINGS.useLocalFallback) {
              throw new Error(`GitHub storage failed and local fallback is disabled: ${error.message}`);
           }
-          console.warn(`[GitHubMemory] Falling back to local storage for memory ${memoryData.id}`);
+          this.logger.warn('Falling back to local storage for memory.', { memoryId: memoryData.id });
         }
       }
       
@@ -136,12 +139,12 @@ export class GitHubMemoryIntegration {
           execSync(`git add "${filePath}"`, { cwd: this.dataDir });
           execSync(`git commit -m "Add memory: ${memoryData.id}"`, { cwd: this.dataDir });
         } catch (gitError) {
-          console.error(`Failed to store memory in GitHub: ${gitError.message}`);
+          this.logger.warn('Local git commit failed during memory store.', { message: gitError.message });
         }
         
         return { success: true, memoryId: memoryData.id, localPath: filePath };
       } catch (localError) {
-        console.error(`Local memory storage failed: ${localError.message}`);
+        this.logger.error('Local memory storage failed.', { message: localError.message, stack: localError.stack });
         throw localError;
       }
     } catch (error) {
@@ -302,7 +305,7 @@ Content: ${memory.content}`;
           
           return memories;
         } catch (error) {
-          console.error(`GitHub memory retrieval failed: ${error.message}`);
+          this.logger.error('GitHub memory retrieval failed in retrieveMemories.', { message: error.message, stack: error.stack, type, tags });
           // Fall back to local storage
         }
       }
@@ -329,11 +332,11 @@ Content: ${memory.content}`;
         
         return memories;
       } catch (error) {
-        console.error(`Local memory retrieval failed: ${error.message}`);
+        this.logger.error('Local memory retrieval failed in retrieveMemories.', { message: error.message, stack: error.stack, type, tags });
         return [];
       }
     } catch (error) {
-      console.error(`Memory retrieval error: ${error.message}`);
+      this.logger.error('Memory retrieval error.', { message: error.message, stack: error.stack, type, tags });
       return [];
     }
   }
@@ -376,7 +379,7 @@ Content: ${memory.content}`;
       
       return memories;
     } catch (error) {
-      console.error(`Error parsing registry content: ${error.message}`);
+      this.logger.error('Error parsing registry content.', { message: error.message, stack: error.stack });
       return [];
     }
   }
@@ -402,7 +405,7 @@ Content: ${memory.content}`;
       
       return response.ok;
     } catch (error) {
-      console.error(`GitHub integration check failed: ${error.message}`);
+      this.logger.error('GitHub integration check failed.', { message: error.message, stack: error.stack });
       return false;
     }
   }

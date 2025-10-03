@@ -20,6 +20,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { ensureDir } from '../../utils/research.ensure-dir.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
 
 const DEFAULT_STORAGE_DIR = process.env.BITCORE_STORAGE_DIR
   || path.join(os.homedir(), '.bitcore-terminal');
@@ -41,6 +42,8 @@ const DEFAULT_RESEARCH_PREFERENCES = Object.freeze({
 
 let cachedPreferences = null;
 let cachedPreferencesPath = null;
+
+const moduleLogger = createModuleLogger('preferences.research');
 
 function resolvePreferencesPath(storageDir = DEFAULT_STORAGE_DIR) {
   return path.resolve(storageDir, PREFERENCES_FILE_NAME);
@@ -115,7 +118,10 @@ async function readPreferencesFromDisk(filePath) {
     return normalizePreferences(parsed);
   } catch (error) {
     if (error.code !== 'ENOENT') {
-      console.warn('[ResearchPreferences] Failed to read preferences, using defaults:', error.message);
+      moduleLogger.warn('Failed to read research preferences, using defaults.', {
+        message: error.message,
+        stack: error.stack || null
+      });
     }
     return normalizePreferences();
   }

@@ -4,6 +4,9 @@ import { cleanChatResponse } from '../../infrastructure/ai/venice.response-proce
 import { wsErrorHelper } from '../research/error-helper.mjs';
 import { getDefaultChatCharacterSlug } from '../../infrastructure/ai/venice.characters.mjs';
 import { getChatHistoryController } from '../chat-history/index.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('chat.routes');
 
 /**
  * Handle incoming chat messages from WebSocket clients.
@@ -21,7 +24,7 @@ export async function handleChatMessage(ws, message, session) {
     }
 
     // Use quiet error handler for debug logging without showing to user
-    const quietError = (msg) => console.error(`[Chat] ${msg}`);
+    const quietError = (msg, meta) => moduleLogger.error(msg, meta);
     
     try {
         const userMessage = message.message;
@@ -75,7 +78,10 @@ export async function handleChatMessage(ws, message, session) {
         messages.push(...recentHistory);
         
         // Call the LLM
-        console.log(`[Chat] Calling LLM with model: ${model}, character: ${character}`);
+        moduleLogger.info('Calling LLM for chat response.', {
+            model,
+            character
+        });
         const result = await llm.completeChat({
             messages: messages,
             model: model,
@@ -109,7 +115,10 @@ export async function handleChatMessage(ws, message, session) {
         
         return true; // Enable input after response
     } catch (error) {
-        console.error('[Chat] Error processing chat message:', error);
+        moduleLogger.error('Error processing chat message.', {
+            message: error?.message || String(error),
+            stack: error?.stack || null
+        });
         wsErrorHelper(ws, `Error generating chat response: ${error.message}`, true);
         return true; // Enable input after error
     }

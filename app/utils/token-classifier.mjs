@@ -1,9 +1,21 @@
-import fetch from 'node-fetch';
-import { output } from './research.output-manager.mjs';
+/**
+ * Token Classification Utilities
+ * Why: Offer a resilient helper for routing chat inputs through Venice token classification when available.
+ * What: Provides a single function that validates inputs, invokes Venice, and returns the cleaned classification output.
+ * How: Normalizes debug logging, injects the LLM client, and guards errors with structured logging and graceful fallbacks.
+ */
+
 import { LLMClient } from '../infrastructure/ai/venice.llm-client.mjs';
 import { cleanChatResponse } from '../infrastructure/ai/venice.response-processor.mjs';
 import { getDefaultTokenClassifierCharacterSlug } from '../infrastructure/ai/venice.characters.mjs';
+import { createModuleLogger } from './logger.mjs';
 // Removed VENICE_CHARACTERS import as it wasn't used
+
+const moduleLogger = createModuleLogger('utils.token-classifier');
+
+function defaultDebug(message) {
+  moduleLogger.debug(message);
+}
 
 /**
  * Sends a query to the Venice API for token classification.
@@ -13,7 +25,7 @@ import { getDefaultTokenClassifierCharacterSlug } from '../infrastructure/ai/ven
  * @returns {Promise<string|null>} The AI's response as a string, or null if classification fails non-critically.
  * @throws {Error} If API key is missing or API call fails critically.
  */
-export async function callVeniceWithTokenClassifier(query, veniceApiKey, debugHandler = console.log) {
+export async function callVeniceWithTokenClassifier(query, veniceApiKey, debugHandler = defaultDebug) {
   if (!veniceApiKey) {
     debugHandler('[TokenClassifier] Venice API key not provided. Skipping classification.');
     return null;
@@ -59,7 +71,11 @@ export async function callVeniceWithTokenClassifier(query, veniceApiKey, debugHa
     // Log the full error from LLMClient if it's an LLMError
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;
-    console.error(`[TokenClassifier] Error during token classification: ${errorMessage}`, errorStack);
+    moduleLogger.error('Token classification failed.', {
+      message: errorMessage,
+      stack: errorStack || null
+    });
+    debugHandler(`[TokenClassifier] Error during token classification: ${errorMessage}`);
     
     if (errorMessage.toLowerCase().includes('api key is required')) {
         // This indicates an issue with the key passed to LLMClient or its internal fallback

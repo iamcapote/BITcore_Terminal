@@ -7,6 +7,9 @@
 
 import { WebSocket } from 'ws';
 import { safeSend } from '../../../utils/websocket.utils.mjs';
+import { createModuleLogger } from '../../../utils/logger.mjs';
+
+const clientLogger = createModuleLogger('research.websocket.client-io');
 
 export function cloneUserRecord(user) {
   if (!user) return null;
@@ -15,26 +18,30 @@ export function cloneUserRecord(user) {
       ? structuredClone(user)
       : JSON.parse(JSON.stringify(user));
   } catch (error) {
-    console.warn(`[WebSocket] Failed to clone user record: ${error.message}`);
+    clientLogger.warn('Failed to clone user record; returning shallow copy.', { error });
     return { ...user };
   }
 }
 
 export function enableClientInput(ws) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    console.log('[WebSocket] Sending enable_input');
+    clientLogger.debug('Sending enable_input event.', { readyState: ws.readyState });
     safeSend(ws, { type: 'enable_input' });
   } else {
-    console.warn('[WebSocket] Tried to enable input on closed/invalid socket.');
+    clientLogger.warn('Attempted to enable input on closed or invalid socket.', {
+      readyState: ws?.readyState
+    });
   }
 }
 
 export function disableClientInput(ws) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    console.log('[WebSocket] Sending disable_input');
+    clientLogger.debug('Sending disable_input event.', { readyState: ws.readyState });
     safeSend(ws, { type: 'disable_input' });
   } else {
-    console.warn('[WebSocket] Tried to disable input on closed/invalid socket.');
+    clientLogger.warn('Attempted to disable input on closed or invalid socket.', {
+      readyState: ws?.readyState
+    });
   }
 }
 
@@ -49,7 +56,7 @@ export function wsOutputHelper(ws, data) {
       outputData = JSON.stringify(data);
     } catch (error) {
       outputData = '[Unserializable Output]';
-      console.error('Failed to stringify output data:', data);
+      clientLogger.error('Failed to stringify output payload.', { error, dataType: typeof data });
     }
   }
   safeSend(ws, { type: 'output', data: outputData });
@@ -60,7 +67,7 @@ export function wsErrorHelper(ws, error, enableInputAfterError = true) {
   if (typeof error === 'string') {
     errorString = error;
   } else if (error instanceof Error) {
-    console.error(`[wsErrorHelper] Sending error to client: ${error.message}`, error.stack);
+    clientLogger.error('Sending error to client.', { error });
     errorString = error.message;
   } else if (error && typeof error.toString === 'function') {
     errorString = error.toString();
@@ -69,15 +76,15 @@ export function wsErrorHelper(ws, error, enableInputAfterError = true) {
       errorString = JSON.stringify(error);
     } catch (stringifyError) {
       errorString = '[Unserializable Error]';
-      console.error('[wsErrorHelper] Failed to stringify error data:', error);
+      clientLogger.error('Failed to stringify error payload.', { error: stringifyError });
     }
   }
   safeSend(ws, { type: 'error', error: errorString });
 
   if (enableInputAfterError) {
-    console.log('[wsErrorHelper] Attempting to re-enable input after error.');
+    clientLogger.debug('Re-enabling input after error.');
     enableClientInput(ws);
   } else {
-    console.log('[wsErrorHelper] Input remains disabled after error as requested.');
+    clientLogger.debug('Leaving input disabled after error.');
   }
 }

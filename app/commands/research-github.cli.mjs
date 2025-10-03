@@ -12,10 +12,13 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { getGitHubResearchSyncController } from '../features/research/research.github-sync.controller.mjs';
 import { handleCliError, ErrorTypes, logCommandStart, logCommandSuccess } from '../utils/cli-error-handler.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
 
 const JSON_SPACING = 2;
 const DEFAULT_ENCODING = 'utf8';
 const BOOLEAN_TRUE = new Set(['1', 'true', 'yes', 'on']);
+
+const moduleLogger = createModuleLogger('commands.research-github.cli', { emitToStdStreams: false });
 
 function isTruthy(value) {
   if (value == null) return false;
@@ -26,6 +29,21 @@ function isTruthy(value) {
 
 function logJson(outputFn, payload) {
   outputFn(typeof payload === 'string' ? payload : JSON.stringify(payload, null, JSON_SPACING));
+}
+
+function createEmitter(handler, level) {
+  const target = typeof handler === 'function' ? handler : null;
+  const stream = level === 'error' ? process.stderr : process.stdout;
+  return (value, meta = null) => {
+    const message = typeof value === 'string' ? value : JSON.stringify(value, null, JSON_SPACING);
+    const payloadMeta = meta || (typeof value === 'object' && value !== null ? { payload: value } : null);
+    moduleLogger[level](message, payloadMeta);
+    if (target) {
+      target(value);
+    } else {
+      stream.write(`${message}\n`);
+    }
+  };
 }
 
 function sendWsAck(wsOutput) {
@@ -129,8 +147,8 @@ export function getResearchGitHubHelpText() {
 }
 
 export async function executeResearchGitHub(options = {}, wsOutput, wsError) {
-  const outputFn = typeof wsOutput === 'function' ? wsOutput : console.log;
-  const errorFn = typeof wsError === 'function' ? wsError : console.error;
+  const outputFn = createEmitter(wsOutput, 'info');
+  const errorFn = createEmitter(wsError, 'error');
 
   const positionalArgs = Array.isArray(options.positionalArgs) ? [...options.positionalArgs] : [];
   const flags = options.flags || {};
@@ -141,6 +159,12 @@ export async function executeResearchGitHub(options = {}, wsOutput, wsError) {
   const controller = getGitHubResearchSyncController();
 
   logCommandStart(`research-github ${subcommand}`, { positionalArgs, flags });
+  moduleLogger.info('Executing research-github command.', {
+    subcommand,
+    jsonOutput,
+    hasWebSocketOutput: typeof wsOutput === 'function',
+    hasWebSocketError: typeof wsError === 'function'
+  });
 
   let ackSent = false;
   try {
@@ -156,6 +180,12 @@ export async function executeResearchGitHub(options = {}, wsOutput, wsError) {
         sendWsAck(wsOutput);
         ackSent = true;
         logCommandSuccess(`research-github ${subcommand}`, result);
+        moduleLogger.info('Research GitHub verification completed.', {
+          jsonOutput,
+          repository: result?.config ? `${result.config.owner}/${result.config.repo}` : null,
+          branch: result?.config?.branch ?? null,
+          ok: result?.ok ?? false
+        });
         return { success: true, verification: result };
       }
 
@@ -173,6 +203,12 @@ export async function executeResearchGitHub(options = {}, wsOutput, wsError) {
         sendWsAck(wsOutput);
         ackSent = true;
         logCommandSuccess('research-github list', listing);
+        moduleLogger.info('Research GitHub list completed.', {
+          path: listing.path || '/',
+          ref,
+          count: listing.entries?.length ?? 0,
+          jsonOutput
+        });
         return { success: true, listing };
       }
 
@@ -200,6 +236,13 @@ export async function executeResearchGitHub(options = {}, wsOutput, wsError) {
         sendWsAck(wsOutput);
         ackSent = true;
         logCommandSuccess('research-github fetch', file);
+        moduleLogger.info('Research GitHub fetch completed.', {
+          path: file?.path,
+          ref,
+          size: file?.size ?? null,
+          stdout,
+          jsonOutput
+        });
         return { success: true, file };
       }
 
@@ -220,6 +263,12 @@ export async function executeResearchGitHub(options = {}, wsOutput, wsError) {
         sendWsAck(wsOutput);
         ackSent = true;
         logCommandSuccess('research-github download', { path: repoPath, savedAs: absoluteOut });
+        moduleLogger.info('Research GitHub download completed.', {
+          path: repoPath,
+          savedAs: absoluteOut,
+          ref,
+          jsonOutput
+        });
         return { success: true, file, savedAs: absoluteOut };
       }
 
@@ -251,6 +300,12 @@ export async function executeResearchGitHub(options = {}, wsOutput, wsError) {
         sendWsAck(wsOutput);
         ackSent = true;
         logCommandSuccess('research-github upload', summary);
+        moduleLogger.info('Research GitHub upload completed.', {
+          path: summary?.path ?? repoPath,
+          branch: summary?.branch ?? branch ?? null,
+          commitSha: summary?.commitSha ?? null,
+          jsonOutput
+        });
         return { success: true, summary };
       }
 
@@ -268,20 +323,32 @@ export async function executeResearchGitHub(options = {}, wsOutput, wsError) {
         sendWsAck(wsOutput);
         ackSent = true;
         logCommandSuccess('research-github push', { count: result.summaries?.length ?? result.length ?? 0 });
+        moduleLogger.info('Research GitHub push completed.', {
+          branch: branch ?? null,
+          files: files.length,
+          summaries: result.summaries?.length ?? result.length ?? 0,
+          jsonOutput
+        });
         return { success: true, summaries: result.summaries ?? result };
       }
 
       default: {
         const message = `Unknown research-github action: ${subcommand}. Run /research-github help for options.`;
-        errorFn(message);
+        errorFn(message, { code: 'unknown_research_github_action', subcommand });
         sendWsAck(wsOutput);
         ackSent = true;
+        moduleLogger.warn('Research GitHub command received unknown action.', { subcommand });
         return { success: false, error: message, handled: true };
       }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    errorFn(message);
+    moduleLogger.error('Research GitHub command failed.', {
+      subcommand,
+      message,
+      stack: error instanceof Error ? error.stack : null
+    });
+    errorFn(message, { code: 'research_github_command_failed' });
     handleCliError(error, ErrorTypes.UNKNOWN, { command: `research-github ${subcommand}` });
     if (!ackSent) {
       sendWsAck(wsOutput);

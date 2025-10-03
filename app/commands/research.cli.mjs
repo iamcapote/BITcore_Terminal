@@ -30,6 +30,11 @@ import {
     ResearchKeyResolutionError
 } from './research/keys.mjs';
 import { enrichResearchQuery } from './research/query-classifier.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
+import { createResearchEmitter } from './research/emitters.mjs';
+import { ensureResearchPassword } from './research/passwords.mjs';
+
+const moduleLogger = createModuleLogger('commands.research.cli', { emitToStdStreams: false });
 
 const PROMPT_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 const POST_RESEARCH_PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for post-research action
@@ -69,7 +74,9 @@ export async function executeResearch(options = {}) {
     if (initialLogOptions.currentUser?.encryptedApiKeys) initialLogOptions.currentUser.encryptedApiKeys = '{...}';
     if (initialLogOptions.currentUser?.encryptedGitHubToken) initialLogOptions.currentUser.encryptedGitHubToken = '******';
 
-    console.log(`[executeResearch] Received options:`, JSON.stringify(initialLogOptions, (key, value) => key === 'webSocketClient' ? '[WebSocket Object]' : value).substring(0, 1000));
+    moduleLogger.info('Received research command options.', {
+        options: JSON.stringify(initialLogOptions, (key, value) => key === 'webSocketClient' ? '[WebSocket Object]' : value).substring(0, 1000)
+    });
 
 
     const {
@@ -86,7 +93,7 @@ export async function executeResearch(options = {}) {
         output: cmdOutput, // Renamed from options.output
         error: cmdError,   // Renamed from options.error
         currentUser,
-    overrideQueries: optionOverrideQueries = [],
+        overrideQueries: optionOverrideQueries = [],
         webSocketClient,
         telemetry,
         wsPrompt: cmdPrompt, // Renamed from options.wsPrompt
@@ -94,6 +101,17 @@ export async function executeResearch(options = {}) {
         debug = options.verbose ? outputManagerInstance.debug.bind(outputManagerInstance) : () => {}, // Default to no-op if not verbose
         progressHandler: providedProgressHandler
     } = options;
+
+    if (cmdOutput && typeof cmdOutput !== 'function') {
+        moduleLogger.warn('Received non-function output handler. Falling back to stdout.', {
+            handlerType: typeof cmdOutput
+        });
+    }
+    if (cmdError && typeof cmdError !== 'function') {
+        moduleLogger.warn('Received non-function error handler. Falling back to stderr.', {
+            handlerType: typeof cmdError
+        });
+    }
 
     const { depth, breadth, isPublic } = await resolveResearchDefaults({
         depth: depthOverride,
@@ -105,11 +123,11 @@ export async function executeResearch(options = {}) {
 
     const telemetryChannel = telemetry ?? null;
 
-    const effectiveOutput = cmdOutput;
-    const effectiveError = cmdError;
+    const effectiveOutput = createResearchEmitter({ handler: cmdOutput, level: 'info', logger: moduleLogger });
+    const effectiveError = createResearchEmitter({ handler: cmdError, level: 'error', logger: moduleLogger });
     const effectiveDebug = isWebSocket
-        ? (msg) => { if (session?.debug || verbose) effectiveOutput(`[DEBUG] ${msg}`); } // Use effectiveOutput
-        : (msg) => { if (verbose) console.log(`[DEBUG] ${msg}`); };
+        ? (msg) => { if (session?.debug || verbose) effectiveOutput(`[DEBUG] ${msg}`); }
+        : (msg) => { if (verbose) moduleLogger.debug(msg); };
     const effectivePrompt = isWebSocket ? cmdPrompt : singlePrompt;
     const effectiveProgress = (progressData = {}) => {
         const emittedEvent = telemetryChannel ? telemetryChannel.emitProgress(progressData) : null;
@@ -121,12 +139,15 @@ export async function executeResearch(options = {}) {
             try {
                 providedProgressHandler(enrichedProgress);
             } catch (handlerError) {
-                console.error('[executeResearch] progressHandler threw an error:', handlerError);
+                moduleLogger.error('Progress handler threw an error.', {
+                    message: handlerError?.message || String(handlerError),
+                    stack: handlerError?.stack || null
+                });
             }
         } else if (isWebSocket && webSocketClient) {
             safeSend(webSocketClient, { type: 'progress', data: enrichedProgress });
         } else if (verbose) {
-            console.log('[research-progress]', enrichedProgress);
+            moduleLogger.info('Research progress event.', enrichedProgress);
         }
     };
     // --- End FIX ---
@@ -148,21 +169,6 @@ export async function executeResearch(options = {}) {
     const needsPassword = action === 'run'; // For clarity in catch block
 
     try {
-        if (typeof effectiveOutput !== 'function') {
-            console.error("[executeResearch] CRITICAL: effectiveOutput is not a function.", options);
-            // Cannot send error back to client easily here, log and maybe throw
-            throw new Error("Internal server error: Output handler misconfigured.");
-        }
-        if (typeof effectiveError !== 'function') {
-            console.error("[executeResearch] CRITICAL: effectiveError is not a function.", options);
-            // Log, but try to continue if possible, or throw
-            throw new Error("Internal server error: Error handler misconfigured.");
-        }
-    // --- Public User Check - Moved to the top ---
-        if (currentUser && currentUser.role === 'public') {
-            effectiveError('Research command is not available for public users. Please /login to use this feature.');
-            return { success: false, error: 'Permission denied for public user', handled: true, keepDisabled: false }; // Enable input after error
-        }
     // --- Authentication Check ---
         const isAuthenticated = !!currentUser && currentUser.role !== 'public';
         const currentUsername = currentUser ? currentUser.username : 'public'; // Should not be public due to check above
@@ -180,31 +186,23 @@ export async function executeResearch(options = {}) {
         // --- Password Handling (Get password if needed and available) ---
         let userPassword = password; // Password from handleCommandMessage or cache
 
-        // Password check remains important for key decryption and auto-upload
-        if (needsPassword && !userPassword) {
-             if (!effectivePrompt) {
-                 effectiveError('Internal Error: Prompt function not available.');
-                 return { success: false, error: 'Prompt unavailable', handled: true, keepDisabled: false };
-             }
-             effectiveDebug("Password not provided or cached for research, prompting user.");
-             // Prompt without context, as it's for key decryption here
-             const promptTarget = isWebSocket ? webSocketClient : null; // Pass ws for WebSocket, null for CLI
-             try {
-                userPassword = await effectivePrompt(promptTarget, session, `Enter password to access API keys/GitHub: `, PROMPT_TIMEOUT_MS, true, null); // isPassword = true
-                 if (!userPassword) {
-                     throw new Error("Password required or prompt cancelled/timed out");
-                 }
-                 effectiveDebug("Password received via prompt for research.");
-                 // Cache password in session if WebSocket
-                 if (isWebSocket && session) {
-                     session.password = userPassword;
-                     effectiveDebug("Password cached in session.");
-                 }
-             } catch (promptError) {
-                 effectiveError(`Password prompt failed: ${promptError.message}`);
-                 return { success: false, error: `Password prompt failed: ${promptError.message}`, handled: true, keepDisabled: false };
-             }
+        const { password: resolvedPassword, result: passwordFailure } = await ensureResearchPassword({
+            needsPassword,
+            existingPassword: userPassword,
+            promptFn: effectivePrompt,
+            promptTimeoutMs: PROMPT_TIMEOUT_MS,
+            isWebSocket,
+            session,
+            webSocketClient,
+            debug: effectiveDebug,
+            emitError: effectiveError
+        });
+
+        if (passwordFailure) {
+            return passwordFailure;
         }
+
+        userPassword = resolvedPassword;
         // --- End Password Handling ---
 
 
@@ -276,6 +274,12 @@ export async function executeResearch(options = {}) {
             error: effectiveError,
             telemetry: telemetryChannel
         });
+
+        if (isWebSocket && session) {
+            session.currentResearchQuery = enhancedQuery?.original || researchQuery;
+            session.currentResearchResult = null;
+            session.currentResearchFilename = null;
+        }
 
         const { overrideQueries: memoryOverrides } = await prepareMemoryContext({
             query: researchQuery,
@@ -393,7 +397,7 @@ export async function executeResearch(options = {}) {
                     'post_research_action' // Set context for handleInputMessage
                 );
                 if (session.password !== userPassword) session.password = userPassword;
-                effectiveDebug(`Post-research action prompt sent. Server awaits response via handleInputMessage with context 'post_research_action'.`);
+                effectiveDebug("Post-research action prompt sent. Server awaits response via handleInputMessage with context 'post_research_action'.");
                 // Keep input disabled, handleInputMessage will re-enable it after processing the choice.
 
             } catch (promptError) { // This catch might not be hit if effectivePrompt doesn't throw synchronously
@@ -434,7 +438,10 @@ export async function executeResearch(options = {}) {
         // return { success: false, error: `Unknown action: ${action}`, handled: true, keepDisabled: false };
     } catch (error) {
         effectiveError(`Error during research command: ${error.message}`);
-        console.error(error.stack); // Keep stack trace log
+        moduleLogger.error('Unhandled error during research command.', {
+            message: error?.message || String(error),
+            stack: error?.stack || null
+        });
         const failureDuration = Date.now() - (researchStartedAt || commandStartedAt);
         telemetryChannel?.emitStatus({
             stage: 'error',
@@ -452,7 +459,10 @@ export async function executeResearch(options = {}) {
         }
          // Clear password cache on unexpected errors if WebSocket
         if (isWebSocket && session && needsPassword) {
-             console.warn(`[WebSocket] Clearing session password due to unexpected error during research command: ${error.message}`);
+             moduleLogger.warn('Clearing session password after research command failure.', {
+                message: error?.message || String(error),
+                sessionId: session?.sessionId || null
+             });
              session.password = null;
         }
         return { success: false, error: error.message, handled: true, keepDisabled: false }; // Ensure input enabled on error

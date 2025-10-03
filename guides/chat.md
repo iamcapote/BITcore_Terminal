@@ -83,7 +83,7 @@ GitHub integration (`GitHubMemoryIntegration`):
 | `/exit` | CLI & Web | Terminates chat session, restores command prompt. |
 | `/exitmemory` | CLI & Web (memory enabled) | Calls `MemoryManager.summarizeAndFinalize()`, clears memory manager from the session, and emits `memory_commit` if a GitHub commit occurs. |
 | `/memory stats` | CLI & Web (memory enabled) | Invokes `app/commands/memory.cli.mjs::executeMemoryStats` to display depth, counts, and GitHub status. |
-| `/research <query>` | CLI & Web | Uses `startResearchFromChat` to bridge into the research pipeline while preserving chat context. |
+| `/research <query>` | CLI & Web | Uses `startResearchFromChat` to bridge into the research pipeline while preserving chat context. If no chat history exists and no override queries are provided, the command now returns a guard message (`Chat history is required to start research.`) instead of surfacing a generic failure. Web sessions without an inline query fall back to an immediate `wsPrompt` so the operator can provide the question interactively. |
 Additional behaviours:
 - Password prompts for key decryption (if required) are routed through the existing prompt infrastructure (`promptHiddenFixed` for CLI, `wsPrompt` for Web).
 - Chat history is cleared when the session exits; Web clients receive `enable_input` to unlock the terminal.

@@ -14,6 +14,14 @@ import * as researchGitHubCli from './research-github.cli.mjs';
 import * as githubSyncCli from './research.github-sync.cli.mjs';
 import * as terminalCli from './terminal.cli.mjs';
 import * as logsCli from './logs.cli.mjs';
+import * as researchSchedulerCli from './research-scheduler.cli.mjs';
+import * as usersCli from './users.cli.mjs';
+
+/**
+ * Why: Centralise CLI/Web command wiring for parity across `/help`, the console CLI, and the Web terminal.
+ * What: Exposes the normalized command registry, argument parser, and aggregated help text generator.
+ * How: Compose per-command modules, guard inputs, and defer execution to feature-specific handlers.
+ */
 
 // Map command names (lowercase) to their execution functions
 export const commands = {
@@ -35,6 +43,8 @@ export const commands = {
     'github-sync': githubSyncCli.executeGithubSync,
     terminal: terminalCli.executeTerminal,
     logs: logsCli.executeLogs,
+    'research-scheduler': researchSchedulerCli.executeResearchScheduler,
+    users: usersCli.executeUsers,
     // Add other commands here
 };
 
@@ -123,6 +133,8 @@ export function getHelpText() {
     if (githubSyncCli.getGithubSyncHelpText) help += githubSyncCli.getGithubSyncHelpText() + '\n\n';
     if (terminalCli.getTerminalHelpText) help += terminalCli.getTerminalHelpText() + '\n\n';
     if (logsCli.getLogsHelpText) help += logsCli.getLogsHelpText() + '\n\n';
+    if (researchSchedulerCli.getResearchSchedulerHelpText) help += researchSchedulerCli.getResearchSchedulerHelpText() + '\n\n';
+    if (usersCli.getUsersHelpText) help += usersCli.getUsersHelpText() + '\n\n';
 
     // Add a general help command usage
     help += '/help                     Show this help message.\n';
@@ -132,7 +144,8 @@ export function getHelpText() {
 
 // Optional: Add a dedicated help command function if needed elsewhere
 export function executeHelp(options) {
-    options.output(getHelpText());
+    const outputFn = typeof options?.output === 'function' ? options.output : console.log;
+    outputFn(getHelpText());
     return Promise.resolve({ success: true });
 }
 

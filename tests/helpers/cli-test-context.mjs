@@ -128,12 +128,33 @@ export class CliTestContext {
   async runWithConsoleCapture(command, args = []) {
     this.flushOutput();
     const originalLog = console.log;
+    const originalStdoutWrite = process.stdout.write;
+    const capture = this.captureOutput;
     console.log = this.captureOutput;
+    process.stdout.write = (chunk, encoding, callback) => {
+      try {
+        const text = typeof chunk === 'string' ? chunk : chunk?.toString?.() ?? '';
+        if (text) {
+          const normalized = text.endsWith('\n') ? text.slice(0, -1) : text;
+          capture(normalized);
+        }
+      } catch (error) {
+        // Ignore capture errors to avoid masking command behavior.
+      }
+      if (typeof originalStdoutWrite === 'function') {
+        return originalStdoutWrite.call(process.stdout, chunk, encoding, callback);
+      }
+      if (typeof callback === 'function') {
+        callback();
+      }
+      return true;
+    };
     try {
       const result = await command(...args);
       return { result, output: this.getOutput() };
     } finally {
       console.log = originalLog;
+      process.stdout.write = originalStdoutWrite;
     }
   }
 

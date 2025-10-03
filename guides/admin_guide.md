@@ -66,7 +66,7 @@ npm start -- cli
 | Rotate API keys | `/keys set`, `/keys check`, `/keys test` |
 | Configure GitHub uploads | `/keys set github --github-owner=ORG --github-repo=REPO [--github-branch=BRANCH] [--github-token=TOKEN]` |
 | Toggle model browser | `/terminal prefs --model-browser=true|false` (CLI) / web settings pane |
-| Legacy user management | `/users ...` (⚠️ relies on removed multi-user backing; expect failures) |
+| Legacy user management | `/users ...` (shows "User management is disabled in single-user mode" unless a directory adapter is registered) |
 
 > ℹ️ `/login`, `/logout`, and `/password-change` remain for compatibility but operate as no-ops in single-user mode.
 

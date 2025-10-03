@@ -7,14 +7,17 @@
 
 import { WebSocket } from 'ws';
 import { safeSend } from '../../../utils/websocket.utils.mjs';
+import { createModuleLogger } from '../../../utils/logger.mjs';
 import { outputManager } from '../../../utils/research.output-manager.mjs';
 import { resolveServiceApiKey } from '../../../utils/api-keys.mjs';
-import { getChatHistoryController } from '../chat-history/index.mjs';
+import { getChatHistoryController } from '../../chat-history/index.mjs';
 import { LLMClient } from '../../../infrastructure/ai/venice.llm-client.mjs';
 import { cleanChatResponse } from '../../../infrastructure/ai/venice.response-processor.mjs';
 import { wsErrorHelper, wsOutputHelper } from './client-io.mjs';
 import { wsPrompt } from './prompt.mjs';
 import { executeExitResearch } from '../../../commands/chat.cli.mjs';
+
+const chatLogger = createModuleLogger('research.websocket.chat-handler');
 
 export async function handleChatMessage(ws, message, session) {
   if (!session.isChatActive) {
@@ -136,7 +139,7 @@ export async function handleChatMessage(ws, message, session) {
 
     safeSend(ws, { type: 'chat-response', message: clean });
   } catch (err) {
-    console.error('[WebSocket][Chat] LLM error:', err.message, err.stack);
+    chatLogger.error('LLM error during chat handling.', { error: err, sessionId: session.sessionId });
     if (err instanceof Error && err.message.toLowerCase().includes('api key is required')) {
       wsErrorHelper(ws, "Chat failed: Venice API key is missing or invalid. Please set it via '/keys set venice <apikey>' or ensure VENICE_API_KEY environment variable is configured.", true);
     } else {

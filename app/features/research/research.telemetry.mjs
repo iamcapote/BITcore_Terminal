@@ -30,6 +30,9 @@
  */
 
 import crypto from 'crypto';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('research.telemetry');
 
 const DEFAULT_BUFFER_SIZE = 120;
 const DEFAULT_STATUS_THROTTLE_MS = 350;
@@ -78,7 +81,11 @@ export function createResearchTelemetry({
       try {
         sender(type, { ...payload, timestamp: now, eventId: event.id });
       } catch (transportError) {
-        console.error('[ResearchTelemetry] Failed to send event', type, transportError);
+        moduleLogger.error('Failed to send telemetry event.', {
+          eventType: type,
+          message: transportError?.message || String(transportError),
+          stack: transportError?.stack || null
+        });
       }
     }
 
@@ -110,7 +117,11 @@ export function createResearchTelemetry({
         try {
           targetSend(event.type, { ...event.data, timestamp: event.timestamp, eventId: event.id });
         } catch (replayError) {
-          console.error('[ResearchTelemetry] Failed to replay event', event.type, replayError);
+          moduleLogger.error('Failed to replay telemetry event.', {
+            eventType: event.type,
+            message: replayError?.message || String(replayError),
+            stack: replayError?.stack || null
+          });
           break;
         }
       }

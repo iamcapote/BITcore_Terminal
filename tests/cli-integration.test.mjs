@@ -56,4 +56,14 @@ describe('CLI command integration (single-user mode)', () => {
       token: 'ghp_testing'
     });
   });
+
+  it('displays status summary with username and role', async () => {
+    const output = vi.fn();
+    const result = await commands.status({ output });
+
+    expect(result.success).toBe(true);
+    expect(output).toHaveBeenCalledWith('=== User Status ===');
+    expect(output).toHaveBeenCalledWith(expect.stringContaining('Username:'));
+    expect(output).toHaveBeenCalledWith(expect.stringContaining('Role: '));
+  });
 });

@@ -8,10 +8,16 @@
 import { WebSocket } from 'ws';
 import { commands, parseCommandArgs } from '../../../commands/index.mjs';
 import { outputManager } from '../../../utils/research.output-manager.mjs';
+import { createModuleLogger } from '../../../utils/logger.mjs';
 import { safeSend } from '../../../utils/websocket.utils.mjs';
 import { userManager } from '../../auth/user-manager.mjs';
 import { cloneUserRecord, wsErrorHelper, wsOutputHelper } from './client-io.mjs';
 import { wsPrompt } from './prompt.mjs';
+
+const commandLogger = createModuleLogger('research.websocket.command-handler');
+const sessionLogger = commandLogger.child('session');
+const executionLogger = commandLogger.child('execution');
+const debugLogger = commandLogger.child('debug');
 
 export async function handleCommandMessage(ws, message, session) {
   const fullCommandString = `/${message.command} ${message.args.join(' ')}`;
@@ -50,13 +56,20 @@ export async function handleCommandMessage(ws, message, session) {
         session.currentUser = clonedUser;
       }
     } catch (userResolveError) {
-      console.warn(`[WebSocket] Failed to hydrate session user for command '/${commandName}' (Session ${session.sessionId}): ${userResolveError.message}`);
+      sessionLogger.warn('Failed to hydrate session user for command.', {
+        commandName,
+        sessionId: session.sessionId,
+        error: userResolveError
+      });
     }
   }
   const sessionUser = session.currentUser ?? null;
 
   if (session.isChatActive && commandName !== 'help') {
-    console.warn(`[WebSocket] Attempted to run top-level command '/${commandName}' while chat is active (Session ${session.sessionId}).`);
+    executionLogger.warn('Attempted to run top-level command while chat is active.', {
+      commandName,
+      sessionId: session.sessionId
+    });
     wsErrorHelper(ws, 'Cannot run top-level commands while in chat mode. Use chat messages or in-chat commands (e.g., /exit).', true);
     return false;
   }
@@ -156,7 +169,11 @@ export async function handleCommandMessage(ws, message, session) {
   };
 
   const commandError = (data) => {
-    console.error('[commandError] Received error:', data);
+    executionLogger.error('Command error reported by handler.', {
+      commandName,
+      sessionId: session.sessionId,
+      error: data
+    });
     wsErrorHelper(ws, data, true);
     enableInputAfter = false;
   };
@@ -166,7 +183,11 @@ export async function handleCommandMessage(ws, message, session) {
       wsOutputHelper(ws, `[DEBUG] ${data}`);
     }
     if (process.env.DEBUG_MODE === 'true') {
-      console.log(`[WS DEBUG][${session.sessionId}] ${data}`);
+      debugLogger.debug('Command debug event emitted.', {
+        commandName,
+        sessionId: session.sessionId,
+        data
+      });
     }
   };
 
@@ -179,11 +200,30 @@ export async function handleCommandMessage(ws, message, session) {
   options.debug = commandDebug;
 
   try {
-    console.log(`[WebSocket] Executing command /${commandName} for user ${session.username}`);
-    outputManager.debug(`[Command Execution] Options for /${commandName}: ${JSON.stringify(options, (key, value) => (key === 'webSocketClient' || key === 'session' || key === 'currentUser' || key === 'requestingUser' || key === 'wsPrompt' || key === 'output' || key === 'error' || key === 'debug' || key === 'password') ? `[${typeof value}]` : value, 2)}`);
+    executionLogger.info('Executing command.', {
+      commandName,
+      sessionId: session.sessionId,
+      username: session.username
+    });
+    executionLogger.debug('Command options summary.', {
+      commandName,
+      sessionId: session.sessionId,
+      positionalArgs,
+      flags,
+      model: options.model,
+      character: options.character,
+      verbose: options.verbose,
+      memory: options.memory,
+      telemetryAttached: Boolean(options.telemetry)
+    });
 
     if (commandName === 'chat') {
-      console.log('[WebSocket] Options passed to executeChat:', JSON.stringify(options, (key, value) => (key === 'webSocketClient' || key === 'session' || key === 'currentUser' || key === 'requestingUser' || key === 'wsPrompt' || key === 'output' || key === 'error') ? `[Object ${key}]` : value, 2));
+      executionLogger.debug('Chat command specific options.', {
+        sessionId: session.sessionId,
+        model: options.model,
+        character: options.character,
+        flags
+      });
     }
 
     if (commandName === 'research') {
@@ -198,9 +238,48 @@ export async function handleCommandMessage(ws, message, session) {
         telemetry.emitStatus({ stage: 'preparing', message: 'Preparing research command.' });
         options.telemetry = telemetry;
       }
-      if (!options.query) {
-        commandError('Research query is missing. Please provide a query or use interactive mode.');
-        return false;
+      if (!options.query || !options.query.trim()) {
+        if (typeof wsPrompt !== 'function') {
+          executionLogger.error('wsPrompt unavailable for research query prompt.', {
+            sessionId: session.sessionId,
+          });
+          commandError('Research query is missing and the interactive prompt is unavailable.');
+          return false;
+        }
+
+        try {
+          wsOutputHelper(ws, 'Research requires a query. Respond to the prompt to continue.');
+          const promptResponse = await wsPrompt(
+            ws,
+            session,
+            'Enter research query:',
+            undefined,
+            false,
+            'research_query'
+          );
+          const normalizedQuery = typeof promptResponse === 'string' ? promptResponse.trim() : '';
+
+          if (!normalizedQuery) {
+            wsErrorHelper(ws, 'Research cancelled: query cannot be empty.', true);
+            return true;
+          }
+
+          options.query = normalizedQuery;
+          options.positionalArgs = [normalizedQuery];
+          executionLogger.debug('Research query obtained via prompt.', {
+            sessionId: session.sessionId,
+            queryPreview: normalizedQuery.substring(0, 120)
+          });
+        } catch (promptError) {
+          executionLogger.warn('Research query prompt failed or was cancelled.', {
+            sessionId: session.sessionId,
+            error: promptError?.message ?? String(promptError)
+          });
+          if (!(promptError instanceof Error && promptError.message === 'Prompt timed out.')) {
+            wsErrorHelper(ws, `Research cancelled: ${promptError?.message ?? 'Prompt failed.'}`, true);
+          }
+          return true;
+        }
       }
       options.progressHandler = (progressData) => {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -241,7 +320,9 @@ export async function handleCommandMessage(ws, message, session) {
     }
 
     if (commandName === 'logout') {
-      console.log('[WebSocket] /logout called in single-user mode. No state change.');
+      executionLogger.info('Logout command invoked in single-user mode.', {
+        sessionId: session.sessionId
+      });
       safeSend(ws, { type: 'logout_success', message: 'Single-user mode: logout is a no-op.' });
       safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
       enableInputAfter = true;
@@ -250,22 +331,39 @@ export async function handleCommandMessage(ws, message, session) {
     if (commandName === 'chat') {
       if (result?.success) {
         enableInputAfter = !(result?.keepDisabled === true);
-        console.log(`[WebSocket] /chat command succeeded. enableInputAfter=${enableInputAfter}`);
+        executionLogger.debug('Chat command succeeded.', {
+          sessionId: session.sessionId,
+          enableInputAfter
+        });
       } else {
         enableInputAfter = false;
-        console.log(`[WebSocket] /chat command failed or handled. enableInputAfter=${enableInputAfter}`);
+        executionLogger.warn('Chat command failed or deferred.', {
+          sessionId: session.sessionId,
+          enableInputAfter
+        });
       }
     }
 
     if (enableInputAfter === undefined) {
-      console.warn(`[WebSocket] enableInputAfter was undefined after command /${commandName}. Defaulting to true.`);
+      executionLogger.warn('enableInputAfter was undefined after command; defaulting to true.', {
+        commandName,
+        sessionId: session.sessionId
+      });
       enableInputAfter = true;
     }
 
-    console.log(`[WebSocket] Returning from handleCommandMessage. Final enableInputAfter: ${enableInputAfter}`);
+    executionLogger.debug('Command handler returning.', {
+      commandName,
+      sessionId: session.sessionId,
+      enableInputAfter
+    });
     return enableInputAfter;
   } catch (error) {
-    console.error(`[WebSocket] Error executing command /${commandName} (Session ${session.sessionId}):`, error.message, error.stack);
+    executionLogger.error('Error executing command.', {
+      commandName,
+      sessionId: session.sessionId,
+      error
+    });
     commandError(`Internal error executing command /${commandName}: ${error.message}`);
     return false;
   }

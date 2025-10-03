@@ -1,6 +1,9 @@
 import fetch from 'node-fetch';
 import { VENICE_MODELS, isValidModel } from './venice.models.mjs';
 import { VENICE_CHARACTERS, getDefaultChatCharacterSlug, getDefaultResearchCharacterSlug, getDefaultTokenClassifierCharacterSlug } from './venice.characters.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const logger = createModuleLogger('venice.llm-client');
 
 export class LLMError extends Error {
   constructor(code, message, originalError) {
@@ -61,14 +64,14 @@ export class LLMClient {
       // Allow fallback for now, but log warning. Could throw error instead.
       // throw new LLMError('ConfigError', `Invalid model specified: ${model}. Valid models are: ${Object.keys(VENICE_MODELS).join(', ')}`);
       // Ensure the fallback is also a potentially valid model
-      console.warn(`Invalid or unsupported model specified: ${model}. Falling back to default 'llama-3.3-70b'. Check available models via Venice API or documentation.`);
+  logger.warn(`Invalid or unsupported model specified: ${model}. Falling back to default 'llama-3.3-70b'. Check available models via Venice API or documentation.`);
       this.model = 'llama-3.3-70b'; // Fallback model
     } else {
         this.model = model;
     }
 
-    this.outputFn = config.outputFn || console.log; // Add outputFn
-    this.errorFn = config.errorFn || console.error; // Add errorFn
+  this.outputFn = config.outputFn || ((message, meta) => logger.info(message, meta));
+  this.errorFn = config.errorFn || ((message, meta) => logger.error(message, meta));
 
     this.config = {
       ...defaultConfig,

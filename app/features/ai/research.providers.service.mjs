@@ -8,12 +8,67 @@
  */
 
 import { systemPrompt, queryExpansionTemplate } from '../../utils/research.prompt.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
 import {
   getDefaultResearchCharacterSlug,
   getDefaultTokenClassifierCharacterSlug
 } from '../../infrastructure/ai/venice.characters.mjs';
 import { processResponse, trimPrompt } from './research.providers.utils.mjs';
 import { callVeniceLLM } from './research.providers.llm.mjs';
+
+const moduleLogger = createModuleLogger('ai.research.providers.service');
+
+function normalizeLogArg(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack || null
+    };
+  }
+  if (value == null) {
+    return value;
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (error) {
+      return String(value);
+    }
+  }
+  return value;
+}
+
+function defaultOutput(...args) {
+  if (args.length === 0) {
+    return;
+  }
+  const [message, ...rest] = args;
+  if (rest.length === 0) {
+    moduleLogger.info(message);
+    return;
+  }
+  moduleLogger.info(message, { args: rest.map(normalizeLogArg) });
+}
+
+function defaultError(...args) {
+  if (args.length === 0) {
+    return;
+  }
+  const [message, ...rest] = args;
+  if (message instanceof Error && rest.length === 0) {
+    moduleLogger.error(message.message, {
+      name: message.name,
+      stack: message.stack || null
+    });
+    return;
+  }
+  if (rest.length === 0) {
+    moduleLogger.error(message);
+    return;
+  }
+  moduleLogger.error(message, { args: rest.map(normalizeLogArg) });
+}
 
 function ensureApiKey(apiKey) {
   return apiKey || process.env.VENICE_API_KEY;
@@ -32,8 +87,9 @@ export async function generateOutput({
   prompt,
   temperature = 0.7,
   maxTokens = 1000,
-  outputFn = console.log,
-  errorFn = console.error
+  outputFn = defaultOutput,
+  errorFn = defaultError,
+  llmClient = null
 }) {
   const effectiveKey = ensureApiKey(apiKey);
   if (!effectiveKey) {
@@ -53,7 +109,8 @@ export async function generateOutput({
     maxTokens,
     outputFn,
     errorFn,
-    character_slug: characterSlug
+    character_slug: characterSlug,
+    llmClient
   });
 
   if (!result.success) {
@@ -83,8 +140,9 @@ export async function generateQueries({
   numQueries = 3,
   learnings = [],
   metadata = null,
-  outputFn = console.log,
-  errorFn = console.error
+  outputFn = defaultOutput,
+  errorFn = defaultError,
+  llmClient = null
 }) {
   const hasApiKey = !!ensureApiKey(apiKey);
 
@@ -135,7 +193,8 @@ export async function generateQueries({
       temperature: 0.7,
       maxTokens: 500,
       outputFn,
-      errorFn
+      errorFn,
+      llmClient
     });
   } else {
     errorFn('[generateQueries] No API key available. Using simple fallback queries.');
@@ -176,8 +235,9 @@ export async function processResults({
   numLearnings = 3,
   numFollowUpQuestions = 3,
   metadata = null,
-  outputFn = console.log,
-  errorFn = console.error
+  outputFn = defaultOutput,
+  errorFn = defaultError,
+  llmClient = null
 }) {
   const hasApiKey = !!ensureApiKey(apiKey);
 
@@ -217,7 +277,8 @@ export async function processResults({
       temperature: 0.5,
       maxTokens: 1000,
       outputFn,
-      errorFn
+      errorFn,
+      llmClient
     });
   } else {
     errorFn('[processResults] No API key available. Using simple fallback analysis.');
@@ -277,8 +338,9 @@ export async function generateSummary({
   query,
   learnings = [],
   metadata = null,
-  outputFn = console.log,
-  errorFn = console.error
+  outputFn = defaultOutput,
+  errorFn = defaultError,
+  llmClient = null
 }) {
   const effectiveKey = ensureApiKey(apiKey);
   if (!effectiveKey) {
@@ -323,7 +385,8 @@ export async function generateSummary({
     temperature: 0.7,
     maxTokens: 2000,
     outputFn,
-    errorFn
+    errorFn,
+    llmClient
   });
 
   if (result.success && result.data.reportMarkdown) {

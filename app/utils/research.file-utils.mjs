@@ -1,9 +1,30 @@
+/**
+ * Research File Utilities
+ * Why: Support research workflows with helper logic for query normalization and path execution.
+ * What: Provides query extraction helpers and the ResearchPath orchestrator used by CLI and Web flows.
+ * How: Validates inputs, delegates to search and LLM providers, and emits structured telemetry via module loggers.
+ */
+
 import { suggestSearchProvider } from '../infrastructure/search/search.providers.mjs';
 // Fix import for research.providers.mjs:
-import { generateQueries, processResults, generateSummary } from '../features/ai/research.providers.mjs'; // Corrected relative path
+import { generateQueries, processResults } from '../features/ai/research.providers.mjs'; // Corrected relative path
 import { LLMClient } from '../infrastructure/ai/venice.llm-client.mjs';
 import fs from 'fs/promises';
-import path from 'path';
+import { createModuleLogger } from './logger.mjs';
+
+const moduleLogger = createModuleLogger('utils.research-file');
+
+function defaultOutput(message) {
+    moduleLogger.info(message);
+}
+
+function defaultError(message) {
+    moduleLogger.error(message);
+}
+
+function defaultDebug(message) {
+    moduleLogger.debug(message);
+}
 
 // Helper function to safely get query string
 function getQueryString(query) {
@@ -14,7 +35,9 @@ function getQueryString(query) {
         return query.query;
     }
     // Fallback or error handling if query structure is unexpected
-    console.warn('[getQueryString] Unexpected query format:', query);
+    moduleLogger.warn('Unexpected query format encountered while normalizing query string.', {
+        receivedType: typeof query
+    });
     return ''; // Or throw an error
 }
 
@@ -26,9 +49,9 @@ export class ResearchPath {
             visitedUrls = new Set(),
             braveApiKey, // Added
             veniceApiKey, // Added
-            output = console.log, // Added
-            error = console.error, // Added
-            debug = () => {}, // Added
+            output = defaultOutput, // Added
+            error = defaultError, // Added
+            debug = defaultDebug, // Added
             progressHandler = () => {} // Added
         } = options;
 

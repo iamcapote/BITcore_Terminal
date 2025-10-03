@@ -22,6 +22,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { ensureDir } from '../../utils/research.ensure-dir.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
 
 const DEFAULT_STORAGE_DIR = process.env.BITCORE_STORAGE_DIR
   || path.join(os.homedir(), '.bitcore-terminal');
@@ -47,6 +48,8 @@ const DEFAULT_TERMINAL_KEYS = Object.keys(DEFAULT_PREFERENCES.terminal);
 
 let cachedPreferences = null;
 let cachedPreferencesPath = null;
+
+const moduleLogger = createModuleLogger('preferences.terminal');
 
 function cloneDefaultPreferences() {
   return {
@@ -109,7 +112,10 @@ async function readPreferencesFromDisk(filePath) {
     if (error.code === 'ENOENT') {
       return normalizePreferences();
     }
-    console.warn('[TerminalPreferences] Failed to read preferences, fallback to defaults:', error.message);
+    moduleLogger.warn('Failed to read terminal preferences, falling back to defaults.', {
+      message: error.message,
+      stack: error.stack || null
+    });
     return normalizePreferences();
   }
 }

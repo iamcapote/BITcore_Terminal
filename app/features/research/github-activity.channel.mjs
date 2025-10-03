@@ -16,11 +16,13 @@
 
 import { createLogChannel } from '../../utils/log-channel.mjs';
 import { outputManager } from '../../utils/research.output-manager.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
 
 const BUFFER_SIZE = 200;
 const KNOWN_LEVELS = new Set(['debug', 'info', 'warn', 'error']);
 
 const githubActivityChannel = createLogChannel({ bufferSize: BUFFER_SIZE });
+const moduleLogger = createModuleLogger('research.github-activity');
 
 function normalizeLevel(candidate) {
   const value = typeof candidate === 'string' ? candidate.trim().toLowerCase() : '';
@@ -63,7 +65,10 @@ function logToOutputManager(level, message) {
     }
   } catch (error) {
     // Intentionally swallow logging failures; analytics should not break runtime.
-    console.warn('[GitHubActivity] Failed to log to outputManager:', error.message);
+    moduleLogger.warn('Failed to log GitHub activity to output manager.', {
+      message: error.message,
+      stack: error.stack || null
+    });
   }
 }
 
@@ -116,7 +121,10 @@ export function clearGitHubActivityFeed() {
   try {
     githubActivityChannel.clear?.();
   } catch (error) {
-    console.warn('[GitHubActivity] Failed to clear channel:', error.message);
+    moduleLogger.warn('Failed to clear GitHub activity channel.', {
+      message: error.message,
+      stack: error.stack || null
+    });
   }
 }
 

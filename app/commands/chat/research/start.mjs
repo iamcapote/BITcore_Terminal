@@ -69,7 +69,14 @@ export async function startResearchFromChat(...args) {
   try {
     const hasPrebuiltQueries = Array.isArray(overrideQueries) && overrideQueries.length > 0;
     if (!hasPrebuiltQueries && (!Array.isArray(chatHistory) || chatHistory.length === 0)) {
-      throw new Error('Chat history is required to start research.');
+      const guardMessage = 'Chat history is required to start research.';
+      effectiveError(guardMessage);
+      telemetryChannel?.emitStatus({
+        stage: 'chat-guard',
+        message: 'Research skipped: no chat history available.',
+        detail: guardMessage,
+      });
+      return { success: false, error: guardMessage };
     }
 
     telemetryChannel?.emitStatus({

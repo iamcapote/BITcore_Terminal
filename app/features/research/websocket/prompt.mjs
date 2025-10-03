@@ -6,13 +6,18 @@
  */
 
 import { safeSend } from '../../../utils/websocket.utils.mjs';
+import { createModuleLogger } from '../../../utils/logger.mjs';
 import { PROMPT_TIMEOUT_MS } from './constants.mjs';
 import { wsErrorHelper } from './client-io.mjs';
+
+const promptLogger = createModuleLogger('research.websocket.prompt');
 
 export function wsPrompt(ws, session, promptMessage, timeoutMs = PROMPT_TIMEOUT_MS, isPassword = false, context = null) {
   return new Promise((resolve, reject) => {
     if (session.pendingPromptResolve) {
-      console.warn(`[wsPrompt] New prompt initiated while another was pending for session ${session.sessionId}. Rejecting previous prompt.`);
+      promptLogger.warn('New prompt initiated while previous prompt pending.', {
+        sessionId: session.sessionId
+      });
       const previousReject = session.pendingPromptReject;
       clearTimeout(session.promptTimeoutId);
       session.pendingPromptResolve = null;
@@ -24,7 +29,11 @@ export function wsPrompt(ws, session, promptMessage, timeoutMs = PROMPT_TIMEOUT_
       previousReject(new Error('New prompt initiated, cancelling previous one.'));
     }
 
-    console.log(`[wsPrompt] Initiating prompt for session ${session.sessionId}. Message: "${promptMessage}", Password: ${isPassword}, Context: ${context}`);
+    promptLogger.info('Initiating prompt for session.', {
+      sessionId: session.sessionId,
+      isPassword,
+      context
+    });
 
     session.pendingPromptResolve = resolve;
     session.pendingPromptReject = reject;
@@ -38,11 +47,11 @@ export function wsPrompt(ws, session, promptMessage, timeoutMs = PROMPT_TIMEOUT_
         isPassword,
         context,
       });
-      console.log(`[WebSocket] Prompt message sent to client (Session ${session.sessionId})`);
+      promptLogger.debug('Prompt message sent to client.', { sessionId: session.sessionId });
 
       session.promptTimeoutId = setTimeout(() => {
         if (session.pendingPromptReject === reject) {
-          console.log(`[wsPrompt] Prompt timed out for session ${session.sessionId}.`);
+          promptLogger.warn('Prompt timed out.', { sessionId: session.sessionId });
           session.pendingPromptResolve = null;
           session.pendingPromptReject = null;
           session.promptTimeoutId = null;
@@ -54,7 +63,10 @@ export function wsPrompt(ws, session, promptMessage, timeoutMs = PROMPT_TIMEOUT_
         }
       }, timeoutMs);
     } catch (sendError) {
-      console.error(`[wsPrompt] Failed to send prompt message for session ${session.sessionId}: ${sendError.message}`);
+      promptLogger.error('Failed to send prompt message.', {
+        sessionId: session.sessionId,
+        error: sendError
+      });
       session.pendingPromptResolve = null;
       session.pendingPromptReject = null;
       session.promptTimeoutId = null;

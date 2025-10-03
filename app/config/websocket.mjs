@@ -1,5 +1,15 @@
+/**
+ * WebSocket Server Wiring
+ * Why: Attach a guarded WebSocket server to the HTTP stack while restricting upgrades to the research channel.
+ * What: Exposes a setup helper that validates upgrade paths, instantiates the WebSocket server, and delegates connections.
+ * How: Intercepts upgrade events, filters by expected path, and logs lifecycle milestones through the shared logger.
+ */
+
 import { WebSocketServer } from 'ws';
 import url from 'url'; // Import the 'url' module
+import { createModuleLogger } from '../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('config.websocket');
 
 /**
  * Sets up the WebSocket server and attaches it to the provided HTTP server,
@@ -16,24 +26,33 @@ export function setupWebSocket(server, expectedPath, connectionHandler) {
         const pathname = url.parse(request.url).pathname;
 
         if (pathname === expectedPath) {
-            console.log(`[WebSocket] Handling upgrade request for path: ${pathname}`);
+            moduleLogger.info('Handling WebSocket upgrade request.', {
+                path: pathname
+            });
             wss.handleUpgrade(request, socket, head, (ws) => {
                 // Emit connection event only for connections on the expected path
                 wss.emit('connection', ws, request);
             });
         } else {
             // For other paths, destroy the socket to prevent hanging connections
-            console.log(`[WebSocket] Ignoring upgrade request for path: ${pathname}. Destroying socket.`);
+            moduleLogger.warn('Rejected WebSocket upgrade for unexpected path. Destroying socket.', {
+                requestedPath: pathname
+            });
             socket.destroy();
         }
     });
 
     // The 'connection' event is now emitted by wss.handleUpgrade
     wss.on('connection', (ws, req) => {
-        console.log(`[WebSocket] Connection established on path: ${expectedPath}`);
+        moduleLogger.info('WebSocket connection established.', {
+            path: expectedPath,
+            clientAddress: req.socket?.remoteAddress ?? null
+        });
         connectionHandler(ws, req); // Call the provided handler
     });
 
-    console.log(`[WebSocket] WebSocket server initialized, listening for upgrades on path: ${expectedPath}`);
+    moduleLogger.info('WebSocket server initialized and listening for upgrades.', {
+        path: expectedPath
+    });
     return wss;
 }

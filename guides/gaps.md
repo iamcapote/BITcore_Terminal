@@ -19,10 +19,9 @@ _All tests run with `npm test` on 2025-10-01._
 - **Broken research provider shim** — `app/features/ai/research.providers.mjs` still contains placeholder text (`// ...existing code...`) and malformed exports. Import analysis fails, taking down `/chat`, `/research`, and every suite that touches the provider.
   - Evidence: `npm test` → `vite:import-analysis` error across `tests/chat.test.mjs`, `tests/cli-integration.test.mjs`, `tests/chat-persona.cli.test.mjs`, and `app/tests/provider.test.mjs`.
   - Next move: Replace the shim with the thin re-export to `research.providers.service.mjs` (or update callers to the new modules) before shipping anything else.
-- **User management command regressions** — `/users` still routes to `userManager.createUser/listUsers/deleteUser`, but those methods were removed during the single-user simplification. Executing the command throws `userManager.createUser is not a function` and leaves the CLI/Web terminal in an error state.
-  - Next move: Either retire the command (documented alias to `/status`) or reintroduce stub implementations that explain single-user mode without crashing.
 
 ## ⚠️ High-priority follow-ups
+- **Multi-user CLI roadmap** — `/users` now reports "User management is disabled in single-user mode" unless a directory adapter is registered via `userManager.registerUserDirectoryAdapter`. Provide a reference adapter once multi-user access control returns to the roadmap.
 - **Legacy HTTP research endpoint** — `app/features/research/routes.mjs` still answers `POST /api/research` with `501` and logs a security warning. No auth/validation exists.
   - Action: Either finish the authenticated handler or remove the route to avoid false promises.
 - **Web research/session telemetry coupling** — WebSocket connection bootstraps GitHub activity streams and status snapshots by default (`features/research/websocket/connection.mjs`). Works in single-user mode but still lacks multi-user hardening (durable session store, prompt password resets).
@@ -33,7 +32,7 @@ _All tests run with `npm test` on 2025-10-01._
 ## 📊 QA + Ops snapshot
 - `npm test`: 48 suites pass, 5 fail (all caused by the provider shim parse error). Rerun after the critical fix lands.
 - `tests/github-memory.test.mjs`: Emits “fatal: not a git repository” warnings because it exercises fallback persistence without a real repo. Acceptable for now but document if the noise becomes problematic.
-- Manual `/users list`: throws due to missing user-manager exports (see critical blocker #2).
+- Manual `/users list`: emits "User management is disabled in single-user mode" until multi-user storage returns.
 - Manual `/keys test`: succeeds when keys are present in `global-user.json`; no password prompts occur in single-user mode.
 
 ## 🧭 Next recommended actions

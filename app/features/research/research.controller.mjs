@@ -2,6 +2,17 @@ import { ResearchEngine } from '../../infrastructure/research/research.engine.mj
 import { callVeniceWithTokenClassifier } from '../../utils/token-classifier.mjs';
 import { resolveResearchDefaults } from './research.defaults.mjs';
 import { resolveApiKeys } from '../../utils/api-keys.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('research.controller');
+
+function defaultOutput(message) {
+  moduleLogger.info(message);
+}
+
+function defaultError(message) {
+  moduleLogger.error(message);
+}
 
 /**
  * Fetches research data based on a query
@@ -22,7 +33,10 @@ export async function getResearchData(query = 'default research topic', depthOve
     const result = await engine.research({ query: queryObject, depth, breadth });
     return { ...result, visibility: isPublic ? 'public' : 'private' };
   } catch (error) {
-    console.error('Error in getResearchData:', error);
+    moduleLogger.error('Failed to fetch research data.', {
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
     return {
       learnings: [`Error researching: ${query}`],
       sources: [],
@@ -53,7 +67,17 @@ export async function getResearchByPath(path) {
  * @param {string} password - Password for retrieving API keys
  * @returns {Promise<Object>} Research results
  */
-export async function runResearch(query, breadthOverride, depthOverride, useTokenClassifier = false, outputFn = console.log, errorFn = console.error, progressFn = null, username = null, password = null) {
+export async function runResearch(
+  query,
+  breadthOverride,
+  depthOverride,
+  useTokenClassifier = false,
+  outputFn = defaultOutput,
+  errorFn = defaultError,
+  progressFn = null,
+  username = null,
+  password = null
+) {
   let enhancedQuery = typeof query === 'string' ? { original: query } : { ...query }; // Clone query object
 
   const { depth, breadth, isPublic } = await resolveResearchDefaults({
@@ -64,11 +88,11 @@ export async function runResearch(query, breadthOverride, depthOverride, useToke
   const { brave: braveApiKey, venice: veniceApiKey } = await resolveApiKeys();
 
   if (!braveApiKey) {
-      errorFn('[Controller] Brave API key is missing. Configure it via environment variables or /keys set brave.');
+    errorFn('[Controller] Brave API key is missing. Configure it via environment variables or /keys set brave.');
       throw new Error('Brave API key is missing.');
   }
   if (!veniceApiKey) {
-      errorFn('[Controller] Venice API key is missing. Configure it via environment variables or /keys set venice.');
+    errorFn('[Controller] Venice API key is missing. Configure it via environment variables or /keys set venice.');
       throw new Error('Venice API key is missing.');
   }
 

@@ -3,6 +3,18 @@
 ```plaintext
 commands/
   admin.cli.mjs
+  chat/
+    interactive-cli.mjs
+    memory.mjs
+    persona.mjs
+    research/
+      exit.mjs
+      queries.mjs
+      start.mjs
+
+    research.mjs
+    session.mjs
+
   chat-history.cli.mjs
   chat.cli.mjs
   diagnose.cli.mjs
@@ -12,10 +24,21 @@ commands/
   logout.cli.mjs
   logs.cli.mjs
   memory.cli.mjs
+  missions/
+    helpers.mjs
+    sync.handler.mjs
+    templates.handler.mjs
+
   missions.cli.mjs
   password.cli.mjs
   prompts.cli.mjs
+  research/
+    keys.mjs
+    memory-context.mjs
+    query-classifier.mjs
+
   research-github.cli.mjs
+  research-scheduler.cli.mjs
   research.cli.mjs
   research.command.mjs
   research.github-sync.cli.mjs
@@ -37,7 +60,11 @@ features/
       model-browser.routes.mjs
       model-browser.service.mjs
 
+    research.providers.controller.mjs
+    research.providers.llm.mjs
     research.providers.mjs
+    research.providers.service.mjs
+    research.providers.utils.mjs
 
   auth/
     encryption.mjs
@@ -95,6 +122,9 @@ features/
 
   preferences/
     index.mjs
+    research-preferences.controller.mjs
+    research-preferences.routes.mjs
+    research-preferences.service.mjs
     terminal-preferences.controller.mjs
     terminal-preferences.routes.mjs
     terminal-preferences.service.mjs
@@ -110,16 +140,33 @@ features/
     routes.mjs
 
   research/
+    github-activity.channel.mjs
+    github-activity.routes.mjs
+    github-activity.webcomm.mjs
     github-sync/
       controller.mjs
+      index.mjs
+      request.fetcher.mjs
+      request.scheduler.mjs
       routes.mjs
       service.mjs
 
     research.controller.mjs
+    research.defaults.mjs
     research.github-sync.controller.mjs
     research.github-sync.service.mjs
     research.telemetry.mjs
     routes.mjs
+    websocket/
+      chat-handler.mjs
+      client-io.mjs
+      command-handler.mjs
+      connection.mjs
+      constants.mjs
+      input-handler.mjs
+      prompt.mjs
+      session-registry.mjs
+
 
   status/
     index.mjs
@@ -141,7 +188,11 @@ infrastructure/
 
   memory/
     github-memory.integration.mjs
+    memory.helpers.mjs
     memory.manager.mjs
+    memory.prompts.mjs
+    memory.store.mjs
+    memory.validators.mjs
 
   missions/
     github-sync.mjs
@@ -149,6 +200,8 @@ infrastructure/
   research/
     github-sync.mjs
     research.engine.mjs
+    research.markdown.mjs
+    research.override-runner.mjs
     research.path.mjs
 
   search/
@@ -183,29 +236,76 @@ public/
   github-sync/
     github-sync.js
     index.html
+    modules/
+      activity-feed.js
+      api.js
+      dashboard.constants.js
+      dashboard.js
+      dashboard.remote-controller.js
+      dashboard.remote-view.js
+      dashboard.result-view.js
+      dashboard.staging-controller.js
+      dashboard.staging-view.js
+      dashboard.utils.js
+      staging.js
+
 
   index.html
-  logs/
-    index.html
-    logs.js
-
   memory/
     index.html
     memory.js
 
   organizer/
+    bootstrap.js
     index.html
     organizer.js
+    organizer.missions.js
+    organizer.prompts.js
+    organizer.scheduler.js
+    organizer.state.js
+    organizer.utils.js
 
   prompts/
+    actions.js
+    api.js
+    elements.js
     index.html
     prompts.js
+    render.js
+    state.js
 
   research/
     index.html
+    render/
+      memory.js
+      reports.js
+      stats.js
+      status-progress.js
+      suggestions.js
+      summary.js
+      thoughts.js
+
+    research.github.js
+    research.interactions.js
     research.js
+    research.preferences.js
+    research.prompts.js
+    research.render.github.js
+    research.render.js
+    research.render.telemetry.js
+    research.state.js
+    research.telemetry.js
+    research.utils.js
+    research.ws.js
 
   research.js
+  status/
+    status.bootstrap.js
+    status.client.js
+    status.constants.js
+    status.dom.js
+    status.presence.js
+
   status.js
   style.css
   terminal/
@@ -235,10 +335,16 @@ tests/
   chat.test.mjs
   fix-validation-issues.mjs
   github-sync.test.mjs
+  helpers/
+    validation-env.mjs
+    validation-smoke-tests.mjs
+
   output-manager.test.mjs
   provider.test.mjs
   rate-limiter.test.mjs
   research-engine.test.mjs
+  research-markdown.test.mjs
+  research-override-runner.test.mjs
   research-pipeline.test.mjs
   research.test.mjs
   system-validation.mjs
@@ -246,11 +352,13 @@ tests/
   token-classifier.test.mjs
 
 utils/
+  api-keys.mjs
   cli-args-parser.mjs
   cli-error-handler.mjs
   cli-runner.mjs
   github.utils.mjs
   log-channel.mjs
+  logger.mjs
   object.freeze.mjs
   research.clean-query.mjs
   research.ensure-dir.mjs

@@ -1,12 +1,16 @@
 /**
- * Chat history CLI exposes lightweight access to persisted transcripts for 
- * operators who prefer terminal workflows.
+ * Why: Mirror chat history administration between the terminal and web console without diverging behavior.
+ * What: Provides list/show/export/clear subcommands that operate on persisted transcripts with optional JSON output.
+ * How: Delegates to the chat-history controller, streams responses through logger-backed emitters, and maintains WebSocket parity.
  */
 
 import fs from 'fs/promises';
 import path from 'path';
 import { getChatHistoryController } from '../features/chat-history/index.mjs';
 import { ensureDir } from '../utils/research.ensure-dir.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('commands.chat-history.cli', { emitToStdStreams: false });
 
 function isTruthy(value) {
   if (value == null) return false;
@@ -17,6 +21,27 @@ function isTruthy(value) {
 
 function logJson(outputFn, payload) {
   outputFn(typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2));
+}
+
+function createEmitter(handler, level) {
+  const target = typeof handler === 'function' ? handler : null;
+  const stream = level === 'error' ? process.stderr : process.stdout;
+  return (value, meta = null) => {
+    const message = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    const payloadMeta = meta || (typeof value === 'object' && value !== null ? { payload: value } : null);
+    moduleLogger[level](message, payloadMeta);
+    if (target) {
+      target(value);
+    } else {
+      stream.write(`${message}\n`);
+    }
+  };
+}
+
+function sendWsAck(wsOutput) {
+  if (typeof wsOutput === 'function') {
+    wsOutput({ type: 'output', data: '', keepDisabled: false });
+  }
 }
 
 function formatConversationLine(conversation) {
@@ -42,8 +67,8 @@ export function getChatHistoryHelpText() {
 }
 
 export async function executeChatHistory(options = {}, wsOutput, wsError) {
-  const outputFn = options.output || wsOutput || console.log;
-  const errorFn = options.error || wsError || console.error;
+  const outputFn = createEmitter(options.output || wsOutput, 'info');
+  const errorFn = createEmitter(options.error || wsError, 'error');
   const positionalArgs = Array.isArray(options.positionalArgs)
     ? [...options.positionalArgs]
     : [];
@@ -52,6 +77,13 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
   const subcommand = declaredAction || (positionalArgs.shift()?.toLowerCase()) || 'list';
   const jsonOutput = isTruthy(flags.json ?? options.json);
   const controller = getChatHistoryController();
+
+  moduleLogger.info('Executing chat-history command.', {
+    subcommand,
+    jsonOutput,
+    hasWebSocketOutput: typeof wsOutput === 'function',
+    hasWebSocketError: typeof wsError === 'function'
+  });
 
   try {
     switch (subcommand) {
@@ -69,6 +101,12 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
         } else {
           sliced.forEach(conv => outputFn(formatConversationLine(conv)));
         }
+        sendWsAck(wsOutput);
+        moduleLogger.info('Chat-history list completed.', {
+          count: sliced.length,
+          limit,
+          jsonOutput
+        });
         return { success: true, conversations: sliced };
       }
 
@@ -79,12 +117,14 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
         if (!conversationId) {
           const message = 'Usage: /chat-history show <conversationId>';
           errorFn(message);
+          sendWsAck(wsOutput);
           return { success: false, error: message, handled: true };
         }
         const conversation = await controller.getConversation(conversationId);
         if (!conversation) {
           const message = `Conversation '${conversationId}' not found.`;
           errorFn(message);
+          sendWsAck(wsOutput);
           return { success: false, error: message, handled: true };
         }
         const limitRaw = flags.limit ?? flags.top;
@@ -122,6 +162,12 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
             }
           }
         }
+        sendWsAck(wsOutput);
+        moduleLogger.info('Chat-history show completed.', {
+          id: conversationId,
+          messages: conversation.messages?.length ?? 0,
+          jsonOutput
+        });
         return { success: true, conversation };
       }
 
@@ -130,12 +176,14 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
         if (!conversationId) {
           const message = 'Usage: /chat-history export <conversationId> [--file=path]';
           errorFn(message);
+          sendWsAck(wsOutput);
           return { success: false, error: message, handled: true };
         }
         const payload = await controller.exportConversation(conversationId);
         if (!payload) {
           const message = `Conversation '${conversationId}' not found.`;
           errorFn(message);
+          sendWsAck(wsOutput);
           return { success: false, error: message, handled: true };
         }
         const filePath = flags.file || flags.output;
@@ -155,6 +203,12 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
         } else {
           outputFn(payload);
         }
+        sendWsAck(wsOutput);
+        moduleLogger.info('Chat-history export completed.', {
+          id: conversationId,
+          filePath: filePath || null,
+          jsonOutput
+        });
         return { success: true, exported: true };
       }
 
@@ -167,6 +221,7 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
           if (!removed) {
             const message = `Conversation '${conversationId}' not found.`;
             errorFn(message);
+            sendWsAck(wsOutput);
             return { success: false, error: message, handled: true };
           }
           if (jsonOutput) {
@@ -174,12 +229,18 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
           } else {
             outputFn(`Conversation '${conversationId}' removed.`);
           }
+          sendWsAck(wsOutput);
+          moduleLogger.warn('Chat-history conversation removed.', {
+            id: conversationId,
+            jsonOutput
+          });
           return { success: true, removed: conversationId };
         }
         const olderThanDays = olderThanDaysRaw != null ? Number(olderThanDaysRaw) : undefined;
         if (!isTruthy(flags.all) && !Number.isFinite(olderThanDays)) {
           const message = 'Usage: /chat-history clear --id=<conversationId> | --all | --older-than-days=<n>';
           errorFn(message);
+          sendWsAck(wsOutput);
           return { success: false, error: message, handled: true };
         }
         const result = await controller.clearConversations({ olderThanDays });
@@ -192,17 +253,31 @@ export async function executeChatHistory(options = {}, wsOutput, wsError) {
             outputFn('All chat conversations cleared.');
           }
         }
+        sendWsAck(wsOutput);
+        moduleLogger.warn('Chat-history bulk clear completed.', {
+          olderThanDays: Number.isFinite(olderThanDays) ? olderThanDays : null,
+          cleared: result,
+          jsonOutput
+        });
         return { success: true, cleared: result };
       }
 
       default: {
         const message = `Unknown chat-history action '${subcommand}'.`;
-        errorFn(message);
+        errorFn(message, { code: 'unknown_chat_history_action', subcommand });
+        sendWsAck(wsOutput);
+        moduleLogger.warn('Chat-history command received unknown action.', { subcommand });
         return { success: false, error: message, handled: true };
       }
     }
   } catch (error) {
-    errorFn(error.message);
+    moduleLogger.error('Chat-history command failed.', {
+      subcommand,
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
+    errorFn(error.message, { code: 'chat_history_command_failed' });
+    sendWsAck(wsOutput);
     return { success: false, error: error.message };
   }
 }

@@ -6,6 +6,9 @@
  */
 
 import { userManager } from '../features/auth/user-manager.mjs';
+import { createModuleLogger } from './logger.mjs';
+
+const moduleLogger = createModuleLogger('utils.api-keys');
 
 const SERVICE_ENV_FALLBACK = Object.freeze({
   brave: () => process.env.BRAVE_API_KEY ?? null,
@@ -36,7 +39,11 @@ async function readUserProfileApiKey(service) {
   try {
     return await userManager.getApiKey(service);
   } catch (error) {
-    console.warn(`[ApiKeys] Unable to read ${service} key from user profile: ${error?.message ?? error}`);
+    moduleLogger.warn('Unable to read service key from user profile.', {
+      service,
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
     return null;
   }
 }
@@ -89,7 +96,10 @@ export async function resolveGitHubConfig(options = {}) {
   try {
     profileConfig = await userManager.getDecryptedGitHubConfig();
   } catch (error) {
-    console.warn(`[ApiKeys] Unable to read GitHub config from user profile: ${error?.message ?? error}`);
+    moduleLogger.warn('Unable to read GitHub configuration from user profile.', {
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
     profileConfig = null;
   }
 

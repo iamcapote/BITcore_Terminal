@@ -1,5 +1,6 @@
 import express from 'express';
 import { cleanupInactiveSessions, handleWebSocketConnection } from './websocket/connection.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
 
 /**
  * Contract
@@ -8,6 +9,7 @@ import { cleanupInactiveSessions, handleWebSocketConnection } from './websocket/
  * How: Delegates all real-time behaviour to websocket/connection.mjs while keeping HTTP endpoints thin.
  */
 
+const moduleLogger = createModuleLogger('research.routes');
 const router = express.Router();
 
 router.all('/github/:legacyAction', (req, res) => {
@@ -29,10 +31,16 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Query is required and must be a string' });
         }
 
-        console.warn('[HTTP POST /api/research] Endpoint hit - consider security implications.');
+        moduleLogger.warn('Research HTTP endpoint invoked.', {
+            method: 'POST',
+            path: '/api/research'
+        });
         res.status(501).json({ error: 'HTTP research endpoint not fully implemented/secured.' });
     } catch (error) {
-        console.error('[HTTP POST /api/research] Error:', error);
+        moduleLogger.error('Error handling research HTTP request.', {
+            message: error?.message || String(error),
+            stack: error?.stack || null
+        });
         res.status(500).json({ error: error.message });
     }
 });

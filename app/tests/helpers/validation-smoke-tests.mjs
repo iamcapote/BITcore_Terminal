@@ -22,6 +22,7 @@ import fs from 'fs/promises';
 import { executeLogin } from '../../commands/login.cli.mjs';
 import { executeUsers } from '../../commands/users.cli.mjs';
 import { executeStatus } from '../../commands/status.cli.mjs';
+import { userManager } from '../../features/auth/user-manager.mjs';
 
 const loggerDefaults = {
   log: console.log.bind(console),
@@ -44,12 +45,25 @@ export async function runValidationSmokeSuite(options) {
   const sessionValid = await verifySession(sessionFile, logger);
 
   outputBuffer.length = 0;
-  await executeUsers({ action: 'list', output });
-  const usersListed = outputBuffer.some((line) => /Users:?/i.test(line) || /Unknown action/i.test(line));
+  await executeUsers({
+    positionalArgs: ['list'],
+    requestingUser: { username: 'admin', role: 'admin' },
+    output,
+    error: output
+  });
+  const usersListed = outputBuffer.some((line) => /user management is disabled/i.test(line));
 
   outputBuffer.length = 0;
-  await executeUsers({ action: 'create', username: 'test-user', role: 'client', output });
-  const userCreated = outputBuffer.some((line) => /Created user/i.test(line));
+  await executeUsers({
+    positionalArgs: ['create', 'test-user'],
+    requestingUser: { username: 'admin', role: 'admin' },
+    role: 'client',
+    output,
+    error: output
+  });
+  const userCreated = userManager.hasUserDirectoryAdapter?.() ?
+    outputBuffer.some((line) => /Created user/i.test(line)) :
+    outputBuffer.some((line) => /user management is disabled/i.test(line));
 
   outputBuffer.length = 0;
   await executeStatus({ output });

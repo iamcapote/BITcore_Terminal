@@ -1,6 +1,19 @@
+/**
+ * Why: Orchestrate per-query research steps so CLI and Web flows can share traversal logic.
+ * What: Normalizes queries, executes search via injected provider, extracts learnings, and schedules follow-up paths while tracking progress and telemetry.
+ * How: Receives engine configuration and progress state, delegates IO to injected handlers, and aggregates results recursively with guarded logging.
+ */
+
 import { suggestSearchProvider } from '../search/search.providers.mjs'; // Keep for type checking if needed, but not for instantiation here
 import { generateQueries, processResults } from '../../features/ai/research.providers.mjs';
 import { LLMClient } from '../ai/venice.llm-client.mjs'; // Assuming LLMClient is used
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const logger = createModuleLogger('research.path');
+
+const defaultOutput = (message, meta) => logger.info(message, meta);
+const defaultError = (message, meta) => logger.error(message, meta);
+const defaultDebug = (message, meta) => logger.debug(message, meta);
 
 // Helper function to safely get query string
 function getQueryString(query) {
@@ -13,7 +26,7 @@ function getQueryString(query) {
         return query.original;
     }
     // Fallback or error handling if query structure is unexpected
-    console.warn('[getQueryString] Unexpected query format, returning empty string:', query);
+    logger.warn('[getQueryString] Unexpected query format, returning empty string.', { query });
     return ''; // Or throw an error
 }
 
@@ -25,9 +38,9 @@ export class ResearchPath {
             visitedUrls = new Set(),
             braveApiKey, // Still needed for potential direct use? Or remove if provider is always passed? Let's keep for now.
             veniceApiKey,
-            output = console.log,
-            error = console.error,
-            debug = () => {},
+            output = defaultOutput,
+            error = defaultError,
+            debug = defaultDebug,
             progressHandler = () => {},
             searchProvider, // <-- ADD: Accept searchProvider instance
             telemetry = null

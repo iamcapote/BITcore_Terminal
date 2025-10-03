@@ -2,16 +2,64 @@
  * Logs CLI command
  *
  * Why: Provide terminal access to recent structured logs without requiring the web dashboard.
- * What: Supports `/logs tail` with filtering/searching and `/logs stats` for aggregates.
- * How: Reads from the shared in-memory logChannel buffer and formats records for CLI output.
+ * What: Supports `/logs tail|stats|settings|retention|purge` to mirror the web surface for log inspection and administration.
+ * How: Reads from the shared in-memory logChannel buffer, applies validation, and formats records for CLI or WebSocket output.
  */
 
-import { logChannel, availableLogLevels, normalizeLogLevel } from '../utils/log-channel.mjs';
+import { logChannel, availableLogLevels, normalizeLogLevel, MIN_BUFFER_SIZE, MAX_BUFFER_SIZE } from '../utils/log-channel.mjs';
 import { handleCliError } from '../utils/cli-error-handler.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('commands.logs.cli', { emitToStdStreams: false });
 
 const BOOLEAN_TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const DEFAULT_FOLLOW_DURATION_MS = 30000;
 const MAX_FOLLOW_DURATION_MS = 10 * 60 * 1000;
+
+function stringifyMessage(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value instanceof Error) {
+    return value.stack || `${value.name}: ${value.message}`;
+  }
+  if (value == null) {
+    return '';
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch (error) {
+      return '[unserializable payload]';
+    }
+  }
+  return String(value);
+}
+
+function createEmitter(handler, level) {
+  const target = typeof handler === 'function' ? handler : null;
+  const stream = level === 'error' ? process.stderr : process.stdout;
+  return (value, meta = null) => {
+    const message = stringifyMessage(value);
+    const metaIsObject = meta && typeof meta === 'object';
+    const normalizedMeta = metaIsObject ? { ...meta } : meta;
+    const skipLog = Boolean(metaIsObject && meta.skipLog === true);
+
+    if (metaIsObject && normalizedMeta && 'skipLog' in normalizedMeta) {
+      delete normalizedMeta.skipLog;
+    }
+
+    if (!skipLog) {
+      const payloadMeta = normalizedMeta || (typeof value === 'object' && value !== null ? { payload: value } : null);
+      moduleLogger[level](message, payloadMeta);
+    }
+    if (target) {
+      target(value);
+    } else {
+      stream.write(`${message}\n`);
+    }
+  };
+}
 
 function parseDurationMs(value, fallback = DEFAULT_FOLLOW_DURATION_MS) {
   if (value == null) {
@@ -97,7 +145,8 @@ function parseSince(value) {
 
 function sendWsAck(wsOutput) {
   if (typeof wsOutput === 'function') {
-    wsOutput({ type: 'output', data: '', keepDisabled: false });
+    const ack = { type: 'output', data: '', keepDisabled: false };
+    wsOutput(ack);
   }
 }
 
@@ -155,6 +204,12 @@ async function streamLogFollow({
         clearTimeout(timer);
       }
       unsubscribe();
+      moduleLogger.info('Logs tail follow session ended.', {
+        resultCount: buffer.length,
+        newEntries: newCount,
+        reason,
+        jsonOutput
+      });
       resolve({ reason, newCount });
     };
 
@@ -184,18 +239,27 @@ async function streamLogFollow({
 export function getLogsHelpText() {
   return [
     '/logs tail [--limit=200] [--levels=info,error] [--sample=1] [--search="term"] [--follow] [--duration=30s] [--max=50] [--json]  Show and optionally stream recent log entries.',
-    '/logs stats [--since=<timestamp|ISO>]  Summarize log counts by level.'
+    '/logs stats [--since=<timestamp|ISO>]  Summarize log counts by level.',
+    '/logs settings [--json]  Display current buffer size and supported levels.',
+    '/logs retention <size>  Update the in-memory buffer size (50-5000).',
+    '/logs purge  Clear the buffered log entries.'
   ].join('\n');
 }
 
 export async function executeLogs(options = {}, wsOutput, wsError) {
-  const outputFn = typeof wsOutput === 'function' ? wsOutput : console.log;
-  const errorFn = typeof wsError === 'function' ? wsError : console.error;
+  const outputFn = createEmitter(wsOutput, 'info');
+  const errorFn = createEmitter(wsError, 'error');
 
   const positionalArgs = Array.isArray(options.positionalArgs) ? [...options.positionalArgs] : [];
   const declaredAction = options.action ? String(options.action).toLowerCase() : null;
   const subcommand = declaredAction || (positionalArgs.shift()?.toLowerCase()) || 'tail';
   const flags = options.flags || {};
+
+  moduleLogger.info('Executing logs command.', {
+    subcommand,
+    hasWebSocketOutput: typeof wsOutput === 'function',
+    hasWebSocketError: typeof wsError === 'function'
+  });
 
   try {
     switch (subcommand) {
@@ -213,6 +277,17 @@ export async function executeLogs(options = {}, wsOutput, wsError) {
         const maxEntries = follow ? parseMaxEntries(flags.max ?? options.max) : Number.POSITIVE_INFINITY;
         const searchTerm = typeof search === 'string' ? search.trim().toLowerCase() : '';
         const filterFn = createEntryFilter({ levels, searchTerm, sample });
+
+        moduleLogger.info('Logs tail parameters resolved.', {
+          limit,
+          sample,
+          levels,
+          searchTerm,
+          jsonOutput,
+          follow,
+          durationMs,
+          maxEntries: Number.isFinite(maxEntries) ? maxEntries : null
+        });
 
         const snapshot = logChannel.getSnapshot({
           limit,
@@ -232,6 +307,10 @@ export async function executeLogs(options = {}, wsOutput, wsError) {
             buffer.forEach((entry) => outputFn(formatLogEntry(entry)));
           }
           sendWsAck(wsOutput);
+          moduleLogger.info('Logs tail completed without follow.', {
+            resultCount: buffer.length,
+            jsonOutput
+          });
           return { success: true, logs: buffer };
         }
 
@@ -242,6 +321,13 @@ export async function executeLogs(options = {}, wsOutput, wsError) {
             buffer.forEach((entry) => outputFn(formatLogEntry(entry)));
           }
         }
+
+        moduleLogger.info('Logs tail follow session started.', {
+          initialCount: buffer.length,
+          limit,
+          durationMs,
+          maxEntries: Number.isFinite(maxEntries) ? maxEntries : null
+        });
 
         const { newCount, reason } = await streamLogFollow({
           buffer,
@@ -258,6 +344,12 @@ export async function executeLogs(options = {}, wsOutput, wsError) {
         }
 
         sendWsAck(wsOutput);
+        moduleLogger.info('Logs tail follow completed.', {
+          resultCount: buffer.length,
+          newEntries: newCount,
+          reason,
+          jsonOutput
+        });
         return { success: true, logs: buffer, followed: true, newEntries: newCount, reason };
       }
 
@@ -280,17 +372,79 @@ export async function executeLogs(options = {}, wsOutput, wsError) {
         }
         lines.forEach((line) => outputFn(line));
         sendWsAck(wsOutput);
+        moduleLogger.info('Logs statistics emitted.', {
+          since,
+          totals: stats.total,
+          levels: stats.levels
+        });
         return { success: true, stats };
+      }
+
+      case 'settings': {
+        const jsonOutput = toBoolean(flags.json ?? options.json, false);
+        const settings = {
+          bufferSize: logChannel.getBufferSize(),
+          availableLevels: availableLogLevels()
+        };
+        if (jsonOutput) {
+          outputFn(JSON.stringify(settings, null, 2));
+        } else {
+          outputFn('--- Log Settings ---');
+          outputFn(`Buffer Size: ${settings.bufferSize}`);
+          outputFn(`Available Levels: ${settings.availableLevels.join(', ')}`);
+        }
+        sendWsAck(wsOutput);
+        moduleLogger.info('Logs settings reported.', settings);
+        return { success: true, settings };
+      }
+
+      case 'retention': {
+        const sizeArg = flags.bufferSize ?? flags.size ?? positionalArgs.shift();
+        const parsed = Number.parseInt(sizeArg, 10);
+        if (!Number.isFinite(parsed)) {
+          const message = 'bufferSize must be a finite integer.';
+          moduleLogger.warn('Invalid retention size received (non-finite).', { sizeArg });
+          errorFn(message, { code: 'invalid_retention_size', sizeArg });
+          sendWsAck(wsOutput);
+          return { success: false, error: message, handled: true };
+        }
+        if (parsed < MIN_BUFFER_SIZE || parsed > MAX_BUFFER_SIZE) {
+          const message = `bufferSize must be between ${MIN_BUFFER_SIZE} and ${MAX_BUFFER_SIZE}.`;
+          moduleLogger.warn('Retention size outside bounds.', { requested: parsed });
+          errorFn(message, { code: 'retention_out_of_range', requested: parsed });
+          sendWsAck(wsOutput);
+          return { success: false, error: message, handled: true };
+        }
+        const { bufferSize } = logChannel.configure({ bufferSize: parsed });
+        outputFn(`Log buffer size set to ${bufferSize}.`);
+        sendWsAck(wsOutput);
+        moduleLogger.info('Log buffer size updated.', { bufferSize });
+        return { success: true, bufferSize };
+      }
+
+      case 'purge':
+      case 'clear': {
+        moduleLogger.warn('Log buffer clear requested via CLI.');
+        logChannel.clear();
+        outputFn('Log buffer cleared.', { skipLog: true });
+        sendWsAck(wsOutput);
+        return { success: true, cleared: true };
       }
 
       default: {
         const error = new Error(`Unknown /logs subcommand: ${subcommand}`);
-        errorFn(error.message);
+        moduleLogger.warn('Unknown logs subcommand.', { subcommand });
+        errorFn(error.message, { code: 'unknown_logs_subcommand', subcommand });
         sendWsAck(wsOutput);
         return { success: false, error: error.message, handled: true };
       }
     }
   } catch (error) {
+    moduleLogger.error('Logs command failed.', {
+      subcommand,
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
     const result = handleCliError(error, 'logs', { subcommand }, errorFn);
     sendWsAck(wsOutput);
     return result;

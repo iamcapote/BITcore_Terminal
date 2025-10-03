@@ -11,10 +11,11 @@ import { safeSend } from '../../../utils/websocket.utils.mjs';
 import { output, outputManager } from '../../../utils/research.output-manager.mjs';
 import { userManager } from '../../auth/user-manager.mjs';
 import { createResearchTelemetry } from '../research.telemetry.mjs';
-import { getStatusController } from '../status/index.mjs';
+import { getStatusController } from '../../status/index.mjs';
 import { createGitHubActivityWebComm } from '../github-activity.webcomm.mjs';
-import { getChatHistoryController } from '../chat-history/index.mjs';
+import { getChatHistoryController } from '../../chat-history/index.mjs';
 import { logChannel } from '../../../utils/log-channel.mjs';
+import { createModuleLogger } from '../../../utils/logger.mjs';
 import { handleCommandMessage } from './command-handler.mjs';
 import { handleChatMessage } from './chat-handler.mjs';
 import { handleInputMessage } from './input-handler.mjs';
@@ -32,6 +33,11 @@ import {
 } from './session-registry.mjs';
 import { enableClientInput, disableClientInput, cloneUserRecord, wsErrorHelper } from './client-io.mjs';
 import { SESSION_INACTIVITY_TIMEOUT, STATUS_REFRESH_INTERVAL_MS } from './constants.mjs';
+
+const socketLogger = createModuleLogger('research.websocket.connection');
+const messageLogger = socketLogger.child('message');
+const cleanupLogger = socketLogger.child('cleanup');
+const activityLogger = socketLogger.child('github-activity');
 
 function attachTelemetryChannel(ws, telemetryKey) {
   let telemetryChannel = getTelemetryChannel(telemetryKey);
@@ -61,7 +67,7 @@ function attachTelemetryChannel(ws, telemetryKey) {
 }
 
 export function handleWebSocketConnection(ws, req) {
-  console.log('[WebSocket] New connection established');
+  socketLogger.info('New WebSocket connection established.');
 
   const statusController = getStatusController();
   let statusIntervalId = null;
@@ -71,7 +77,7 @@ export function handleWebSocketConnection(ws, req) {
       const summary = await statusController.summary({ validateGitHub: Boolean(validate) });
       safeSend(ws, { type: 'status-summary', data: summary, meta: { reason } });
     } catch (error) {
-      console.error(`[WebSocket] Failed to emit status summary (${reason}): ${error.message}`);
+  socketLogger.error('Failed to emit status summary.', { reason, error });
       safeSend(ws, { type: 'status-summary', error: error.message, meta: { reason, failed: true } });
     }
   };
@@ -112,7 +118,7 @@ export function handleWebSocketConnection(ws, req) {
     };
 
     registerSession(sessionId, sessionData, ws);
-    console.log(`[WebSocket] Created session ${sessionId} for new connection. Initial user: ${sessionData.username}`);
+  socketLogger.info('Created session for new connection.', { sessionId, username: sessionData.username });
 
     output.addWebSocketClient(ws);
 
@@ -134,7 +140,7 @@ export function handleWebSocketConnection(ws, req) {
         }
       },
       snapshotLimit: 80,
-      logger: console,
+  logger: activityLogger,
     });
     githubActivityStream.attach({ limit: 80 });
     sessionData.githubActivityStream = githubActivityStream;
@@ -152,9 +158,9 @@ export function handleWebSocketConnection(ws, req) {
       pushStatusSummary({ reason: 'scheduled' });
     }, STATUS_REFRESH_INTERVAL_MS);
 
-    console.log(`[WebSocket] Initial setup complete for session ${sessionId}.`);
+  socketLogger.info('Initial setup complete for session.', { sessionId });
   } catch (setupError) {
-    console.error(`[WebSocket] CRITICAL ERROR during initial connection setup: ${setupError.message}`, setupError.stack);
+    socketLogger.error('Critical error during initial connection setup.', { error: setupError, stack: setupError.stack });
     safeSend(ws, { type: 'error', error: `Server setup error: ${setupError.message}` });
     if (statusIntervalId) {
       clearInterval(statusIntervalId);
@@ -166,7 +172,7 @@ export function handleWebSocketConnection(ws, req) {
     const failedSessionId = getSessionIdBySocket(ws);
     if (failedSessionId) {
       unregisterSession(failedSessionId);
-      console.log(`[WebSocket] Cleaned up partially created session ${failedSessionId} after setup error.`);
+      socketLogger.warn('Cleaned up partially created session after setup error.', { sessionId: failedSessionId });
     }
     output.removeWebSocketClient(ws);
     return;
@@ -177,14 +183,14 @@ export function handleWebSocketConnection(ws, req) {
     const currentSession = currentSessionId ? getSessionById(currentSessionId) : null;
 
     if (!currentSession) {
-      console.error('[WebSocket] Error: No session found for incoming message from ws.');
+      messageLogger.error('No session found for incoming message.', { raw: raw.toString() });
       try {
         wsErrorHelper(ws, 'Internal Server Error: Session not found. Please refresh.', false);
         if (ws.readyState === WebSocket.OPEN) {
           ws.close(1011, 'Session lost');
         }
       } catch (sendError) {
-        console.error('[WebSocket] Error sending session not found message:', sendError);
+        messageLogger.error('Failed to notify client about missing session.', { error: sendError });
       }
       return;
     }
@@ -193,7 +199,7 @@ export function handleWebSocketConnection(ws, req) {
     if (!currentSession.pendingPromptResolve) {
       disableClientInput(ws);
     } else {
-      console.log('[WebSocket] Input remains enabled for pending server-side prompt.');
+      messageLogger.debug('Input remains enabled due to pending server-side prompt.', { sessionId: currentSessionId });
     }
 
     let message;
@@ -210,7 +216,11 @@ export function handleWebSocketConnection(ws, req) {
         logPayload.value = '******';
       }
       if (message.type !== 'ping') {
-        console.log(`[WebSocket] Received message (Session ${currentSessionId}, User: ${currentSession.username}):`, JSON.stringify(logPayload).substring(0, 250));
+        messageLogger.debug('Received message payload.', {
+          sessionId: currentSessionId,
+          username: currentSession.username,
+          payload: JSON.stringify(logPayload).substring(0, 250)
+        });
       }
 
       if (!message.type) {
@@ -239,10 +249,10 @@ export function handleWebSocketConnection(ws, req) {
         enableInputAfterProcessing = true;
       } else if (message.type === 'command') {
         if (currentSession.isChatActive) {
-          console.log('[WebSocket] Routing command message to handleChatMessage (chat active).');
+          messageLogger.debug('Routing command message to chat handler.', { sessionId: currentSessionId });
           enableInputAfterProcessing = await handleChatMessage(ws, { message: `/${message.command} ${message.args.join(' ')}` }, currentSession);
         } else {
-          console.log('[WebSocket] Routing command message to handleCommandMessage (chat inactive).');
+          messageLogger.debug('Routing command message to command handler.', { sessionId: currentSessionId });
           enableInputAfterProcessing = await handleCommandMessage(ws, message, currentSession);
         }
       } else if (message.type === 'chat-message') {
@@ -252,14 +262,14 @@ export function handleWebSocketConnection(ws, req) {
           wsErrorHelper(ws, 'Cannot send chat messages when not in chat mode.', true);
         }
       } else if (message.type === 'input') {
-        console.log('[WebSocket] Routing input message to handleInputMessage.');
+        messageLogger.debug('Routing input message to input handler.', { sessionId: currentSessionId });
         enableInputAfterProcessing = await handleInputMessage(ws, message, currentSession);
       } else if (message.type === 'ping') {
         currentSession.lastActivity = Date.now();
         safeSend(ws, { type: 'pong' });
         enableInputAfterProcessing = true;
       } else {
-        console.warn(`[WebSocket] Unexpected message type '${message.type}' received (Session ${currentSessionId}).`);
+        messageLogger.warn('Unexpected message type received.', { sessionId: currentSessionId, messageType: message.type });
         wsErrorHelper(ws, `Unexpected message type: ${message.type}`, true);
         enableInputAfterProcessing = false;
       }
@@ -268,21 +278,29 @@ export function handleWebSocketConnection(ws, req) {
       const isServerPromptPending = !!(sessionAfterProcessing && sessionAfterProcessing.pendingPromptResolve);
 
       if (enableInputAfterProcessing && !isServerPromptPending) {
-        console.log('[WebSocket] Handler allows enable, no server prompt active. Enabling client input.');
+        messageLogger.debug('Enabling client input post handler.', { sessionId: currentSessionId });
         enableClientInput(ws);
       } else if (enableInputAfterProcessing && isServerPromptPending) {
-        console.log('[WebSocket] Handler allows enable, but server prompt is now active. Input remains disabled.');
+        messageLogger.debug('Handler allows enable but server prompt active; keeping input disabled.', { sessionId: currentSessionId });
       } else {
-        console.log(`[WebSocket] Handler requires input disabled (enableInputAfterProcessing=${enableInputAfterProcessing}) OR server prompt active (isServerPromptPending=${isServerPromptPending}). Input remains disabled.`);
+        messageLogger.debug('Keeping client input disabled after handler execution.', {
+          sessionId: currentSessionId,
+          enableInputAfterProcessing,
+          isServerPromptPending
+        });
       }
     } catch (error) {
-      console.error(`[WebSocket] Error processing message (Session ${currentSessionId}): ${error.message}`, error.stack, raw.toString());
+      messageLogger.error('Error processing incoming message.', {
+        sessionId: currentSessionId,
+        error,
+        payload: raw.toString()
+      });
       try {
         const sessionOnError = getSessionById(currentSessionId);
         const isPromptStillPendingOnError = !!(sessionOnError && sessionOnError.pendingPromptResolve);
         wsErrorHelper(ws, `Error processing message: ${error.message}`, !isPromptStillPendingOnError);
       } catch (sendError) {
-        console.error('[WebSocket] Error sending processing error message:', sendError);
+        messageLogger.error('Failed to notify client about processing error.', { error: sendError });
       }
       enableInputAfterProcessing = false;
     }
@@ -291,7 +309,7 @@ export function handleWebSocketConnection(ws, req) {
   ws.on('close', async (code, reason) => {
     const closedSessionId = getSessionIdBySocket(ws);
     const reasonString = reason ? reason.toString() : 'N/A';
-    console.log(`[WebSocket] Connection closed (Session ${closedSessionId}, Code: ${code}, Reason: ${reasonString})`);
+    socketLogger.info('Connection closed.', { sessionId: closedSessionId, code, reason: reasonString });
     if (statusIntervalId) {
       clearInterval(statusIntervalId);
       statusIntervalId = null;
@@ -318,7 +336,7 @@ export function handleWebSocketConnection(ws, req) {
         }
       }
       if (session.pendingPromptReject) {
-        console.log(`[WebSocket] Rejecting pending server-side prompt for closed session ${closedSessionId}.`);
+        socketLogger.warn('Rejecting pending prompt after socket close.', { sessionId: closedSessionId });
         clearTimeout(session.promptTimeoutId);
         const rejectFn = session.pendingPromptReject;
         session.pendingPromptResolve = null;
@@ -330,7 +348,7 @@ export function handleWebSocketConnection(ws, req) {
         rejectFn(new Error('WebSocket connection closed during prompt.'));
       }
       if (session.memoryManager) {
-        console.log(`[WebSocket] Nullifying memory manager for closed session ${closedSessionId}`);
+        socketLogger.debug('Nullifying memory manager for closed session.', { sessionId: closedSessionId });
         session.memoryManager = null;
       }
       if (session.chatHistoryConversationId) {
@@ -348,28 +366,28 @@ export function handleWebSocketConnection(ws, req) {
       session.githubActivityStream = null;
       session.githubActivityStreamDisposer = null;
       session.lastGitHubActivityTimestamp = null;
-      console.log(`[WebSocket] Cleaned up session: ${closedSessionId}`);
+      socketLogger.info('Cleaned up session after close.', { sessionId: closedSessionId });
     } else {
-      console.warn('[WebSocket] Could not find session to clean up for closed connection.');
+      socketLogger.warn('Session not found during close cleanup.');
     }
   });
 
   ws.on('error', async (error) => {
     const errorSessionId = getSessionIdBySocket(ws);
-    console.error(`[WebSocket] Connection error (Session ${errorSessionId || 'N/A'}):`, error.message, error.stack);
+    socketLogger.error('WebSocket connection error.', { sessionId: errorSessionId ?? 'N/A', error });
 
     wsErrorHelper(ws, `WebSocket connection error: ${error.message}`, false);
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      console.log(`[WebSocket] Force closing socket for session ${errorSessionId} due to error.`);
+      socketLogger.warn('Force closing socket due to connection error.', { sessionId: errorSessionId });
       ws.close(1011, 'WebSocket error occurred');
     }
 
     const session = unregisterSessionBySocket(ws) || (errorSessionId ? unregisterSession(errorSessionId) : null);
     if (session) {
-      console.log(`[WebSocket] Cleaning up session ${errorSessionId} after error.`);
+      socketLogger.info('Cleaning up session after socket error.', { sessionId: errorSessionId });
 
       if (session.pendingPromptReject) {
-        console.log(`[WebSocket] Rejecting pending prompt for errored session ${errorSessionId}.`);
+        socketLogger.warn('Rejecting pending prompt after socket error.', { sessionId: errorSessionId });
         clearTimeout(session.promptTimeoutId);
         const rejectFn = session.pendingPromptReject;
         session.pendingPromptResolve = null;
@@ -384,7 +402,7 @@ export function handleWebSocketConnection(ws, req) {
       session.password = null;
 
       if (session.memoryManager) {
-        console.log(`[WebSocket] Releasing memory manager for session ${errorSessionId}.`);
+        socketLogger.debug('Releasing memory manager after socket error.', { sessionId: errorSessionId });
         session.memoryManager = null;
       }
       if (session.chatHistoryConversationId) {
@@ -419,7 +437,7 @@ export function handleWebSocketConnection(ws, req) {
       session.githubActivityStreamDisposer = null;
       session.lastGitHubActivityTimestamp = null;
 
-      console.log(`[WebSocket] Session ${errorSessionId} cleaned up successfully.`);
+      socketLogger.info('Session cleaned up after socket error.', { sessionId: errorSessionId });
     }
     output.removeWebSocketClient(ws);
   });
@@ -427,13 +445,13 @@ export function handleWebSocketConnection(ws, req) {
 
 export function cleanupInactiveSessions() {
   const now = Date.now();
-  console.log(`[Session Cleanup] Running cleanup task. Current sessions: ${sessionCount()}`);
+  cleanupLogger.info('Running cleanup task.', { sessionCount: sessionCount() });
   forEachSession((session, sessionId) => {
     if (now - session.lastActivity > SESSION_INACTIVITY_TIMEOUT) {
-      console.log(`[Session Cleanup] Session ${sessionId} timed out due to inactivity.`);
+      cleanupLogger.warn('Session timed out due to inactivity.', { sessionId });
       const ws = session.webSocketClient;
       if (session.pendingPromptReject) {
-        console.log(`[Session Cleanup] Rejecting pending prompt for inactive session ${sessionId}.`);
+        cleanupLogger.warn('Rejecting pending prompt for inactive session.', { sessionId });
         clearTimeout(session.promptTimeoutId);
         const rejectFn = session.pendingPromptReject;
         session.pendingPromptResolve = null;
@@ -450,7 +468,7 @@ export function cleanupInactiveSessions() {
       }
       output.removeWebSocketClient(ws);
       if (session.memoryManager) {
-        console.log(`[Session Cleanup] Releasing memory manager for timed out session ${sessionId}.`);
+        cleanupLogger.debug('Releasing memory manager for timed out session.', { sessionId });
         session.memoryManager = null;
       }
       session.password = null;
@@ -458,11 +476,11 @@ export function cleanupInactiveSessions() {
       session.currentResearchResult = null;
       session.currentResearchFilename = null;
       unregisterSession(sessionId);
-      console.log(`[Session Cleanup] Cleaned up inactive session: ${sessionId}`);
+      cleanupLogger.info('Cleaned up inactive session.', { sessionId });
     }
   });
 
-  console.log(`[Session Cleanup] Finished cleanup task. Remaining sessions: ${sessionCount()}`);
+  cleanupLogger.info('Finished cleanup task.', { sessionCount: sessionCount() });
 }
 
 let cleanupTimer = null;

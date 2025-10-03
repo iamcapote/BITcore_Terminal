@@ -10,6 +10,9 @@
 import { promises as fs } from 'node:fs';
 import { getPromptController, getPromptGitHubSyncController, getPromptConfig } from '../features/prompts/index.mjs';
 import { handleCliError, ErrorTypes } from '../utils/cli-error-handler.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('commands.prompts.cli', { emitToStdStreams: false });
 
 const BOOLEAN_TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -76,6 +79,21 @@ function sendWsAck(wsOutput) {
   }
 }
 
+function createEmitter(handler, level) {
+  const target = typeof handler === 'function' ? handler : null;
+  const stream = level === 'error' ? process.stderr : process.stdout;
+  return (value, meta = null) => {
+    const message = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    const payloadMeta = meta || (typeof value === 'object' && value !== null ? { payload: value } : null);
+    moduleLogger[level](message, payloadMeta);
+    if (target) {
+      target(value);
+    } else {
+      stream.write(`${message}\n`);
+    }
+  };
+}
+
 function requireId(positionalArgs, flags) {
   const id = flags.id || flags.prompt || positionalArgs.shift();
   if (!id || !String(id).trim()) {
@@ -118,8 +136,8 @@ export function getPromptsHelpText() {
 }
 
 export async function executePrompts(options = {}, wsOutput, wsError) {
-  const outputFn = typeof wsOutput === 'function' ? wsOutput : console.log;
-  const errorFn = typeof wsError === 'function' ? wsError : console.error;
+  const outputFn = createEmitter(wsOutput, 'info');
+  const errorFn = createEmitter(wsError, 'error');
 
   const positionalArgs = Array.isArray(options.positionalArgs) ? [...options.positionalArgs] : [];
   const flags = options.flags || {};
@@ -129,6 +147,14 @@ export async function executePrompts(options = {}, wsOutput, wsError) {
 
   const controller = getPromptController();
   const actor = options.user?.username || options.currentUser?.username || options.actor || 'cli';
+
+  moduleLogger.info('Executing prompts command.', {
+    subcommand,
+    jsonOutput,
+    hasWebSocketOutput: typeof wsOutput === 'function',
+    hasWebSocketError: typeof wsError === 'function',
+    actor
+  });
 
   try {
     switch (subcommand) {
@@ -149,6 +175,13 @@ export async function executePrompts(options = {}, wsOutput, wsError) {
         }
 
         sendWsAck(wsOutput);
+        moduleLogger.info('Prompts list completed.', {
+          subcommand,
+          count: summaries.length,
+          tags,
+          limit,
+          jsonOutput
+        });
         return { success: true, prompts: summaries };
       }
 
@@ -165,6 +198,11 @@ export async function executePrompts(options = {}, wsOutput, wsError) {
         }
 
         sendWsAck(wsOutput);
+        moduleLogger.info('Prompts get completed.', {
+          subcommand,
+          id,
+          jsonOutput
+        });
         return { success: true, record };
       }
 
@@ -227,6 +265,12 @@ export async function executePrompts(options = {}, wsOutput, wsError) {
         }
 
         sendWsAck(wsOutput);
+        moduleLogger.info('Prompts GitHub action completed.', {
+          subcommand,
+          action: actionArg,
+          status: result.status,
+          jsonOutput
+        });
         return { success: result.status === 'ok', result };
       }
 
@@ -262,6 +306,12 @@ export async function executePrompts(options = {}, wsOutput, wsError) {
         }
 
         sendWsAck(wsOutput);
+        moduleLogger.info('Prompts save completed.', {
+          subcommand,
+          id: record.id,
+          actor,
+          jsonOutput
+        });
         return { success: true, record };
       }
 
@@ -273,6 +323,12 @@ export async function executePrompts(options = {}, wsOutput, wsError) {
           outputFn(`Prompt "${id}" deleted.`);
         }
         sendWsAck(wsOutput);
+        moduleLogger.warn('Prompt deleted.', {
+          subcommand,
+          id,
+          actor,
+          jsonOutput
+        });
         return { success: true };
       }
 
@@ -285,6 +341,12 @@ export async function executePrompts(options = {}, wsOutput, wsError) {
           outputFn(`Prompt "${id}" ${exists ? 'exists' : 'does not exist'}.`);
         }
         sendWsAck(wsOutput);
+        moduleLogger.info('Prompts exists completed.', {
+          subcommand,
+          id,
+          exists,
+          jsonOutput
+        });
         return { success: true, exists };
       }
 
@@ -316,17 +378,31 @@ export async function executePrompts(options = {}, wsOutput, wsError) {
         }
 
         sendWsAck(wsOutput);
+        moduleLogger.info('Prompts search completed.', {
+          subcommand,
+          query,
+          tags,
+          limit,
+          includeBody,
+          count: results.length,
+          jsonOutput
+        });
         return { success: true, results };
       }
 
       default: {
         const errorMsg = `Unknown prompts action: ${subcommand}. See /prompts help for supported subcommands.`;
-        errorFn(errorMsg);
+        errorFn(errorMsg, { code: 'unknown_prompts_action', subcommand });
         sendWsAck(wsOutput);
         return { success: false, error: errorMsg, handled: true };
       }
     }
   } catch (error) {
+    moduleLogger.error('Prompts command failed.', {
+      subcommand,
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    });
     const errResult = handleCliError(
       error,
       ErrorTypes.UNKNOWN,

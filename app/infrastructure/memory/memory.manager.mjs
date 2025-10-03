@@ -35,6 +35,7 @@ import {
   buildScoringUserPrompt,
   extractJsonPayload
 } from './memory.helpers.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
 
 export const MEMORY_DEPTHS = {
   SHORT: 'short',
@@ -47,6 +48,8 @@ const MEMORY_SETTINGS = {
   [MEMORY_DEPTHS.MEDIUM]: { maxMemories: 50, retrievalLimit: 5, threshold: 0.5, summarizeEvery: 20 },
   [MEMORY_DEPTHS.LONG]: { maxMemories: 100, retrievalLimit: 8, threshold: 0.3, summarizeEvery: 30 }
 };
+
+const moduleLogger = createModuleLogger('memory.manager');
 
 
 export class MemoryManager {
@@ -69,6 +72,8 @@ export class MemoryManager {
     this.githubIntegration = githubEnabled
       ? new GitHubMemoryIntegration({ username: this.user.username, enabled: true })
       : null;
+
+    this.logger = moduleLogger.withMeta({ user: this.user.username, depth: this.depth, githubEnabled });
   }
 
   async initialize() {
@@ -81,6 +86,11 @@ export class MemoryManager {
 
   getStats() {
     return this.store.snapshot();
+  }
+
+  // Mirrors legacy access pattern for short-term memories to preserve compatibility.
+  get ephemeralMemories() {
+    return this.store.getEphemeral();
   }
 
   generateMemoryId() {
@@ -112,7 +122,10 @@ export class MemoryManager {
           const longTerm = await this.retrieveLongTermMemories();
           candidateMemories.push(...longTerm);
         } catch (error) {
-          console.error(`Error retrieving long-term memories: ${error.message}`);
+          this.logger.error('Failed to retrieve long-term GitHub memories during relevance scoring.', {
+            message: error.message,
+            stack: error.stack
+          });
         }
       }
     }
@@ -165,10 +178,13 @@ export class MemoryManager {
         return relevant;
       }
     } catch (error) {
-      console.error(`Error in LLM-based memory scoring: ${error.message}`);
+      this.logger.error('LLM-based memory scoring failed; falling back to semantic matching.', {
+        message: error.message,
+        stack: error.stack
+      });
     }
 
-    console.log('Using fallback local semantic matching for memory retrieval');
+    this.logger.info('Using fallback local semantic matching for memory retrieval.');
 
     const scoredMemories = candidateMemories.map((memory) => {
       let similarity = calculateSimilarity(query, memory.content);
@@ -212,7 +228,10 @@ export class MemoryManager {
     try {
       return await this.githubIntegration.retrieveMemories('long_term');
     } catch (error) {
-      console.error(`Error retrieving long-term memories: ${error.message}`);
+      this.logger.error('Failed to retrieve long-term memories from GitHub.', {
+        message: error.message,
+        stack: error.stack
+      });
       return [];
     }
   }
@@ -225,7 +244,10 @@ export class MemoryManager {
     try {
       return await this.githubIntegration.retrieveMemories('meta');
     } catch (error) {
-      console.error(`Error retrieving meta memories: ${error.message}`);
+      this.logger.error('Failed to retrieve meta memories from GitHub.', {
+        message: error.message,
+        stack: error.stack
+      });
       return [];
     }
   }
@@ -248,7 +270,11 @@ export class MemoryManager {
       });
       return { success: true, result };
     } catch (error) {
-      console.error(`Error finalizing memory to long-term storage: ${error.message}`);
+      this.logger.error('Failed to finalize memory to long-term storage.', {
+        message: error.message,
+        stack: error.stack,
+        memoryId: memory.id
+      });
       return { success: false, error: error.message };
     }
   }
@@ -324,7 +350,7 @@ export class MemoryManager {
 
       return summary;
     } catch (error) {
-      console.error(`Error validating memories: ${error.message}`);
+      this.logger.error('Memory validation failed.', { message: error.message, stack: error.stack });
       return { validated: 0, error: error.message };
     }
   }
@@ -369,7 +395,11 @@ export class MemoryManager {
 
         if (this.githubIntegration) {
           this.githubIntegration.storeMemory(summaryMemory, 'meta').catch((error) => {
-            console.error(`Failed to store memory in GitHub: ${error.message}`);
+            this.logger.error('Failed to store summarized memory in GitHub.', {
+              message: error.message,
+              stack: error.stack,
+              memoryId: summaryMemory.id
+            });
           });
         }
       }
@@ -383,7 +413,7 @@ export class MemoryManager {
 
       return { summarized: summaries.length, originalCount: memories.length };
     } catch (error) {
-      console.error(`Error summarizing memories: ${error.message}`);
+      this.logger.error('Error summarizing memories.', { message: error.message, stack: error.stack });
       return { summarized: 0, error: error.message };
     }
   }
@@ -437,13 +467,16 @@ export class MemoryManager {
         try {
           await this.githubIntegration.storeMemory(metaMemory, 'meta');
         } catch (error) {
-          console.error(`Error storing memory in GitHub: ${error.message}`);
+          this.logger.error('Failed to store conversation summary in GitHub.', { message: error.message, stack: error.stack });
         }
       }
 
       return { success: true, summary: metaMemory };
     } catch (error) {
-      console.error(`Error summarizing memories: ${error.message}`);
+      this.logger.error('Error summarizing conversation; generating fallback summary.', {
+        message: error.message,
+        stack: error.stack
+      });
       const fallbackSummary = {
         id: this.store.generateMemoryId(),
         content: `Conversation summary (auto-generated): ${conversationText.substring(0, 100)}...`,

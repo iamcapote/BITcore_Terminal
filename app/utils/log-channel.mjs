@@ -1,5 +1,7 @@
 /**
- * Log Channel
+ * Why: Centralized in-memory log buffer underpinning CLI and Web log views.
+ * What: Normalizes log entries, stores them in a bounded FIFO buffer, exposes snapshot/stats access, and fans out to subscribers.
+ * How: Guarded push API with sampling and filtering helpers plus pluggable listener-error reporting.
  *
  * Contract
  * Inputs:
@@ -7,6 +9,7 @@
  *   - subscribe(listener, options): listener receives normalized entry objects
  *   - getSnapshot(options): returns a filtered, sampled array of entries
  *   - getStats(options?): returns aggregate counts by level and time span
+ *   - configure({ bufferSize?, onListenerError? }): adjusts buffer bounds and listener error handler
  * Outputs:
  *   - Normalized log entries with { id, sequence, level, message, timestamp, source, meta }
  * Error modes:
@@ -14,16 +17,48 @@
  * Performance:
  *   - time: O(1) push, O(n) snapshot filtering; memory bounded by bufferSize (default 500)
  * Side effects:
- *   - None besides in-memory storage
+ *   - Listener error handler may write to stderr or external sinks
  */
 
 import crypto from 'crypto';
 
 const DEFAULT_BUFFER_SIZE = 500;
-const MIN_BUFFER_SIZE = 50;
-const MAX_BUFFER_SIZE = 5000;
+export const MIN_BUFFER_SIZE = 50;
+export const MAX_BUFFER_SIZE = 5000;
 const DEFAULT_SAMPLE = 1;
 const VALID_LEVELS = new Set(['debug', 'info', 'warn', 'error']);
+
+function defaultListenerErrorHandler(error, context = {}) {
+  const parts = ['[LogChannel] listener failure'];
+  if (context.listener) {
+    const label = context.listener.name && context.listener.name !== 'anonymous'
+      ? context.listener.name
+      : 'anonymous';
+    parts.push(`listener=${label}`);
+  }
+  if (context.entry && typeof context.entry.sequence === 'number') {
+    parts.push(`sequence=${context.entry.sequence}`);
+  }
+  const message = error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : String(error ?? 'unknown error');
+  const line = `${parts.join(' ')} | ${message}`;
+  try {
+    process.stderr.write(`${line}\n`);
+  } catch {
+    // Last-resort path intentionally silent to avoid recursive failures.
+  }
+}
+
+function sanitizeListenerErrorHandler(handler) {
+  if (typeof handler === 'function') {
+    return handler;
+  }
+  if (handler === null) {
+    return () => {};
+  }
+  return defaultListenerErrorHandler;
+}
 
 function normalizeLevel(level) {
   const value = typeof level === 'string' ? level.trim().toLowerCase() : '';
@@ -84,7 +119,7 @@ function cloneMeta(meta) {
   return { ...meta };
 }
 
-export function createLogChannel({ bufferSize = DEFAULT_BUFFER_SIZE } = {}) {
+export function createLogChannel({ bufferSize = DEFAULT_BUFFER_SIZE, onListenerError } = {}) {
   let configuredSize = coercePositiveInteger(bufferSize, DEFAULT_BUFFER_SIZE);
   if (!Number.isFinite(configuredSize) || configuredSize <= 0) {
     throw new Error('LogChannel bufferSize must be a positive integer.');
@@ -93,6 +128,7 @@ export function createLogChannel({ bufferSize = DEFAULT_BUFFER_SIZE } = {}) {
   const entries = [];
   const listeners = new Set();
   let sequence = 0;
+  let listenerErrorHandler = sanitizeListenerErrorHandler(onListenerError);
 
   const api = {
     push(entry = {}) {
@@ -121,8 +157,11 @@ export function createLogChannel({ bufferSize = DEFAULT_BUFFER_SIZE } = {}) {
           try {
             listener(normalized);
           } catch (listenerError) {
-            // eslint-disable-next-line no-console
-            console.warn('[LogChannel] listener failure', listenerError);
+            try {
+              listenerErrorHandler(listenerError, { entry: normalized, listener });
+            } catch (handlerError) {
+              defaultListenerErrorHandler(handlerError, { entry: normalized, listener });
+            }
           }
         }
       }
@@ -222,15 +261,20 @@ export function createLogChannel({ bufferSize = DEFAULT_BUFFER_SIZE } = {}) {
       sequence = 0;
     },
 
-    configure({ bufferSize: nextSize } = {}) {
-      const parsed = Number.parseInt(nextSize, 10);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new TypeError('LogChannel bufferSize must be a positive integer.');
+    configure({ bufferSize: nextSize, onListenerError: nextHandler } = {}) {
+      if (nextSize !== undefined) {
+        const parsed = Number.parseInt(nextSize, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          throw new TypeError('LogChannel bufferSize must be a positive integer.');
+        }
+        const clamped = Math.max(MIN_BUFFER_SIZE, Math.min(parsed, MAX_BUFFER_SIZE));
+        configuredSize = clamped;
+        while (entries.length > configuredSize) {
+          entries.shift();
+        }
       }
-      const clamped = Math.max(MIN_BUFFER_SIZE, Math.min(parsed, MAX_BUFFER_SIZE));
-      configuredSize = clamped;
-      while (entries.length > configuredSize) {
-        entries.shift();
+      if (nextHandler !== undefined) {
+        listenerErrorHandler = sanitizeListenerErrorHandler(nextHandler);
       }
       return { bufferSize: configuredSize };
     },

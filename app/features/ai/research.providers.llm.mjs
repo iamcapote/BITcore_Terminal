@@ -6,13 +6,62 @@
  */
 
 import { LLMClient, LLMError } from '../../infrastructure/ai/venice.llm-client.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
 
-export async function callVeniceLLM({ apiKey, type, system, prompt, temperature = 0.7, maxTokens = 1000, outputFn = console.log, errorFn = console.error, character_slug }) {
+const moduleLogger = createModuleLogger('ai.research.providers.llm');
+
+function cloneArg(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack || null
+    };
+  }
+  if (value == null) {
+    return value;
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (error) {
+      return String(value);
+    }
+  }
+  return value;
+}
+
+function defaultOutput(message, ...rest) {
+  if (rest.length === 0) {
+    moduleLogger.info(message);
+    return;
+  }
+  moduleLogger.info(message, { args: rest.map(cloneArg) });
+}
+
+function defaultError(message, ...rest) {
+  if (message instanceof Error && rest.length === 0) {
+    moduleLogger.error(message.message, {
+      name: message.name,
+      stack: message.stack || null
+    });
+    return;
+  }
+  if (rest.length === 0) {
+    moduleLogger.error(message);
+    return;
+  }
+  moduleLogger.error(message, { args: rest.map(cloneArg) });
+}
+
+export async function callVeniceLLM({ apiKey, type, system, prompt, temperature = 0.7, maxTokens = 1000, outputFn = defaultOutput, errorFn = defaultError, character_slug, llmClient = null }) {
   if (!apiKey) {
     errorFn('[callVeniceLLM] Error: API key is missing.');
     return { success: false, error: 'API key is required.', isApiError: true };
   }
-  const client = new LLMClient({ apiKey, outputFn, errorFn });
+  const client = llmClient && typeof llmClient.complete === 'function'
+    ? llmClient
+    : new LLMClient({ apiKey, outputFn, errorFn });
   try {
     const response = await client.complete({
       system,
