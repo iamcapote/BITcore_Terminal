@@ -86,9 +86,10 @@ export class BraveSearchProvider {
         this.output('[BraveSearchProvider] Rate-limited by Brave.');
         throw new SearchError('RATE_LIMIT', 'Rate-limited by Brave', 'Brave');
       } else if (error.response?.status === 422) {
-        logger.error('[BraveSearchProvider] Received HTTP 422 from Brave. Check query parameters.', { detail: error.response?.data || error.message });
-        this.error('[BraveSearchProvider] Received HTTP 422 from Brave. Check query parameters:', error.response?.data || error.message);
-        throw new SearchError('API_ERROR', 'Received HTTP 422 from Brave.', 'Brave');
+        const detail = error.response?.data || error.message;
+        logger.warn('[BraveSearchProvider] Received HTTP 422 from Brave. Query rejected.', { detail });
+        this.error('[BraveSearchProvider] Received HTTP 422 from Brave. Query rejected.', detail);
+        throw new SearchError('INVALID_QUERY', 'Query rejected by Brave (HTTP 422).', 'Brave');
       } else if (error.response?.status === 401) {
         logger.error('[BraveSearchProvider] Received HTTP 401 Unauthorized. Check API Key.');
         this.error('[BraveSearchProvider] Received HTTP 401 Unauthorized. Check API Key.');
@@ -127,6 +128,10 @@ export class BraveSearchProvider {
           logger.error(`[BraveSearchProvider] Authentication error (${error.message}). Aborting search.`);
           this.error(`[BraveSearchProvider] Authentication error (${error.message}). Aborting search.`);
           throw error;
+        }
+        if (error instanceof SearchError && error.code === 'INVALID_QUERY') {
+          this.output(`[BraveSearchProvider] Query rejected by Brave. Returning empty result set.`);
+          return [];
         }
         if (error instanceof SearchError && error.code === 'RATE_LIMIT') {
           const delay = this.retryDelay * Math.pow(2, retryCount);

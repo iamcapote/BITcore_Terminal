@@ -20,7 +20,19 @@ Pragmatic guidance for building, extending, and maintaining agents and modules i
 - Ideally, you always try to min-max.
 - Every feature, setting, option and similar toggles should be included in the terminal cli and in the web gui as well. Users must be able to use the ENTIRE app from the CLI and be able to use the ENTIRE app from the web gui.
 - Optional extensions (like multi-user directories) must wire through adapters that are easy to register and keep the single-user baseline untouched.
-- Comment doctrine: summarize behavior with terse, timeless sentences; open every file with a Why/What/How docblock, annotate sections only for structure, and keep comments free of TODOs or status chatter.
+- Comment doctrine: open every file with a Why/What/How docblock, give each major section a structural comment that explains behavior or invariants, and write sentences that are as short as clarity allows and as long as precision requires—always timeless, high-signal, and free of TODOs or meta chatter.
+
+### Comment & Parity Snapshot (2025-10-03)
+
+- Keep modules within the 300–500 line envelope by splitting routers, orchestrators, managers, and systems before they bloat.
+- Lead every file with a crisp Why/What/How docblock, add structural comments only when they explain architecture, and forbid TODOs or status chatter inside code.
+- Mirror every feature, setting, and toggle across the terminal CLI and Web GUI so operators can drive the entire system from either surface.
+
+### Comment Clarity Mandate (2025-10-03 update)
+
+- Each file begins with a descriptive Why/What/How docblock and every section carries a concise structural comment so readers grasp purpose and flow at a glance.
+- Keep prose condensed: short declarative sentences that stay straightforward yet detailed enough for precision; assume an expert reader and never drift into meta commentary.
+- Comments exist to document architecture, data flow, and invariants; fixes, TODOs, or status notes belong in planning artifacts, not inline code.
 
 ### Comment & Surface Doctrine (2025-10-02 refresh)
 
@@ -195,6 +207,19 @@ Test checklist:
 - Ban meta-status notes and TODOs in code comments—use dedicated tracking files instead.
 - Condense information: enough detail for precision, no filler, no conversational tone.
 - Keep sentences short, declarative, and precise; treat comments as architectural documentation, never chatter.
+
+### Comment Doctrine Capsule (2025-10-03)
+
+- Guard module size: hold files between 300–500 lines and split responsibilities before hitting the ceiling.
+- Lead with Why/What/How docblocks that declare intent and contract in a few terse sentences.
+- Use sectional comments only to map architecture or invariants; write for expert readers with crisp, timeless language.
+- Explain behavior, never status: forbid TODOs, chatter, or placeholders in code comments and park work items in planning docs instead.
+
+### Comment Philosophy Fast Summary (2025-10-03 refresh)
+
+- Every file starts with a Why/What/How docblock that orients purpose, behavior, and integration in three tight sentences.
+- Section comments exist to label architecture, data flow, or invariants—never to track work or status.
+- Write short, precise sentences that maximize signal; avoid meta-commentary and keep guidance timeless for expert readers.
 
 ## Coding Standards (ESM + async)
 

@@ -11,6 +11,9 @@ import { resolveApiKeys } from '../../../utils/api-keys.mjs';
 import { output as outputManagerInstance } from '../../../utils/research.output-manager.mjs';
 import { safeSend } from '../../../utils/websocket.utils.mjs';
 import { generateResearchQueries } from './queries.mjs';
+import { createModuleLogger } from '../../../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('commands.chat.research.start');
 
 /**
  * Contract
@@ -148,12 +151,14 @@ export async function startResearchFromChat(...args) {
         try {
           progressHandler(enrichedProgress);
         } catch (handlerError) {
-          console.error('[startResearchFromChat] progressHandler threw an error:', handlerError);
+          moduleLogger.error('Progress handler threw in startResearchFromChat.', {
+            error: handlerError?.message || String(handlerError)
+          });
         }
       } else if (isWebSocket && webSocketClient) {
         safeSend(webSocketClient, { type: 'progress', data: enrichedProgress });
       } else if (verbose) {
-        console.log('[chat-research-progress]', enrichedProgress);
+        moduleLogger.debug('Chat research progress event.', { progress: enrichedProgress });
       }
     };
 

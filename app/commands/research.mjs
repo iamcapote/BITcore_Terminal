@@ -2,6 +2,9 @@ import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
 import { callVeniceWithTokenClassifier } from '../utils/token-classifier.mjs';
 import { cleanQuery } from '../utils/research.clean-query.mjs';
 import { resolveApiKeys } from '../utils/api-keys.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('commands.research');
 
 /**
  * Research command handler.
@@ -144,7 +147,10 @@ export async function research(options) {
 
   } catch (execError) {
     error(`Critical error during research execution: ${execError.message}`);
-    console.error(execError.stack); // Log stack trace for server debugging
+        moduleLogger.error('Research command failed with an unexpected error.', {
+            error: execError?.message || String(execError),
+            stack: execError?.stack || null
+        });
     // Send completion message with error for WebSocket
     if (isWebSocket) {
         webSocketClient.send(JSON.stringify({ type: 'research_complete', error: execError.message, keepDisabled: false }));

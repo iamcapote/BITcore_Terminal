@@ -5,6 +5,9 @@
  */
 
 import { output as outputManagerInstance } from '../../utils/research.output-manager.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
+const moduleLogger = createModuleLogger('commands.chat.memory');
+
 
 /**
  * Contract
@@ -76,8 +79,8 @@ export async function exitMemory(options = {}) {
   } finally {
     if (session) {
       session.memoryManager = null;
-      if (session.sessionId) {
-        console.log(`[WebSocket] Memory manager removed from session ${session.sessionId} after exitMemory.`);
+        if (session.sessionId) {
+        moduleLogger.debug(`Removed memory manager after exitMemory for session ${session.sessionId}.`);
       }
     }
   }

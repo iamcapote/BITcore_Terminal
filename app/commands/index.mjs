@@ -16,6 +16,9 @@ import * as terminalCli from './terminal.cli.mjs';
 import * as logsCli from './logs.cli.mjs';
 import * as researchSchedulerCli from './research-scheduler.cli.mjs';
 import * as usersCli from './users.cli.mjs';
+import * as exportCli from './export.cli.mjs';
+import * as storageCli from './storage.cli.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
 
 /**
  * Why: Centralise CLI/Web command wiring for parity across `/help`, the console CLI, and the Web terminal.
@@ -45,6 +48,8 @@ export const commands = {
     logs: logsCli.executeLogs,
     'research-scheduler': researchSchedulerCli.executeResearchScheduler,
     users: usersCli.executeUsers,
+    export: exportCli.executeExport,
+    storage: storageCli.executeStorage,
     // Add other commands here
 };
 
@@ -112,39 +117,61 @@ export function parseCommandArgs(commandString) {
  * @returns {string} Formatted help text.
  */
 export function getHelpText() {
-    // Dynamically generate help text from imported modules if they export a help function/text
-    let help = 'Available Commands:\n';
-    help += '-----------------\n';
+    const sections = [];
+    const register = (name, getter) => {
+        if (typeof getter !== 'function') {
+            return;
+        }
+        const text = getter();
+        if (typeof text === 'string' && text.trim()) {
+            sections.push({ name, text: text.trim() });
+        }
+    };
 
-    // Add help text from each command module that provides it
-    if (researchCli.getResearchHelpText) help += researchCli.getResearchHelpText() + '\n\n';
-    if (keysCli.getKeysHelpText) help += keysCli.getKeysHelpText() + '\n\n';
-    if (statusCli.getStatusHelpText) help += statusCli.getStatusHelpText() + '\n\n';
-    if (chatCli.getChatHelpText) help += chatCli.getChatHelpText() + '\n\n'; // Assumes chat provides combined help
-    if (chatHistoryCli.getChatHistoryHelpText) help += chatHistoryCli.getChatHistoryHelpText() + '\n\n';
-    if (memoryCli.getMemoryHelpText) help += memoryCli.getMemoryHelpText() + '\n\n';
-    if (diagnoseCli.getDiagnoseHelpText) help += diagnoseCli.getDiagnoseHelpText() + '\n\n';
-    if (loginCli.getLoginHelpText) help += loginCli.getLoginHelpText() + '\n\n';
-    if (logoutCli.getLogoutHelpText) help += logoutCli.getLogoutHelpText() + '\n\n';
-    if (passwordCli.getPasswordChangeHelpText) help += passwordCli.getPasswordChangeHelpText() + '\n\n';
-    if (missionsCli.getMissionsHelpText) help += missionsCli.getMissionsHelpText() + '\n\n';
-    if (promptsCli.getPromptsHelpText) help += promptsCli.getPromptsHelpText() + '\n\n';
-    if (researchGitHubCli.getResearchGitHubHelpText) help += researchGitHubCli.getResearchGitHubHelpText() + '\n\n';
-    if (githubSyncCli.getGithubSyncHelpText) help += githubSyncCli.getGithubSyncHelpText() + '\n\n';
-    if (terminalCli.getTerminalHelpText) help += terminalCli.getTerminalHelpText() + '\n\n';
-    if (logsCli.getLogsHelpText) help += logsCli.getLogsHelpText() + '\n\n';
-    if (researchSchedulerCli.getResearchSchedulerHelpText) help += researchSchedulerCli.getResearchSchedulerHelpText() + '\n\n';
-    if (usersCli.getUsersHelpText) help += usersCli.getUsersHelpText() + '\n\n';
+    register('chat', chatCli.getChatHelpText);
+    register('chat-history', chatHistoryCli.getChatHistoryHelpText);
+    register('diagnose', diagnoseCli.getDiagnoseHelpText);
+    register('export', exportCli.getExportHelpText);
+    register('github-sync', githubSyncCli.getGithubSyncHelpText);
+    register('keys', keysCli.getKeysHelpText);
+    register('logs', logsCli.getLogsHelpText);
+    register('login', loginCli.getLoginHelpText);
+    register('logout', logoutCli.getLogoutHelpText);
+    register('memory', memoryCli.getMemoryHelpText);
+    register('missions', missionsCli.getMissionsHelpText);
+    register('password-change', passwordCli.getPasswordChangeHelpText);
+    register('prompts', promptsCli.getPromptsHelpText);
+    register('research', researchCli.getResearchHelpText);
+    register('research-github', researchGitHubCli.getResearchGitHubHelpText);
+    register('research-scheduler', researchSchedulerCli.getResearchSchedulerHelpText);
+    register('status', statusCli.getStatusHelpText);
+    register('storage', storageCli.getStorageHelpText);
+    register('terminal', terminalCli.getTerminalHelpText);
+    register('users', usersCli.getUsersHelpText);
 
-    // Add a general help command usage
-    help += '/help                     Show this help message.\n';
+    sections.sort((a, b) => a.name.localeCompare(b.name));
 
-    return help.trim();
+    const lines = [
+        'Available Commands:',
+        '-----------------'
+    ];
+
+    sections.forEach(({ text }) => {
+        lines.push(text);
+        lines.push('');
+    });
+
+    lines.push('/help                     Show this help message.');
+
+    return lines.join('\n').trim();
 }
 
 // Optional: Add a dedicated help command function if needed elsewhere
+const moduleLogger = createModuleLogger('commands.index');
+const defaultHelpOutput = (message) => moduleLogger.info(message);
+
 export function executeHelp(options) {
-    const outputFn = typeof options?.output === 'function' ? options.output : console.log;
+    const outputFn = typeof options?.output === 'function' ? options.output : defaultHelpOutput;
     outputFn(getHelpText());
     return Promise.resolve({ success: true });
 }

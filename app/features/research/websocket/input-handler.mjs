@@ -8,7 +8,9 @@
 import { safeSend } from '../../../utils/websocket.utils.mjs';
 import { createModuleLogger } from '../../../utils/logger.mjs';
 import { getGitHubResearchSyncController } from '../research.github-sync.controller.mjs';
+import { userManager } from '../../auth/user-manager.mjs';
 import { wsErrorHelper, wsOutputHelper } from './client-io.mjs';
+import { persistSessionFromRef } from '../../../infrastructure/session/session.store.mjs';
 
 const inputLogger = createModuleLogger('research.websocket.input-handler');
 
@@ -69,6 +71,7 @@ export async function handleInputMessage(ws, message, session) {
       return true;
     }
 
+    let shouldClearResult = false;
     try {
       switch (action) {
         case 'download':
@@ -79,8 +82,16 @@ export async function handleInputMessage(ws, message, session) {
             content: markdownContent,
           });
           enableInputAfter = true;
+          shouldClearResult = true;
           break;
         case 'upload': {
+          const githubConfig = await userManager.getDecryptedGitHubConfig();
+          if (!githubConfig || !githubConfig.owner || !githubConfig.repo || !githubConfig.token) {
+            wsErrorHelper(ws, 'GitHub uploads require owner, repo, branch, and a token. Configure them via /keys set github before uploading.', true);
+            enableInputAfter = true;
+            break;
+          }
+          shouldClearResult = true;
           wsOutputHelper(ws, 'Attempting to upload to GitHub...');
           enableInputAfter = false;
           const repoPath = suggestedFilename;
@@ -104,10 +115,19 @@ export async function handleInputMessage(ws, message, session) {
         case 'keep':
           wsOutputHelper(ws, 'Research result kept in session (will be lost on disconnect/logout).');
           enableInputAfter = true;
+          try {
+            await persistSessionFromRef(session);
+          } catch (persistError) {
+            inputLogger.warn('Failed to persist session snapshot after keep action.', {
+              sessionId: session.sessionId,
+              message: persistError?.message || String(persistError),
+            });
+          }
           break;
         case 'discard':
           wsOutputHelper(ws, 'Research result discarded.');
           enableInputAfter = true;
+          shouldClearResult = true;
           break;
         default:
           wsOutputHelper(ws, `Invalid action: '${action}'. Please choose Download, Upload, Keep, or Discard.`);
@@ -126,10 +146,22 @@ export async function handleInputMessage(ws, message, session) {
         session.password = null;
       }
     } finally {
-      if (action === 'download' || action === 'upload' || action === 'discard') {
+      if (shouldClearResult) {
         session.currentResearchResult = null;
         session.currentResearchFilename = null;
+        session.currentResearchSummary = null;
         delete session.currentResearchQuery;
+        try {
+          await persistSessionFromRef(session, {
+            currentResearchSummary: null,
+            currentResearchQuery: null,
+          });
+        } catch (persistError) {
+          inputLogger.warn('Failed to persist session snapshot after clearing result.', {
+            sessionId: session.sessionId,
+            message: persistError?.message || String(persistError),
+          });
+        }
       }
     }
   } else if (context === 'github_token_password') {

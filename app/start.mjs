@@ -30,6 +30,7 @@ import { setupLogRoutes } from './features/logs/routes.mjs';
 import { setupChatPersonaRoutes } from './features/chat/chat-persona.routes.mjs';
 import { getResearchRequestScheduler, getResearchSchedulerConfig } from './features/research/github-sync/index.mjs';
 import { createModuleLogger } from './utils/logger.mjs';
+import { safeSend } from './utils/websocket.utils.mjs';
 
 dotenv.config();
 
@@ -168,9 +169,21 @@ async function startServer() {
 
   // --- RESTORE Original WebSocket Connection Handler ---
   wss.on('connection', (ws, req) => {
-      // Use the original handler you imported
       wsLogger.debug('Passing connection to handler.', { path: req.url });
-      handleWebSocketConnection(ws, req);
+      handleWebSocketConnection(ws, req).catch((error) => {
+        wsLogger.error('WebSocket session initialization failed.', {
+          message: error?.message,
+          stack: error?.stack || null,
+        });
+        try {
+          safeSend(ws, { type: 'error', error: 'Failed to initialize session.' });
+          ws.close(1011, 'Session init failure');
+        } catch (sendError) {
+          wsLogger.warn('Unable to notify client about session failure.', {
+            message: sendError?.message,
+          });
+        }
+      });
   });
   // --- END RESTORED HANDLER ---
 }

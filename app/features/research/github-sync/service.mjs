@@ -179,6 +179,20 @@ export async function githubResearchSync(options = {}) {
       };
     }
 
+    case 'delete':
+    case 'rm':
+    case 'remove': {
+      const repoPath = sanitizeRepoPath(options.path ?? options.target, 'path');
+      const message = normalizeString(options.message) || `Delete ${repoPath}`;
+      const branch = normalizeString(options.branch);
+      const result = await controller.deleteFile({ path: repoPath, message, branch });
+      return {
+        success: Boolean(result?.ok),
+        message: `Deleted ${repoPath}` + (branch ? ` from ${branch}` : ''),
+        details: result
+      };
+    }
+
     default:
       throw new RangeError(`ValidationError: unknown action '${action}'`);
   }

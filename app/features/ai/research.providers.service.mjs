@@ -15,6 +15,7 @@ import {
 } from '../../infrastructure/ai/venice.characters.mjs';
 import { processResponse, trimPrompt } from './research.providers.utils.mjs';
 import { callVeniceLLM } from './research.providers.llm.mjs';
+import { computeFallbackTopic, buildFallbackQueries } from './research.providers.fallbacks.mjs';
 
 const moduleLogger = createModuleLogger('ai.research.providers.service');
 
@@ -356,7 +357,15 @@ export async function generateSummary({
   ));
 
   if (validLearnings.length === 0) {
-    errorFn(`[generateSummary] No valid learnings provided to generate summary for "${query}". Original learnings array (may contain errors or be empty):`, learnings);
+    const notice = `[generateSummary] No valid learnings provided to generate summary for "${query}". Original learnings array (may contain errors or be empty).`;
+    if (typeof outputFn === 'function') {
+      outputFn(notice);
+      if (Array.isArray(learnings) && learnings.length > 0) {
+        outputFn(`[generateSummary] Filtered learnings: ${JSON.stringify(learnings)}`);
+      }
+    } else if (typeof errorFn === 'function') {
+      errorFn(notice, learnings);
+    }
     let fallbackMessage = `## Summary\n\nNo valid summary could be generated for "${query}" as no key learnings were successfully extracted during the research process.`;
     const errorLearnings = learnings.filter((entry) => typeof entry === 'string' && !validLearnings.includes(entry));
     if (errorLearnings.length > 0) {
@@ -472,33 +481,4 @@ export async function processResultsLLM({ results, query, llmClient, characterSl
   }
 
   throw new Error(`Failed to parse learnings from LLM response: ${responseContent}`);
-}
-
-function computeFallbackTopic(query) {
-  let fallbackTopic = 'the topic';
-  const firstUserMessageMatch = query.match(/user:\s*(.*?)(\n|$)/i);
-  if (firstUserMessageMatch && firstUserMessageMatch[1].trim()) {
-    fallbackTopic = firstUserMessageMatch[1].trim();
-    if (fallbackTopic.length > 50) {
-      fallbackTopic = `${fallbackTopic.substring(0, 50)}...`;
-    }
-  } else if (query.length < 100) {
-    fallbackTopic = query;
-  }
-  return fallbackTopic;
-}
-
-function buildFallbackQueries(topic, targetCount) {
-  const base = [
-    { original: `What is ${topic}?`, metadata: { goal: `Research definition of: ${topic}` } },
-    { original: `How does ${topic} work?`, metadata: { goal: `Research how ${topic} works` } },
-    { original: `Examples of ${topic}`, metadata: { goal: `Research examples of: ${topic}` } }
-  ];
-  while (base.length < (Number(targetCount) || 3)) {
-    base.push({
-      original: `Which aspects of ${topic} are most important?`,
-      metadata: { goal: `Explore key aspects of: ${topic}` }
-    });
-  }
-  return base.slice(0, targetCount);
 }

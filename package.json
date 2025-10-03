@@ -8,7 +8,8 @@
     "start": "node app/start.mjs",
     "test": "vitest run",
     "test:vitest": "vitest run",
-    "lint:lines": "node scripts/audit-line-lengths.mjs"
+    "lint:lines": "node scripts/audit-line-lengths.mjs",
+    "test:webcli": "node test-cli-simulation.js"
   },
   "dependencies": {
     "@octokit/rest": "^21.1.1",

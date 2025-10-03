@@ -23,6 +23,7 @@ import { LLMClient } from '../ai/venice.llm-client.mjs';
 import { GitHubMemoryIntegration } from './github-memory.integration.mjs';
 import { MemoryStore } from './memory.store.mjs';
 import { ensureValidDepth, ensureValidUser } from './memory.validators.mjs';
+import { MEMORY_DEPTHS, MEMORY_SETTINGS } from './memory.settings.mjs';
 import {
   SCORING_SYSTEM_PROMPT,
   VALIDATION_SYSTEM_PROMPT,
@@ -36,18 +37,6 @@ import {
   extractJsonPayload
 } from './memory.helpers.mjs';
 import { createModuleLogger } from '../../utils/logger.mjs';
-
-export const MEMORY_DEPTHS = {
-  SHORT: 'short',
-  MEDIUM: 'medium',
-  LONG: 'long'
-};
-
-const MEMORY_SETTINGS = {
-  [MEMORY_DEPTHS.SHORT]: { maxMemories: 10, retrievalLimit: 2, threshold: 0.7, summarizeEvery: 10 },
-  [MEMORY_DEPTHS.MEDIUM]: { maxMemories: 50, retrievalLimit: 5, threshold: 0.5, summarizeEvery: 20 },
-  [MEMORY_DEPTHS.LONG]: { maxMemories: 100, retrievalLimit: 8, threshold: 0.3, summarizeEvery: 30 }
-};
 
 const moduleLogger = createModuleLogger('memory.manager');
 

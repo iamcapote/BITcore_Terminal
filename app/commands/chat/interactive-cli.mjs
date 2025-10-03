@@ -6,6 +6,9 @@
 
 import readline from 'readline';
 import { cleanChatResponse } from '../../infrastructure/ai/venice.response-processor.mjs';
+import { createModuleLogger } from '../../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('commands.chat.interactive-cli');
 
 /**
  * Contract
@@ -64,7 +67,7 @@ export async function promptHiddenFixed(query) {
     process.stdin.on('keypress', onKeypress);
 
     rl.on('error', (err) => {
-      console.error('Readline error during password prompt:', err);
+      moduleLogger.error('Readline error during password prompt.', { error: err?.message || String(err) });
       cleanupAndResolve('');
     });
   });

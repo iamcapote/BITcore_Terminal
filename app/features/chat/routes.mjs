@@ -8,6 +8,43 @@ import { createModuleLogger } from '../../utils/logger.mjs';
 
 const moduleLogger = createModuleLogger('chat.routes');
 
+function buildMemoryContextMessage(memories) {
+    if (!Array.isArray(memories) || memories.length === 0) {
+        return null;
+    }
+
+    const lines = memories.map((memory, index) => {
+        const content = typeof memory.content === 'string' ? memory.content.trim() : '';
+        const truncated = content.length > 240 ? `${content.slice(0, 237)}…` : content;
+        const reason = typeof memory.matchReason === 'string' && memory.matchReason.trim()
+            ? ` (${memory.matchReason.trim()})`
+            : '';
+        return `${index + 1}. ${truncated}${reason}`;
+    }).filter(Boolean);
+
+    if (lines.length === 0) {
+        return null;
+    }
+
+    return `Relevant memory context:\n${lines.join('\n')}`;
+}
+
+function serializeMemoriesForEvent(memories) {
+    if (!Array.isArray(memories) || memories.length === 0) {
+        return [];
+    }
+
+    return memories.map((memory) => ({
+        id: memory.id,
+        content: memory.content,
+        similarity: memory.similarity,
+        role: memory.role,
+        timestamp: memory.timestamp,
+        tags: memory.tags,
+        matchReason: memory.matchReason,
+    }));
+}
+
 /**
  * Handle incoming chat messages from WebSocket clients.
  * This function is called by the WebSocket routes when a message of type 'chat-message' is received.
@@ -54,6 +91,33 @@ export async function handleChatMessage(ws, message, session) {
             }
         }
         
+        // Retrieve and store memory context when enabled
+        const memoryManager = session.memoryManager ?? null;
+        let retrievedMemories = [];
+        if (memoryManager) {
+            try {
+                retrievedMemories = await memoryManager.retrieveRelevantMemories(userMessage);
+                if (retrievedMemories.length > 0) {
+                    safeSend(ws, {
+                        type: 'memory_context',
+                        data: serializeMemoriesForEvent(retrievedMemories)
+                    });
+                }
+            } catch (memoryError) {
+                moduleLogger.warn('Failed to retrieve memories during chat message.', {
+                    message: memoryError?.message || String(memoryError)
+                });
+            }
+
+            try {
+                await memoryManager.storeMemory(userMessage, 'user');
+            } catch (storeError) {
+                moduleLogger.warn('Failed to store user chat memory.', {
+                    message: storeError?.message || String(storeError)
+                });
+            }
+        }
+
         // Initialize LLM client
         const llm = new LLMClient();
         
@@ -71,6 +135,11 @@ export async function handleChatMessage(ws, message, session) {
         const messages = [
             { role: 'system', content: systemMessage }
         ];
+
+        const memoryContextMessage = buildMemoryContextMessage(retrievedMemories);
+        if (memoryContextMessage) {
+            messages.push({ role: 'system', content: memoryContextMessage });
+        }
         
         // Add previous messages from chat history (limited to last 10 for context window)
         const historyLimit = 10;
@@ -104,6 +173,16 @@ export async function handleChatMessage(ws, message, session) {
                 });
             } catch (error) {
                 quietError(`Failed to persist assistant message: ${error.message}`);
+            }
+        }
+
+        if (memoryManager) {
+            try {
+                await memoryManager.storeMemory(assistantResponse, 'assistant');
+            } catch (assistantStoreError) {
+                moduleLogger.warn('Failed to store assistant chat memory.', {
+                    message: assistantStoreError?.message || String(assistantStoreError)
+                });
             }
         }
         

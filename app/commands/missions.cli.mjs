@@ -5,8 +5,8 @@
  * Contract
  *   Inputs:
  *     - options: { action?: string, positionalArgs?: string[], flags?: Record<string, unknown>, json?: boolean }
- *     - wsOutput?: (message: string) => void; defaults to console.log.
- *     - wsError?: (message: string) => void; defaults to console.error.
+ *     - wsOutput?: (message: string) => void; defaults to module logger info emitter.
+ *     - wsError?: (message: string) => void; defaults to module logger error emitter.
  *   Outputs:
  *     - Resolves to `{ success: boolean, ... }` structures matching legacy behaviour for compatibility with tests and UI bindings.
  *   Error modes:
@@ -36,6 +36,9 @@ import {
 } from './missions/helpers.mjs';
 import { handleTemplatesCommand } from './missions/templates.handler.mjs';
 import { handleSyncCommand } from './missions/sync.handler.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('commands.missions.cli');
 
 export function getMissionsHelpText() {
   return [
@@ -59,8 +62,8 @@ export function getMissionsHelpText() {
 }
 
 export async function executeMissions(options = {}, wsOutput, wsError) {
-  const outputFn = typeof wsOutput === 'function' ? wsOutput : console.log;
-  const errorFn = typeof wsError === 'function' ? wsError : console.error;
+  const outputFn = typeof wsOutput === 'function' ? wsOutput : (message) => moduleLogger.info(message);
+  const errorFn = typeof wsError === 'function' ? wsError : (message) => moduleLogger.error(message);
 
   const positionalArgs = Array.isArray(options.positionalArgs) ? [...options.positionalArgs] : [];
   const flags = options.flags || {};

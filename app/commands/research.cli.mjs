@@ -33,6 +33,9 @@ import { enrichResearchQuery } from './research/query-classifier.mjs';
 import { createModuleLogger } from '../utils/logger.mjs';
 import { createResearchEmitter } from './research/emitters.mjs';
 import { ensureResearchPassword } from './research/passwords.mjs';
+import { sanitizeResearchOptionsForLog } from './research/logging.mjs';
+import { setCliResearchResult, clearCliResearchResult } from './research/state.mjs';
+import { persistSessionFromRef } from '../infrastructure/session/session.store.mjs';
 
 const moduleLogger = createModuleLogger('commands.research.cli', { emitToStdStreams: false });
 
@@ -41,6 +44,19 @@ const POST_RESEARCH_PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for post-res
 
 const sharedMemoryService = createMemoryService();
 const MEMORY_CONTEXT_MAX_RECORDS = 5;
+
+const CLI_FOLLOW_UP_MESSAGE = 'Next steps: run /export to save locally or /storage save <filename> to upload to GitHub. Latest results stay cached for CLI follow-up commands.';
+
+// Error formatting helper keeps user-facing failures consistent and actionable.
+function formatResearchError(error, { stage = 'pipeline', query = null } = {}) {
+    const rawMessage = error?.message || String(error) || 'Unknown failure.';
+    const normalized = rawMessage.replace(/\s+/g, ' ').trim();
+    const messageWithPeriod = normalized.endsWith('.') ? normalized : `${normalized}.`;
+    const stageLabel = stage ? stage : 'pipeline';
+    const querySuffix = query ? ` Query: "${String(query).slice(0, 120)}".` : '';
+    const guidance = ' Try again with --verbose for diagnostics, verify /keys stat, or run /diagnose if the issue persists.';
+    return `[Research ${stageLabel}] ${messageWithPeriod}${querySuffix}${guidance}`;
+}
 
 /**
  * CLI command for executing research.
@@ -63,19 +79,9 @@ const MEMORY_CONTEXT_MAX_RECORDS = 5;
  * @returns {Promise<Object>} Command result or error object. Contains `researchComplete: true` on success.
  */
 export async function executeResearch(options = {}) {
-    // Log received options at the very beginning, masking password
-    const initialLogOptions = { ...options };
-    if (initialLogOptions.password) initialLogOptions.password = '******';
-    // Avoid logging potentially large session object directly
-    initialLogOptions.session = initialLogOptions.session ? `{ sessionId: ${initialLogOptions.session.sessionId}, user: ${initialLogOptions.session.username}, ... }` : null;
-    // Mask currentUser password if present
-    if (initialLogOptions.currentUser?.passwordHash) initialLogOptions.currentUser.passwordHash = '******';
-    if (initialLogOptions.currentUser?.salt) initialLogOptions.currentUser.salt = '******';
-    if (initialLogOptions.currentUser?.encryptedApiKeys) initialLogOptions.currentUser.encryptedApiKeys = '{...}';
-    if (initialLogOptions.currentUser?.encryptedGitHubToken) initialLogOptions.currentUser.encryptedGitHubToken = '******';
-
+    const initialLogOptions = sanitizeResearchOptionsForLog(options);
     moduleLogger.info('Received research command options.', {
-        options: JSON.stringify(initialLogOptions, (key, value) => key === 'webSocketClient' ? '[WebSocket Object]' : value).substring(0, 1000)
+        options: JSON.stringify(initialLogOptions).substring(0, 1000)
     });
 
 
@@ -183,26 +189,33 @@ export async function executeResearch(options = {}) {
 
         logCommandStart('research', options); // Log command start after initial checks
 
+        if (!isWebSocket) {
+            clearCliResearchResult();
+        }
+
         // --- Password Handling (Get password if needed and available) ---
         let userPassword = password; // Password from handleCommandMessage or cache
 
-        const { password: resolvedPassword, result: passwordFailure } = await ensureResearchPassword({
-            needsPassword,
-            existingPassword: userPassword,
-            promptFn: effectivePrompt,
-            promptTimeoutMs: PROMPT_TIMEOUT_MS,
-            isWebSocket,
-            session,
-            webSocketClient,
-            debug: effectiveDebug,
-            emitError: effectiveError
-        });
-
-        if (passwordFailure) {
-            return passwordFailure;
+        // --- Password Handling (No-op in single-user mode) ---
+        // If single-user mode, skip password prompt entirely
+        if (currentUser && currentUser.role === 'admin' && !process.env.RESEARCH_VAULT_ENABLED) {
+            userPassword = null;
+        } else {
+            const { password: resolvedPassword, result: passwordFailure } = await ensureResearchPassword({
+                needsPassword,
+                promptFn: effectivePrompt,
+                promptTimeoutMs: PROMPT_TIMEOUT_MS,
+                isWebSocket,
+                session,
+                webSocketClient,
+                debug: effectiveDebug,
+                emitError: effectiveError
+            });
+            if (passwordFailure) {
+                return passwordFailure;
+            }
+            userPassword = resolvedPassword;
         }
-
-        userPassword = resolvedPassword;
         // --- End Password Handling ---
 
 
@@ -279,6 +292,7 @@ export async function executeResearch(options = {}) {
             session.currentResearchQuery = enhancedQuery?.original || researchQuery;
             session.currentResearchResult = null;
             session.currentResearchFilename = null;
+            session.currentResearchSummary = null;
         }
 
         const { overrideQueries: memoryOverrides } = await prepareMemoryContext({
@@ -345,7 +359,7 @@ export async function executeResearch(options = {}) {
         });
 
         // --- Output Results ---
-        if (results && results.success !== false) { // Check if research didn't explicitly fail
+    if (results && results.success !== false) { // Check if research didn't explicitly fail
 
             // --- Store result markdown content in session for post-research actions ---
             if (results.markdownContent && isWebSocket && session) {
@@ -354,14 +368,40 @@ export async function executeResearch(options = {}) {
                 session.promptData = { suggestedFilename: results.suggestedFilename };
                 effectiveDebug("Stored research markdown content and suggested filename in session and promptData.");
                 if (session.password !== userPassword) session.password = userPassword;
+                try {
+                    await persistSessionFromRef(session, {
+                        currentResearchSummary: results.summary ?? null,
+                        currentResearchQuery: enhancedQuery?.original ?? researchQuery,
+                    });
+                } catch (persistError) {
+                    moduleLogger.warn('Failed to persist session snapshot after research completion.', {
+                        message: persistError?.message || String(persistError),
+                        sessionId: session?.sessionId || null,
+                    });
+                }
             } else if (results.suggestedFilename && isWebSocket && session) {
                 effectiveError(`Internal Warning: Suggested filename exists but markdown content is missing in session ${session.sessionId}.`);
+            } else if (!isWebSocket && results.markdownContent) {
+                setCliResearchResult({
+                    content: results.markdownContent,
+                    filename: results.suggestedFilename,
+                    summary: results.summary ?? null,
+                    query: enhancedQuery?.original ?? researchQuery,
+                    generatedAt: new Date().toISOString()
+                });
             }
             // --- Always inform user about session-only persistence ---
             // Message moved to prompt handler
         } else {
             // Handle case where research failed within the engine
-            effectiveError(`Research failed: ${results?.error || 'Unknown error during research execution.'}`);
+            const failureMessage = formatResearchError(new Error(results?.error || 'Unknown error during research execution.'), {
+                stage: 'engine',
+                query: enhancedQuery?.original || researchQuery
+            });
+            effectiveError(failureMessage);
+            if (!isWebSocket) {
+                clearCliResearchResult();
+            }
             // No prompt needed if research failed
             return { success: false, error: results?.error || 'Research failed', handled: true, keepDisabled: false };
         }
@@ -410,11 +450,18 @@ export async function executeResearch(options = {}) {
         } else {
             // CLI mode: Just finish
             effectiveOutput(`[CMD SUCCESS] research: Completed successfully.`);
-            // Output the markdown content directly in CLI mode?
+            if (results.summary) {
+                effectiveOutput('');
+                effectiveOutput('Summary:');
+                effectiveOutput(results.summary.trim());
+            }
             if (results.markdownContent) {
-                effectiveOutput("\n--- Research Content ---");
+                effectiveOutput('');
+                effectiveOutput('--- Research Content ---');
                 effectiveOutput(results.markdownContent);
-                effectiveOutput("--- End Content ---");
+                effectiveOutput('--- End Content ---');
+                effectiveOutput('');
+                effectiveOutput(CLI_FOLLOW_UP_MESSAGE);
             }
             // No automatic upload here anymore
         }
@@ -437,7 +484,11 @@ export async function executeResearch(options = {}) {
         // effectiveError(`Unknown research action: ${action}. Only 'run' is supported directly.`);
         // return { success: false, error: `Unknown action: ${action}`, handled: true, keepDisabled: false };
     } catch (error) {
-        effectiveError(`Error during research command: ${error.message}`);
+        const formatted = formatResearchError(error, {
+            stage: 'command',
+            query: researchQuery || positionalArgs.join(' ')
+        });
+        effectiveError(formatted);
         moduleLogger.error('Unhandled error during research command.', {
             message: error?.message || String(error),
             stack: error?.stack || null
@@ -457,6 +508,24 @@ export async function executeResearch(options = {}) {
             // Send a generic completion message indicating failure
             safeSend(webSocketClient, { type: 'research_complete', error: error.message, keepDisabled: false }); // Send error completion
         }
+        if (isWebSocket && session) {
+            session.currentResearchResult = null;
+            session.currentResearchFilename = null;
+            session.currentResearchSummary = null;
+            session.promptData = null;
+            delete session.currentResearchQuery;
+            try {
+                await persistSessionFromRef(session, {
+                    currentResearchSummary: null,
+                    currentResearchQuery: enhancedQuery?.original ?? researchQuery,
+                });
+            } catch (persistError) {
+                moduleLogger.warn('Failed to persist session snapshot after research failure.', {
+                    message: persistError?.message || String(persistError),
+                    sessionId: session?.sessionId || null,
+                });
+            }
+        }
          // Clear password cache on unexpected errors if WebSocket
         if (isWebSocket && session && needsPassword) {
              moduleLogger.warn('Clearing session password after research command failure.', {
@@ -464,6 +533,17 @@ export async function executeResearch(options = {}) {
                 sessionId: session?.sessionId || null
              });
              session.password = null;
+            try {
+                await persistSessionFromRef(session, {
+                    currentResearchSummary: null,
+                    currentResearchQuery: enhancedQuery?.original ?? researchQuery,
+                });
+            } catch (persistError) {
+                moduleLogger.warn('Failed to persist session snapshot after clearing password.', {
+                    message: persistError?.message || String(persistError),
+                    sessionId: session?.sessionId || null,
+                });
+            }
         }
         return { success: false, error: error.message, handled: true, keepDisabled: false }; // Ensure input enabled on error
     }

@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { describe, it, beforeEach, afterEach, expect, vi } from 'vitest';
 import { executeChat, exitMemory, generateResearchQueries, startResearchFromChat } from '../commands/chat.cli.mjs';
+import { MemoryManager } from '../infrastructure/memory/memory.manager.mjs';
 import { output } from '../utils/research.output-manager.mjs';
 import { userManager } from '../features/auth/user-manager.mjs';
 import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
@@ -91,6 +92,23 @@ describe('Chat Command', () => {
     expect(result.session?.isChatActive).toBe(true);
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Chat session ready'));
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('bitcore'));
+  });
+
+  it('initializes memory manager when memory flag is provided', async () => {
+    const outputCollector = [];
+    const session = {};
+
+    const result = await executeChat({
+      session,
+      flags: { memory: true, depth: 'short' },
+      output: (line) => outputCollector.push(line),
+    });
+
+    expect(result.success).toBe(true);
+    expect(session.memoryManager).toBeInstanceOf(MemoryManager);
+    expect(session.memoryEnabled).toBe(true);
+    expect(session.memoryDepth).toBe('short');
+    expect(outputCollector.some((line) => typeof line === 'string' && line.includes('Memory mode enabled'))).toBe(true);
   });
 
   it('sends a chat-ready event when used over WebSocket', async () => {

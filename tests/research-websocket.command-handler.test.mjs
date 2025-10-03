@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const researchCommandMock = vi.fn(async () => ({ success: true }));
+const chatCommandMock = vi.fn(async () => ({ success: true, keepDisabled: false }));
 const parseCommandArgsMock = vi.fn((input) => {
   const trimmed = (input || '').trim();
   if (!trimmed) return { commandName: '', positionalArgs: [], flags: {} };
@@ -48,6 +49,7 @@ vi.mock('ws', () => ({
 vi.mock('../app/commands/index.mjs', () => ({
   commands: {
     research: (...args) => researchCommandMock(...args),
+    chat: (...args) => chatCommandMock(...args),
   },
   parseCommandArgs: (...args) => parseCommandArgsMock(...args),
 }));
@@ -78,6 +80,8 @@ vi.mock('../app/features/research/websocket/prompt.mjs', () => ({
   wsPrompt: (...args) => wsPromptMock(...args),
 }));
 
+const originalCsrfEnv = process.env.RESEARCH_WS_CSRF_REQUIRED;
+
 const { handleCommandMessage } = await import('../app/features/research/websocket/command-handler.mjs');
 
 function createSocket() {
@@ -87,9 +91,12 @@ function createSocket() {
   };
 }
 
+let sessionCounter = 0;
+
 function createSession(overrides = {}) {
+  sessionCounter += 1;
   return {
-    sessionId: 'session-1',
+    sessionId: `session-${sessionCounter}`,
     sessionModel: null,
     sessionCharacter: null,
     currentUser: { username: 'test-user', role: 'admin' },
@@ -111,22 +118,30 @@ function createCommandMessage(overrides = {}) {
 describe('handleCommandMessage (research command interactive query)', () => {
   beforeEach(() => {
     researchCommandMock.mockResolvedValue({ success: true });
+    chatCommandMock.mockReset();
+    chatCommandMock.mockResolvedValue({ success: true, keepDisabled: false });
     wsPromptMock.mockReset();
     wsErrorHelperMock.mockReset();
     wsOutputHelperMock.mockReset();
     cloneUserRecordMock.mockClear();
     safeSendMock.mockClear();
     parseCommandArgsMock.mockClear();
+    process.env.RESEARCH_WS_CSRF_REQUIRED = originalCsrfEnv;
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    if (originalCsrfEnv === undefined) {
+      delete process.env.RESEARCH_WS_CSRF_REQUIRED;
+    } else {
+      process.env.RESEARCH_WS_CSRF_REQUIRED = originalCsrfEnv;
+    }
   });
 
   it('prompts for a query when none provided and forwards trimmed response to command', async () => {
     const ws = createSocket();
     const session = createSession();
-    const message = createCommandMessage();
+  const message = createCommandMessage({ args: ['topic'] });
 
     wsPromptMock.mockResolvedValueOnce('   Investigate AI ethics   ');
 
@@ -174,6 +189,95 @@ describe('handleCommandMessage (research command interactive query)', () => {
 
     expect(result).toBe(true);
     expect(researchCommandMock).not.toHaveBeenCalled();
-    expect(wsErrorHelperMock).not.toHaveBeenCalled();
+    expect(wsErrorHelperMock).toHaveBeenCalledWith(ws, expect.stringMatching(/prompt timed out/i), true);
+  });
+
+  it('rejects commands when CSRF is required and token missing', async () => {
+    process.env.RESEARCH_WS_CSRF_REQUIRED = 'true';
+
+    const ws = createSocket();
+    const session = createSession();
+    session.csrfToken = 'abc123';
+
+    const message = createCommandMessage();
+
+    const result = await handleCommandMessage(ws, message, session);
+
+    expect(result).toBe(false);
+    expect(wsErrorHelperMock).toHaveBeenCalledWith(ws, expect.stringMatching(/csrf/i), true);
+    expect(researchCommandMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts commands when CSRF token matches', async () => {
+    process.env.RESEARCH_WS_CSRF_REQUIRED = 'true';
+
+    const ws = createSocket();
+    const session = createSession();
+    session.csrfToken = 'secure-token';
+
+  const message = createCommandMessage({ args: [], csrfToken: 'secure-token' });
+  wsPromptMock.mockResolvedValueOnce('topic query');
+
+    const result = await handleCommandMessage(ws, message, session);
+
+    expect(result).toBe(true);
+    expect(researchCommandMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('handleCommandMessage (chat command single-user flows)', () => {
+  beforeEach(() => {
+    chatCommandMock.mockReset();
+    chatCommandMock.mockImplementation(async (options = {}) => {
+      if (options.session) {
+        options.session.isChatActive = true;
+      }
+      return { success: true, keepDisabled: false };
+    });
+    wsErrorHelperMock.mockReset();
+    wsOutputHelperMock.mockReset();
+    safeSendMock.mockClear();
+    parseCommandArgsMock.mockClear();
+    process.env.RESEARCH_WS_CSRF_REQUIRED = originalCsrfEnv;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    if (originalCsrfEnv === undefined) {
+      delete process.env.RESEARCH_WS_CSRF_REQUIRED;
+    } else {
+      process.env.RESEARCH_WS_CSRF_REQUIRED = originalCsrfEnv;
+    }
+  });
+
+  it('starts chat session with default persona and model for Web clients', async () => {
+    const ws = createSocket();
+    const session = createSession({ sessionModel: null, sessionCharacter: null });
+    const message = createCommandMessage({ command: 'chat', args: [] });
+
+    const result = await handleCommandMessage(ws, message, session);
+
+    expect(result).toBe(true);
+    expect(chatCommandMock).toHaveBeenCalledTimes(1);
+    const optionsPassed = chatCommandMock.mock.calls[0][0];
+    expect(optionsPassed.session).toBe(session);
+    expect(optionsPassed.isWebSocket).toBe(true);
+    expect(optionsPassed.model).toBe('qwen3-235b');
+    expect(optionsPassed.character).toBe('bitcore');
+    expect(wsOutputHelperMock).toHaveBeenCalledWith(ws, expect.stringContaining('Using default model for chat'));
+    expect(wsOutputHelperMock).toHaveBeenCalledWith(ws, expect.stringContaining('Using default character for chat'));
+    expect(session.isChatActive).toBe(true);
+  });
+
+  it('keeps input disabled when chat handler needs exclusive control', async () => {
+    chatCommandMock.mockResolvedValueOnce({ success: true, keepDisabled: true });
+    const ws = createSocket();
+    const session = createSession();
+    const message = createCommandMessage({ command: 'chat', args: [] });
+
+    const result = await handleCommandMessage(ws, message, session);
+
+    expect(result).toBe(false);
+    expect(chatCommandMock).toHaveBeenCalledTimes(1);
   });
 });

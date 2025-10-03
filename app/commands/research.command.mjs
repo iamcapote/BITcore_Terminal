@@ -1,6 +1,9 @@
 // ...existing code...
 import { safeSend } from '../utils/websocket.utils.mjs'; // Ensure safeSend is imported
+import { createModuleLogger } from '../utils/logger.mjs';
 // ...existing code...
+
+const moduleLogger = createModuleLogger('commands.research.command');
 
 /**
  * Executes the research command.
@@ -31,7 +34,7 @@ export async function executeResearch(args, options, session, currentUser, reque
       const message = msgs.map(msg => typeof msg === 'object' ? JSON.stringify(msg) : String(msg)).join(' ');
       safeSend(webSocketClient, { type: 'output', message });
     } else {
-      console.log(...msgs); // Fallback to console if not WebSocket
+      moduleLogger.info(msgs.map((msg) => (typeof msg === 'object' ? JSON.stringify(msg) : String(msg))).join(' '));
     }
   };
 
@@ -41,7 +44,7 @@ export async function executeResearch(args, options, session, currentUser, reque
       // Send as 'error' type to client
       safeSend(webSocketClient, { type: 'error', message });
     } else {
-      console.error(...msgs); // Fallback to console
+      moduleLogger.error(msgs.map((msg) => (typeof msg === 'object' ? JSON.stringify(msg) : String(msg))).join(' '));
     }
   };
 
@@ -67,8 +70,10 @@ export async function executeResearch(args, options, session, currentUser, reque
       // Alternatively, use a dedicated 'debug' type if the frontend handles it:
       // safeSend(webSocketClient, { type: 'debug', message });
     }
-    // Optionally log to server console as well for debugging the server itself
-    // console.log('[WS_DEBUG]', ...msgs);
+    // Optionally log to server logs as well for debugging the server itself
+    moduleLogger.debug('WebSocket research debug message.', {
+      payload: msgs.map((msg) => (typeof msg === 'object' ? msg : String(msg)))
+    });
   };
   // --- END MODIFICATION ---
 
@@ -103,8 +108,8 @@ export async function executeResearch(args, options, session, currentUser, reque
         if (isWebSocket && webSocketClient) {
           safeSend(webSocketClient, { type: 'progress', data: progressData });
         }
-        // Optionally log progress to server console too
-        // console.log('[Progress]', progressData);
+  // Optionally log progress to server logger as well
+  moduleLogger.debug('WebSocket research progress event.', { progress: progressData });
       },
       // --- End Pass Handlers ---
       isWebSocket, // Pass flag
@@ -158,7 +163,10 @@ export async function executeResearch(args, options, session, currentUser, reque
 
   } catch (error) {
     wsErrorHandler(`Research command failed: ${error.message}`); // Use handler
-    console.error("Research Execution Error Stack:", error.stack); // Keep detailed stack trace on server console
+    moduleLogger.error('Research execution error stack.', {
+      error: error?.message || String(error),
+      stack: error?.stack || null
+    });
     // Ensure the error is returned or thrown so the command runner handles it
      return { error: `Research failed: ${error.message}` }; // Return error object
   }

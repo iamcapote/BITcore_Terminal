@@ -8,14 +8,14 @@ This guide captures the current single-user authentication façade, storage layo
 
 | Concern | Current Behaviour | Key Modules |
 | --- | --- | --- |
-| User storage | Single JSON file `global-user.json` under `~/.bitcore-terminal` (override via `BITCORE_STORAGE_DIR`) | `app/features/auth/user-manager.mjs`, `app/utils/research.ensure-dir.mjs` |
+| User storage | Single JSON file `global-user.json` under `~/.bitcore-terminal` (override via `BITCORE_STORAGE_DIR`) plus optional encrypted overlay when `BITCORE_CONFIG_SECRET` is defined | `app/features/auth/user-manager.mjs`, `app/utils/research.ensure-dir.mjs`, `app/features/config/secure-config.service.mjs` |
 | Authentication | Hard-wired single-user mode (`operator`/`admin`). `/login` is a no-op, `/logout` clears nothing. | `app/commands/login.cli.mjs`, `app/commands/logout.cli.mjs` |
 | Passwords | Not persisted. Commands that historically required passwords now skip prompts unless downstream logic (e.g., GitHub upload) explicitly asks for one. | Same as above |
-| API key storage | Plaintext values in `global-user.json` (Brave, Venice) plus GitHub metadata. No encryption layer is active. | `user-manager.mjs::setApiKey`, `setGitHubConfig` |
+| API key storage | Encrypted via secure overlay when available; plaintext fallback written to `global-user.json` only when no secret is provided | `user-manager.mjs::setApiKey`, `setGitHubConfig`, `secure-config.service.mjs` |
 | API key resolution | Session cache → user JSON → environment variables | `app/utils/api-keys.mjs` |
-| CLI/Web parity | `/keys`, `/status`, `/memory`, `/missions`, etc. run without login. WebSocket sessions clone the global user on connect. | `app/features/research/websocket/connection.mjs` |
+| CLI/Web parity | `/keys`, `/status`, `/memory`, `/missions`, etc. run without login. WebSocket sessions clone the global user on connect and pull decrypted keys from the overlay when active. | `app/features/research/websocket/connection.mjs` |
 
-> ⚠️ **Security Trade-off:** The legacy encrypted vault (`argon2id`, `scrypt`, AES-GCM) remains in the git history but is no longer invoked. Treat the storage directory as sensitive configuration and guard it at the OS level.
+> ⚠️ **Security Notes:** The secure overlay relies on `BITCORE_CONFIG_SECRET` and, outside tests, requires `BITCORE_ALLOW_CONFIG_WRITES=1` (or the encrypted flag) to permit writes. Without the secret, credentials fall back to plaintext in `global-user.json`, so keep the directory locked down.
 
 ---
 
@@ -29,21 +29,21 @@ This guide captures the current single-user authentication façade, storage layo
   ...
 ```
 
-`global-user.json` structure:
+`global-user.json` structure (keys redacted to `null` when the secure overlay is active):
 
 ```json
 {
   "username": "operator",
   "role": "admin",
   "apiKeys": {
-    "brave": "...",
-    "venice": "..."
+  "brave": null,
+  "venice": null
   },
   "github": {
     "owner": "...",
     "repo": "...",
     "branch": "main",
-    "token": "..."
+  "token": null
   },
   "features": {
     "modelBrowser": true
@@ -51,15 +51,16 @@ This guide captures the current single-user authentication façade, storage layo
 }
 ```
 
-No other user files are created; all commands read and update this record.
+No other user files are created; the encrypted overlay lives alongside this file and is managed through `secure-config.service.mjs`.
 
 ---
 
 ## 3. User Manager Responsibilities
 
 1. **Initialisation**
-   - `initialize()` ensures the storage directory exists, reads `global-user.json`, and merges it with defaults derived from environment variables (`BRAVE_API_KEY`, `VENICE_API_KEY`, `GITHUB_*`, `BITCORE_*`).
-   - If the file is missing, a new document is written to disk with the merged defaults.
+  - `initialize()` ensures the storage directory exists, reads `global-user.json`, and merges it with defaults derived from environment variables (`BRAVE_API_KEY`, `VENICE_API_KEY`, `GITHUB_*`, `BITCORE_*`).
+  - If the file is missing, a new document is written to disk with the merged defaults.
+  - When `BITCORE_CONFIG_SECRET` is set, the secure overlay is loaded on first access so encrypted data can hydrate the in-memory profile.
 
 2. **Session Accessors**
    - `getCurrentUser()` and `getUserData()` return the in-memory copy (creating it on demand).
@@ -67,13 +68,13 @@ No other user files are created; all commands read and update this record.
    - `getUsername()` / `getRole()` surface the fixed identity.
 
 3. **Mutations**
-   - `setApiKey(service, value)` writes Brave/Venice tokens directly.
-   - `setGitHubConfig(config)` upserts owner/repo/branch/token.
-   - `setFeatureFlag(feature, bool)` toggles feature switches (currently only `modelBrowser`).
+  - `setApiKey(service, value)` writes Brave/Venice tokens into the encrypted overlay when available, falling back to plaintext otherwise.
+  - `setGitHubConfig(config)` upserts owner/repo/branch into the profile and stores the token inside the overlay when active.
+  - `setFeatureFlag(feature, bool)` toggles feature switches (currently only `modelBrowser`).
 
 4. **Persistence**
-   - `save()` rewrites `global-user.json` with pretty-printed JSON.
-   - Tests invoke the same API and run under a temporary directory by overriding `BITCORE_STORAGE_DIR`.
+  - `save()` rewrites a sanitised copy of `global-user.json`, redacting any secrets that live in the overlay.
+  - Tests invoke the same API and run under a temporary directory by overriding `BITCORE_STORAGE_DIR`. Secure overlay writes are enabled automatically in test mode.
 
 There is **no** password hash, salt management, rate limiting, or encrypted payload in the active code path.
 
@@ -117,8 +118,8 @@ GitHub configuration uses the same precedence rules with helper `resolveGitHubCo
 
 ## 6. Operational Guidance
 
-- **Backups**: Treat `~/.bitcore-terminal` as configuration. Copy the directory using OS tooling or automation (Ansible, cron). There is no key encryption—secure the directory itself.
-- **Secrets Hygiene**: Rotate Brave/Venice/GitHub tokens where they originate. Consider re-enabling encryption if multi-user mode returns.
+- **Backups**: Treat `~/.bitcore-terminal` as configuration. Copy the directory using OS tooling or automation (Ansible, cron). Include both `global-user.json` and the encrypted overlay when the secret is active.
+- **Secrets Hygiene**: Rotate Brave/Venice/GitHub tokens where they originate. Confirm `/keys set ...` emits the encrypted storage notice; if not, verify environment flags before proceeding.
 - **Environment Overrides**: Set `BITCORE_STORAGE_DIR` for tests or container deployments to keep operator state within the workspace.
 - **Monitoring**: The `/keys test` command is the fastest way to confirm connectivity after credential changes.
 
@@ -130,6 +131,7 @@ Automated coverage (Vitest):
 
 - `tests/auth.test.mjs` – verifies that `setApiKey`, `setGitHubConfig`, and retrieval helpers work end to end.
 - `tests/cli-integration.test.mjs` – exercises `/login`, `/keys`, `/status` under single-user assumptions.
+- `tests/secure-config.test.mjs` – validates encrypted overlay reads/writes and redaction of `global-user.json`.
 - Integration suites (`research`, `memory`, `missions`) rely on `resolveApiKeys` and therefore exercise the same path indirectly.
 
 Manual smoke test:
@@ -142,6 +144,7 @@ npm start -- cli
 /keys set venice "VENICE-KEY"
 /keys set github --github-owner=me --github-repo=research --github-token=ghp_example
 /keys test
+/keys set brave "BRAVE-KEY" # rerun to confirm encrypted storage notice (when overlay enabled)
 ```
 
 For the Web terminal, open `http://localhost:3000`, issue `/status`, `/keys check`, and confirm the output mirrors the CLI.
@@ -150,7 +153,7 @@ For the Web terminal, open `http://localhost:3000`, issue `/status`, `/keys chec
 
 ## 8. Future Considerations
 
-- Reintroduce encrypted-at-rest storage if multi-user support or remote deployments demand it. The existing `app/features/auth/encryption.mjs` helpers can be reused once the user manager regains password prompts.
+- Extend the encrypted overlay to multi-user adapters once directory plugins return; ensure per-user secrets live in isolated namespaces.
 - Harden the writable directory when packaging for production (run as non-root user, restrict permissions, mount as secret volume in containers).
 - If telemetry or audit requirements expand, add a thin logging layer to record credential changes (`setApiKey`, `setGitHubConfig`) with redacted values.
 

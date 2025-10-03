@@ -21,6 +21,11 @@ import { handleChatMessage } from './chat-handler.mjs';
 import { handleInputMessage } from './input-handler.mjs';
 import { wsPrompt } from './prompt.mjs';
 import {
+  loadSessionState,
+  applySessionStateToRef,
+  persistSessionFromRef,
+} from '../../../infrastructure/session/session.store.mjs';
+import {
   registerSession,
   getSessionIdBySocket,
   getSessionById,
@@ -66,7 +71,7 @@ function attachTelemetryChannel(ws, telemetryKey) {
   return telemetryChannel;
 }
 
-export function handleWebSocketConnection(ws, req) {
+export async function handleWebSocketConnection(ws, req) {
   socketLogger.info('New WebSocket connection established.');
 
   const statusController = getStatusController();
@@ -109,13 +114,35 @@ export function handleWebSocketConnection(ws, req) {
       currentUser,
       currentResearchResult: null,
       currentResearchFilename: null,
+  currentResearchSummary: null,
+  currentResearchQuery: null,
       sessionModel: null,
       sessionCharacter: null,
+  memoryEnabled: false,
+  memoryDepth: null,
+  memoryGithubEnabled: false,
       researchTelemetry: telemetryChannel,
       githubActivityStream: null,
       githubActivityStreamDisposer: null,
       lastGitHubActivityTimestamp: null,
+      csrfToken: crypto.randomBytes(32).toString('hex'),
+      csrfIssuedAt: Date.now(),
     };
+
+    try {
+      const persistedState = await loadSessionState();
+      applySessionStateToRef(sessionData, persistedState);
+      if (sessionData.currentResearchResult) {
+        safeSend(ws, {
+          type: 'output',
+          data: 'Previous research result restored from last session. Use /export or /storage to continue.',
+        });
+      }
+    } catch (persistError) {
+      socketLogger.warn('Failed to hydrate WebSocket session from persisted snapshot.', {
+        message: persistError?.message || String(persistError),
+      });
+    }
 
     registerSession(sessionId, sessionData, ws);
   socketLogger.info('Created session for new connection.', { sessionId, username: sessionData.username });
@@ -127,13 +154,14 @@ export function handleWebSocketConnection(ws, req) {
     safeSend(ws, { type: 'output', data: 'Welcome to MCP Terminal!' });
     safeSend(ws, { type: 'output', data: `Single-user mode active as ${sessionData.username} (${sessionData.role}). No login required.` });
     safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
+  safeSend(ws, { type: 'csrf_token', value: sessionData.csrfToken });
 
     const initialLogSnapshot = logChannel.getSnapshot({ limit: 120 });
     if (initialLogSnapshot.length) {
       safeSend(ws, { type: 'log-snapshot', logs: initialLogSnapshot });
     }
 
-    const githubActivityStream = createGitHubActivityWebComm({
+  const githubActivityStream = createGitHubActivityWebComm({
       send: (eventType, payload) => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           safeSend(ws, { type: eventType, data: payload });
@@ -180,7 +208,7 @@ export function handleWebSocketConnection(ws, req) {
 
   ws.on('message', async (raw) => {
     const currentSessionId = getSessionIdBySocket(ws);
-    const currentSession = currentSessionId ? getSessionById(currentSessionId) : null;
+  const currentSession = currentSessionId ? getSessionById(currentSessionId) : null;
 
     if (!currentSession) {
       messageLogger.error('No session found for incoming message.', { raw: raw.toString() });
@@ -195,7 +223,7 @@ export function handleWebSocketConnection(ws, req) {
       return;
     }
 
-    currentSession.lastActivity = Date.now();
+  currentSession.lastActivity = Date.now();
     if (!currentSession.pendingPromptResolve) {
       disableClientInput(ws);
     } else {
@@ -359,10 +387,20 @@ export function handleWebSocketConnection(ws, req) {
           outputManager.warn(`[WebSocket] Failed to finalize chat conversation for closed session ${closedSessionId}: ${error.message}`);
         }
       }
+      try {
+        await persistSessionFromRef(session);
+      } catch (persistError) {
+        socketLogger.warn('Failed to persist session snapshot during close.', {
+          sessionId: closedSessionId,
+          message: persistError?.message || String(persistError),
+        });
+      }
       session.password = null;
       session.currentUser = null;
       session.currentResearchResult = null;
       session.currentResearchFilename = null;
+  session.currentResearchSummary = null;
+  session.currentResearchQuery = null;
       session.githubActivityStream = null;
       session.githubActivityStreamDisposer = null;
       session.lastGitHubActivityTimestamp = null;
@@ -412,6 +450,14 @@ export function handleWebSocketConnection(ws, req) {
         } catch (closeError) {
           outputManager.warn(`[WebSocket] Failed to finalize chat conversation after error for session ${errorSessionId}: ${closeError.message}`);
         }
+      }
+      try {
+        await persistSessionFromRef(session);
+      } catch (persistError) {
+        socketLogger.warn('Failed to persist session snapshot during error cleanup.', {
+          sessionId: errorSessionId,
+          message: persistError?.message || String(persistError),
+        });
       }
       if (session.researchTelemetry) {
         session.researchTelemetry.updateSender(null);

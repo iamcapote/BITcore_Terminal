@@ -12,6 +12,9 @@ import { safeSend } from '../../../utils/websocket.utils.mjs';
 import { finalizeSessionConversation } from '../session.mjs';
 import { generateResearchQueriesFromContext } from './queries.mjs';
 import { startResearchFromChat } from './start.mjs';
+import { createModuleLogger } from '../../../utils/logger.mjs';
+
+const moduleLogger = createModuleLogger('commands.chat.research.exit');
 
 const PROMPT_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -253,7 +256,10 @@ export async function executeExitResearch(options = {}) {
           });
         }
       } catch (memError) {
-        console.error(`[WebSocket] Error retrieving memory for exitResearch: ${memError.message}`);
+        moduleLogger.error('Failed to retrieve memory manager during exitResearch.', {
+          error: memError?.message || String(memError),
+          sessionId: session?.sessionId || null
+        });
         effectiveOutput(`[System] Warning: Could not retrieve relevant memories - ${memError.message}`);
         telemetryChannel?.emitStatus({
           stage: 'memory-warning',
@@ -328,7 +334,9 @@ export async function executeExitResearch(options = {}) {
       session.isChatActive = false;
       session.chatHistory = [];
       if (session.memoryManager) {
-        console.log(`[WebSocket] Clearing memory manager on /exitresearch for session ${session.sessionId}.`);
+        moduleLogger.debug('Cleared memory manager during /exitresearch.', {
+          sessionId: session.sessionId
+        });
         session.memoryManager = null;
       }
       await finalizeSessionConversation(session, 'exitresearch');

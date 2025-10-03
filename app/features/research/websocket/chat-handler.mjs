@@ -19,6 +19,43 @@ import { executeExitResearch } from '../../../commands/chat.cli.mjs';
 
 const chatLogger = createModuleLogger('research.websocket.chat-handler');
 
+function buildMemoryContextMessage(memories) {
+  if (!Array.isArray(memories) || memories.length === 0) {
+    return null;
+  }
+
+  const lines = memories.map((memory, index) => {
+    const content = typeof memory.content === 'string' ? memory.content.trim() : '';
+    const truncated = content.length > 240 ? `${content.slice(0, 237)}…` : content;
+    const reason = typeof memory.matchReason === 'string' && memory.matchReason.trim()
+      ? ` (${memory.matchReason.trim()})`
+      : '';
+    return `${index + 1}. ${truncated}${reason}`;
+  }).filter(Boolean);
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return `Relevant memory context:\n${lines.join('\n')}`;
+}
+
+function serializeMemoriesForEvent(memories) {
+  if (!Array.isArray(memories) || memories.length === 0) {
+    return [];
+  }
+
+  return memories.map((memory) => ({
+    id: memory.id,
+    content: memory.content,
+    similarity: memory.similarity,
+    role: memory.role,
+    timestamp: memory.timestamp,
+    tags: memory.tags,
+    matchReason: memory.matchReason,
+  }));
+}
+
 export async function handleChatMessage(ws, message, session) {
   if (!session.isChatActive) {
     safeSend(ws, { type: 'error', error: 'Chat mode not active. Use /chat first.' });
@@ -33,9 +70,8 @@ export async function handleChatMessage(ws, message, session) {
     const command = cmd.toLowerCase();
 
     if (command === 'exit') {
+      const hadMemoryEnabled = Boolean(session.memoryManager);
       session.isChatActive = false;
-      session.chatHistory = [];
-      if (session.memoryManager) session.memoryManager = null;
       if (session.chatHistoryConversationId) {
         try {
           const chatHistoryController = getChatHistoryController();
@@ -48,6 +84,12 @@ export async function handleChatMessage(ws, message, session) {
       }
       safeSend(ws, { type: 'chat-exit' });
       safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
+      if (hadMemoryEnabled) {
+        safeSend(ws, {
+          type: 'output',
+          data: 'Chat session ended with memory enabled. Run /exitmemory to finalize and commit memories.',
+        });
+      }
       return true;
     }
 
@@ -101,6 +143,35 @@ export async function handleChatMessage(ws, message, session) {
   }
 
   try {
+    const memoryManager = session.memoryManager ?? null;
+    let retrievedMemories = [];
+
+    if (memoryManager) {
+      try {
+        retrievedMemories = await memoryManager.retrieveRelevantMemories(userMsg);
+        if (retrievedMemories.length > 0) {
+          safeSend(ws, {
+            type: 'memory_context',
+            data: serializeMemoriesForEvent(retrievedMemories),
+          });
+        }
+      } catch (memoryError) {
+        chatLogger.warn('Memory retrieval failed for chat message.', {
+          error: memoryError?.message || String(memoryError),
+          sessionId: session.sessionId,
+        });
+      }
+
+      try {
+        await memoryManager.storeMemory(userMsg, 'user');
+      } catch (storeError) {
+        chatLogger.warn('Failed to store user message in memory.', {
+          error: storeError?.message || String(storeError),
+          sessionId: session.sessionId,
+        });
+      }
+    }
+
     const veniceApiKey = await resolveServiceApiKey('venice', { session });
     if (veniceApiKey) {
       outputManager.debug(`[WebSocket][Chat] Venice API key resolved for ${session.currentUser.username}.`);
@@ -119,7 +190,14 @@ export async function handleChatMessage(ws, message, session) {
     const system = { role: 'system', content: systemMessageContent };
 
     const shortHistory = session.chatHistory.slice(-9);
-    const messages = [system, ...shortHistory];
+    const messages = [system];
+
+    const memoryContextMessage = buildMemoryContextMessage(retrievedMemories);
+    if (memoryContextMessage) {
+      messages.push({ role: 'system', content: memoryContextMessage });
+    }
+
+    messages.push(...shortHistory);
 
     const res = await llm.completeChat({ messages, model, temperature: 0.7, maxTokens: 2048 });
     const clean = cleanChatResponse(res.content);
@@ -134,6 +212,17 @@ export async function handleChatMessage(ws, message, session) {
         });
       } catch (error) {
         outputManager.warn(`[WebSocket][Chat] Failed to persist assistant message: ${error.message}`);
+      }
+    }
+
+    if (memoryManager) {
+      try {
+        await memoryManager.storeMemory(clean, 'assistant');
+      } catch (assistantStoreError) {
+        chatLogger.warn('Failed to store assistant message in memory.', {
+          error: assistantStoreError?.message || String(assistantStoreError),
+          sessionId: session.sessionId,
+        });
       }
     }
 

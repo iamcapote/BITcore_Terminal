@@ -188,6 +188,31 @@ export class GitHubResearchSyncController {
       throw error;
     }
   }
+
+    async deleteFile(options = {}) {
+      const { path, message, branch } = options;
+      try {
+        const summary = await this.service.deleteFile({ path, message, branch });
+        this.#recordActivity('delete', 'info', `Deleted ${summary.path}${branch ? ` from ${branch}` : ''}`, {
+          ok: true,
+          path: summary.path,
+          branch: branch ?? null,
+          commitSha: summary.commitSha ?? null
+        });
+        return Object.freeze({
+          ok: true,
+          summary
+        });
+      } catch (error) {
+        this.#recordActivity('delete', 'error', `Delete failed for ${path || 'file'}: ${describeError(error)}`, {
+          ok: false,
+          path: path ?? null,
+          branch: branch ?? null,
+          status: extractStatus(error)
+        });
+        throw error;
+      }
+    }
 }
 
 let singletonController = null;

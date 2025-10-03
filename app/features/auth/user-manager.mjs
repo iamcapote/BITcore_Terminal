@@ -5,6 +5,13 @@ import fetch from 'node-fetch';
 import { Octokit } from '@octokit/rest';
 import { ensureDir } from '../../utils/research.ensure-dir.mjs';
 import { createModuleLogger } from '../../utils/logger.mjs';
+import {
+	isSecureConfigAvailable,
+	loadSecureConfig,
+	getSecureConfigSection,
+	getSecureConfigValue,
+	updateSecureConfigSection,
+} from '../config/secure-config.service.mjs';
 
 /**
  * Why: Persist the single-operator profile while exposing hook points for optional multi-user adapters.
@@ -50,6 +57,8 @@ const USER_FILE_NAME = 'global-user.json';
 
 const moduleLogger = createModuleLogger('auth.user-manager');
 
+const VALID_API_SERVICES = ['brave', 'venice'];
+
 const DEFAULT_USER = {
   username: DEFAULT_USERNAME,
   role: DEFAULT_ROLE,
@@ -86,6 +95,40 @@ function mergeUserData(base, override = {}) {
   };
 }
 
+async function sanitizeUserForPersist(userSnapshot) {
+  if (!isSecureConfigAvailable()) {
+    return userSnapshot;
+  }
+
+  const clone = JSON.parse(JSON.stringify(userSnapshot));
+
+  try {
+    const braveSection = await getSecureConfigSection('brave');
+    if (braveSection && Object.prototype.hasOwnProperty.call(braveSection, 'apiKey')) {
+      clone.apiKeys = clone.apiKeys ? { ...clone.apiKeys } : {};
+      clone.apiKeys.brave = null;
+    }
+
+    const veniceSection = await getSecureConfigSection('venice');
+    if (veniceSection && Object.prototype.hasOwnProperty.call(veniceSection, 'apiKey')) {
+      clone.apiKeys = clone.apiKeys ? { ...clone.apiKeys } : {};
+      clone.apiKeys.venice = null;
+    }
+
+    const githubSection = await getSecureConfigSection('github');
+    if (githubSection && Object.prototype.hasOwnProperty.call(githubSection, 'token')) {
+      clone.github = { ...(clone.github || {}) };
+      clone.github.token = null;
+    }
+  } catch (error) {
+    moduleLogger.warn('Failed to sanitize user snapshot with secure config overlay.', {
+      message: error?.message || String(error),
+    });
+  }
+
+  return clone;
+}
+
 
 class UserManager {
 	constructor() {
@@ -93,6 +136,7 @@ class UserManager {
 		this.userFile = path.join(this.storageDir, USER_FILE_NAME);
 		this.currentUser = null;
 		this.userDirectoryAdapter = null;
+		this.secureStoreEnabled = isSecureConfigAvailable();
 	}
 
 	async initialize() {
@@ -103,7 +147,7 @@ class UserManager {
 		} catch (err) {
 			if (err.code === 'ENOENT') {
 				this.currentUser = mergeUserData(DEFAULT_USER);
-				await fs.writeFile(this.userFile, JSON.stringify(this.currentUser, null, 2));
+				await this.save();
 					} else {
 						moduleLogger.warn('Failed to read user file, using defaults.', {
 							message: err.message,
@@ -112,13 +156,23 @@ class UserManager {
 				this.currentUser = mergeUserData(DEFAULT_USER);
 			}
 		}
+		if (this.secureStoreEnabled) {
+			try {
+				await loadSecureConfig();
+			} catch (error) {
+				moduleLogger.warn('Secure configuration overlay failed to load.', {
+					message: error?.message || String(error),
+				});
+			}
+		}
 		return this.currentUser;
 	}
 
 	async save() {
 		if (!this.currentUser) await this.initialize();
 		await ensureDir(this.storageDir);
-		await fs.writeFile(this.userFile, JSON.stringify(this.currentUser, null, 2));
+		const snapshot = await sanitizeUserForPersist(this.currentUser);
+		await fs.writeFile(this.userFile, JSON.stringify(snapshot, null, 2));
 	}
 
 	getCurrentUser() {
@@ -202,16 +256,31 @@ class UserManager {
 	// --- End compatibility helpers ---
 
 	async setApiKey(service, apiKey) {
-		if (!['brave', 'venice'].includes(service)) {
+		if (!VALID_API_SERVICES.includes(service)) {
 			throw new Error(`Invalid service '${service}'. Use 'brave' or 'venice'.`);
 		}
 		if (!this.currentUser) await this.initialize();
-		this.currentUser.apiKeys[service] = apiKey || null;
+		const normalized = typeof apiKey === 'string' ? apiKey.trim() : apiKey;
+		if (this.secureStoreEnabled) {
+			await updateSecureConfigSection(service, { apiKey: normalized || null });
+			this.currentUser.apiKeys[service] = null;
+		} else {
+			this.currentUser.apiKeys[service] = normalized || null;
+		}
 		await this.save();
 		return true;
 	}
 
 	async hasApiKey(service) {
+		if (!VALID_API_SERVICES.includes(service)) {
+			return false;
+		}
+		if (this.secureStoreEnabled) {
+			const section = await getSecureConfigSection(service);
+			if (section && typeof section.apiKey === 'string' && section.apiKey.trim()) {
+				return true;
+			}
+		}
 		if (!this.currentUser) await this.initialize();
 		return !!this.currentUser.apiKeys?.[service];
 	}
@@ -220,15 +289,42 @@ class UserManager {
 		if (!this.currentUser) await this.initialize();
 		const service = typeof arg === 'string' ? arg : arg?.service;
 		if (!service) throw new Error('Service is required');
+		if (this.secureStoreEnabled) {
+			const value = await getSecureConfigValue(service, 'apiKey');
+			if (value) {
+				return value;
+			}
+		}
 		return this.currentUser.apiKeys?.[service] || null;
 	}
 
 	async setGitHubConfig(config) {
 		if (!this.currentUser) await this.initialize();
-		this.currentUser.github = {
+		const nextConfig = {
 			...this.currentUser.github,
 			...config,
 		};
+		nextConfig.branch = nextConfig.branch || 'main';
+		const tokenProvided = Object.prototype.hasOwnProperty.call(config, 'token');
+		if (this.secureStoreEnabled) {
+			const secureUpdate = {
+				owner: nextConfig.owner ?? null,
+				repo: nextConfig.repo ?? null,
+				branch: nextConfig.branch ?? null,
+			};
+			if (tokenProvided) {
+				secureUpdate.token = config.token || null;
+			}
+			await updateSecureConfigSection('github', secureUpdate);
+			if (tokenProvided) {
+				nextConfig.token = null;
+			} else {
+				nextConfig.token = this.currentUser.github?.token ?? null;
+			}
+		} else if (tokenProvided) {
+			nextConfig.token = config.token || null;
+		}
+		this.currentUser.github = nextConfig;
 		await this.save();
 	}
 
@@ -239,11 +335,23 @@ class UserManager {
 	}
 
 	async hasGitHubToken() {
+		if (this.secureStoreEnabled) {
+			const token = await getSecureConfigValue('github', 'token');
+			if (typeof token === 'string' && token.trim()) {
+				return true;
+			}
+		}
 		if (!this.currentUser) await this.initialize();
 		return !!this.currentUser.github?.token;
 	}
 
 	async getGitHubToken() {
+		if (this.secureStoreEnabled) {
+			const token = await getSecureConfigValue('github', 'token');
+			if (token) {
+				return token;
+			}
+		}
 		if (!this.currentUser) await this.initialize();
 		return this.currentUser.github?.token || null;
 	}
@@ -252,19 +360,20 @@ class UserManager {
 		if (!this.currentUser) await this.initialize();
 		const gh = this.currentUser.github || {};
 		if (!gh.owner || !gh.repo) return null;
+		const token = await this.getGitHubToken();
 		return {
 			owner: gh.owner,
 			repo: gh.repo,
 			branch: gh.branch || 'main',
-			token: gh.token || null,
+			token: token || null,
 		};
 	}
 
 	async checkApiKeys() {
 		if (!this.currentUser) await this.initialize();
 		return {
-			brave: !!this.currentUser.apiKeys?.brave,
-			venice: !!this.currentUser.apiKeys?.venice,
+			brave: await this.hasApiKey('brave'),
+			venice: await this.hasApiKey('venice'),
 			github: await this.hasGitHubConfig(),
 		};
 	}

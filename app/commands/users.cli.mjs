@@ -1,5 +1,8 @@
 import { userManager } from '../features/auth/user-manager.mjs';
 import { handleCliError } from '../utils/cli-error-handler.mjs';
+import { createModuleLogger } from '../utils/logger.mjs';
+const moduleLogger = createModuleLogger('commands.users.cli');
+
 
 /**
  * Why: Preserve the `/users` entry point while single-user mode remains default and allow optional
@@ -49,8 +52,8 @@ export async function executeUsers(options = {}) {
       isWebSocket = false
   } = options;
 
-  const outputFn = typeof outputHandler === 'function' ? outputHandler : console.log;
-  const errorFn = typeof errorHandler === 'function' ? errorHandler : console.error;
+  const outputFn = typeof outputHandler === 'function' ? outputHandler : (message) => moduleLogger.info(message);
+  const errorFn = typeof errorHandler === 'function' ? errorHandler : (message) => moduleLogger.error(message);
 
   const rawAction = positionalArgs[0]?.toLowerCase();
   const normalizedAction = ACTIONS.has(rawAction) ? rawAction : 'list';
@@ -149,7 +152,7 @@ async function listUsers(requestingUser, adapter, output, errorFn) {
                 output(`- ${user.username} (${user.role})`);
             } else {
                 output('- [Invalid user data]');
-                console.warn('Invalid user data found during list:', user);
+                moduleLogger.warn('Invalid user data encountered during user listing.', { user });
             }
         });
     }

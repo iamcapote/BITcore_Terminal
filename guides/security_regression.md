@@ -11,8 +11,8 @@ This document captures the current security threat model for BITcore Terminal (O
 | CLI commands (`app/commands/*.cli.mjs`) | Local operator issuing verbs (memory, missions, logs) | API keys, mission definitions, research output | Single-user guard + role stub, command-level argument validation |
 | HTTP routes (`app/features/*/routes.mjs`) | Browser hitting Express endpoints | Mission queue, memory corpus, prompt library | Route-level role checks still wired but effectively always `admin`; Zod validation on payloads |
 | WebSocket telemetry (`app/public/*.js`, `app/config/websocket.mjs`) | Terminal/web dashboard websocket connections | Live research/memory/log telemetry, command output | Session binding per socket, capability map, throttled replay buffer |
-| GitHub sync adapters (`app/infrastructure/*/github*.mjs`) | Outbound GitHub API calls with user token | Research reports, mission templates, memory snapshots | Plaintext token storage, scoped repo permissions, upload path allow-list |
-| Persistent storage (`~/.bitcore-terminal`, `missions/`, `memory/`) | Local filesystem access, GitHub repo access | User metadata, scheduler definitions, research artifacts | Plain JSON + filesystem permissions; git history monitoring |
+| GitHub sync adapters (`app/infrastructure/*/github*.mjs`) | Outbound GitHub API calls with user token | Research reports, mission templates, memory snapshots | Encrypted token storage when `BITCORE_CONFIG_SECRET` is set, scoped repo permissions, upload path allow-list |
+| Persistent storage (`~/.bitcore-terminal`, `missions/`, `memory/`, `sessions/`) | Local filesystem access, GitHub repo access | User metadata, scheduler definitions, research artefacts, cached research results | Plain JSON + filesystem permissions; git history monitoring; session snapshots redact secrets via secure overlay |
 | Logs dashboard (`app/features/logs`) | HTTP/WebSocket access to log streaming | Structured event feed, retention buffers | Role check (always passes in single-user mode), schema validation, retention caps, redaction filters |
 
 **Assumptions:**
@@ -26,7 +26,7 @@ This document captures the current security threat model for BITcore Terminal (O
 
 ### 2.1 CLI Extensions
 - Verb registry (`app/commands/index.mjs`) still checks `user.role`, but single-user mode pins the role to `admin`.
-- `user-manager.mjs` now writes API keys in plaintext JSON (`global-user.json`). Password prompts remain for compatibility but no encryption occurs.
+- `user-manager.mjs` hydrates from environment defaults and, when `BITCORE_CONFIG_SECRET` is defined, persists API keys and GitHub tokens into the encrypted overlay (`secure-config.service.mjs`) with on-disk redaction.
 - Commands emitting file writes (memory sync, mission scaffolding) validate target paths against allow-lists to prevent directory traversal.
 
 ### 2.2 HTTP Routes & Dashboards
@@ -43,7 +43,7 @@ This document captures the current security threat model for BITcore Terminal (O
 - Upload services normalise paths to `missions/` or `research/` prefixes and refuse all `..` segments.
 - Push/pull flows require explicit confirmation in CLI/UI and emit structured audit logs for each GitHub action.
 - Rate limiter applies exponential backoff when GitHub returns `403`/`429` codes.
-- Tokens are stored in plaintext; harden OS permissions or re-enable encryption before multi-user deployments.
+- Tokens are stored in the encrypted overlay when available; deployments without `BITCORE_CONFIG_SECRET` fallback to plaintext, so ensure OS permissions remain strict in that case.
 
 ### 2.5 Scheduler & Missions
 - Mission definitions run from disk with immutable snapshots; controller clones payloads before mutating.
@@ -72,7 +72,7 @@ This document captures the current security threat model for BITcore Terminal (O
 
 ### 3.3 Secrets & Config Hygiene
 - Confirm no `.env` or config files are writable through UI paths.
-- Rotate API keys stored in `global-user.json` regularly; consider migrating back to encrypted storage before production scaling.
+- Rotate API keys stored in the encrypted overlay regularly; confirm `BITCORE_CONFIG_SECRET` and write flags remain protected. Deployments without the overlay must harden filesystem permissions.
 - Audit `package.json` for dependency upgrades with security advisories; apply patches prior to shipping.
 
 ### 3.4 Incident Response Drill
@@ -90,7 +90,7 @@ This document captures the current security threat model for BITcore Terminal (O
 ---
 
 ## 5. Future Enhancements
-- Reintroduce encrypted-at-rest API key storage (AES-GCM) once multi-user flows return; ensure `/users` either works or fails gracefully.
+- Extend encrypted storage to multi-user adapters and ensure `/users` gracefully integrates with the secure overlay.
 - Introduce automated RBAC snapshot tests that diff route permission maps against golden files.
 - Expand dependency scanning to include `npm audit` with allow-listed CVEs.
 - Explore integrating husky pre-commit hooks to auto-run focused security tests (`npm test -- logs-routes missions.routes auth`).

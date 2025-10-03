@@ -9,6 +9,7 @@
  *   - pullDirectory(): Normalized listings for the configured research directory.
  *   - pullFile(): Decoded UTF-8 contents for a specific research artifact.
  *   - pushFiles() / uploadFile(): Commit summaries (commit SHA/URL, file SHA/URL) for written artifacts.
+ *   - deleteFile(): Commit summary for removing an artifact from the research repository.
  * Error modes:
  *   - Throws RangeError for missing/invalid configuration.
  *   - Throws when GitHub API calls fail (propagates Octokit error.message).
@@ -252,6 +253,67 @@ export class GitHubResearchSyncService {
       branch
     });
     return summary;
+  }
+
+  async deleteFile({ path, message, branch } = {}) {
+    if (!path) {
+      throw new RangeError('deleteFile requires a path');
+    }
+
+    const config = await this.#resolveConfig();
+    const client = this.#createClient(config);
+    const repoPath = this.#resolvePath(path);
+    const targetBranch = branch || config.branch;
+
+    let existing;
+    try {
+      existing = await client.repos.getContent({
+        owner: config.owner,
+        repo: config.repo,
+        path: repoPath,
+        ref: targetBranch
+      });
+    } catch (error) {
+      if (error?.status === 404) {
+        throw new Error(`File '${repoPath}' does not exist in the repository.`);
+      }
+      const failure = new Error(`Failed to inspect '${repoPath}': ${error.message}`);
+      if (error && typeof error.status === 'number') {
+        failure.status = error.status;
+      }
+      throw failure;
+    }
+
+    const sha = existing?.data?.sha;
+    if (!sha) {
+      throw new Error(`Unable to resolve SHA for '${repoPath}'.`);
+    }
+
+    const commitMessage = message || `Delete ${repoPath}`;
+
+    try {
+      const response = await client.repos.deleteFile({
+        owner: config.owner,
+        repo: config.repo,
+        path: repoPath,
+        message: commitMessage,
+        branch: targetBranch,
+        sha
+      });
+
+      return Object.freeze({
+        path: repoPath,
+        branch: targetBranch,
+        commitSha: response?.data?.commit?.sha ?? null,
+        commitUrl: response?.data?.commit?.html_url ?? null
+      });
+    } catch (error) {
+      const failure = new Error(`Failed to delete '${repoPath}': ${error.message}`);
+      if (error && typeof error.status === 'number') {
+        failure.status = error.status;
+      }
+      throw failure;
+    }
   }
 
   async #resolveConfig() {

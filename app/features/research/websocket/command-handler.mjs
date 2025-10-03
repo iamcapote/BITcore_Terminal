@@ -12,12 +12,25 @@ import { createModuleLogger } from '../../../utils/logger.mjs';
 import { safeSend } from '../../../utils/websocket.utils.mjs';
 import { userManager } from '../../auth/user-manager.mjs';
 import { cloneUserRecord, wsErrorHelper, wsOutputHelper } from './client-io.mjs';
+import { createRateLimiter, RateLimitExceededError } from '../../../utils/rate-limiter.mjs';
 import { wsPrompt } from './prompt.mjs';
 
 const commandLogger = createModuleLogger('research.websocket.command-handler');
 const sessionLogger = commandLogger.child('session');
 const executionLogger = commandLogger.child('execution');
 const debugLogger = commandLogger.child('debug');
+
+const researchRateLimiter = createRateLimiter({ maxTokens: 3, intervalMs: 1000 });
+
+function normalizeBooleanFlag(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on', 'enabled'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'off', 'disabled'].includes(normalized)) return false;
+  }
+  return Boolean(value);
+}
 
 export async function handleCommandMessage(ws, message, session) {
   const fullCommandString = `/${message.command} ${message.args.join(' ')}`;
@@ -38,6 +51,18 @@ export async function handleCommandMessage(ws, message, session) {
   if (typeof commandFunction !== 'function') {
     wsErrorHelper(ws, `Unknown command: /${commandName}. Type /help for available commands.`, true);
     return false;
+  }
+
+  const requireCsrf = process.env.RESEARCH_WS_CSRF_REQUIRED === 'true';
+  if (requireCsrf) {
+    if (!session.csrfToken || message.csrfToken !== session.csrfToken) {
+      executionLogger.warn('CSRF token validation failed for command.', {
+        commandName,
+        sessionId: session.sessionId,
+      });
+      wsErrorHelper(ws, 'Invalid or missing CSRF token. Refresh the terminal and try again.', true);
+      return false;
+    }
   }
 
   const payloadPassword = typeof passwordFromPayload === 'string' && passwordFromPayload.trim().length > 0
@@ -75,6 +100,8 @@ export async function handleCommandMessage(ws, message, session) {
   }
 
   let enableInputAfter = true;
+
+  const rateLimitKey = session.sessionId ?? 'global';
 
   const newModelFlag = flags.m;
   const newCharacterFlag = flags.c;
@@ -148,9 +175,9 @@ export async function handleCommandMessage(ws, message, session) {
     flags,
     depth: flags.depth || 2,
     breadth: flags.breadth || 3,
-    classify: flags.classify || false,
-    verbose: flags.verbose || false,
-    memory: flags.memory || false,
+    classify: normalizeBooleanFlag(flags.classify) || false,
+    verbose: normalizeBooleanFlag(flags.verbose) || false,
+    memory: normalizeBooleanFlag(flags.memory ?? session.memoryEnabled),
     output: null,
     error: null,
     model: effectiveModel,
@@ -199,7 +226,28 @@ export async function handleCommandMessage(ws, message, session) {
   options.error = commandError;
   options.debug = commandDebug;
 
+  if (commandName === 'chat') {
+    options.memoryDepth = flags.depth ?? flags['memory-depth'] ?? session.memoryDepth;
+    options.memoryGithub = flags.github ?? flags['memory-github'] ?? session.memoryGithubEnabled;
+  }
+
   try {
+    if (commandName === 'research') {
+      try {
+        await researchRateLimiter(rateLimitKey);
+      } catch (limitError) {
+        if (limitError instanceof RateLimitExceededError) {
+          const retrySeconds = Math.max(Math.ceil(limitError.retryAfterMs / 1000), 1);
+          wsErrorHelper(ws, `Too many research requests. Try again in ${retrySeconds} second${retrySeconds === 1 ? '' : 's'}.`, true);
+          executionLogger.warn('Research rate limit exceeded.', {
+            sessionId: session.sessionId,
+            retryAfterMs: limitError.retryAfterMs,
+          });
+          return false;
+        }
+        throw limitError;
+      }
+    }
     executionLogger.info('Executing command.', {
       commandName,
       sessionId: session.sessionId,
@@ -271,13 +319,20 @@ export async function handleCommandMessage(ws, message, session) {
             queryPreview: normalizedQuery.substring(0, 120)
           });
         } catch (promptError) {
+          const promptMessage = promptError?.message ?? String(promptError);
+          const isTimeout = promptError instanceof Error && promptMessage === 'Prompt timed out.';
+
           executionLogger.warn('Research query prompt failed or was cancelled.', {
             sessionId: session.sessionId,
-            error: promptError?.message ?? String(promptError)
+            error: promptMessage,
+            isTimeout
           });
-          if (!(promptError instanceof Error && promptError.message === 'Prompt timed out.')) {
-            wsErrorHelper(ws, `Research cancelled: ${promptError?.message ?? 'Prompt failed.'}`, true);
-          }
+
+          const errorNotice = isTimeout
+            ? 'Research cancelled: prompt timed out.'
+            : `Research cancelled: ${promptMessage}`;
+
+          wsErrorHelper(ws, errorNotice, true);
           return true;
         }
       }

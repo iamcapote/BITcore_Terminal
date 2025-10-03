@@ -64,7 +64,7 @@ export class ResearchPath {
         this.progressData = progressData; // Store reference to progress data object
         this.config = engineConfig; // Store original config which NOW includes the provider
         this.searchProvider = searchProvider; // <-- STORE the passed provider instance
-    this.telemetry = telemetry || null;
+        this.telemetry = telemetry || null;
 
         // Pass handlers if LLMClient is used here (or create instance as needed)
         // this.llmClient = new LLMClient({ apiKey: this.veniceApiKey /*, other options */ });
@@ -73,15 +73,33 @@ export class ResearchPath {
     }
 
     // --- NEW: Helper to update progress ---
-    updateProgress(update) {
-        if (this.progressData && this.progressHandler) {
-            Object.assign(this.progressData, update);
-            // Ensure completed doesn't exceed total
-            if (this.progressData.completedQueries > this.progressData.totalQueries) {
-                this.debug(`[Progress Warning] Completed queries (${this.progressData.completedQueries}) exceeded total (${this.progressData.totalQueries}). Clamping.`);
-                this.progressData.completedQueries = this.progressData.totalQueries;
-            }
-            this.progressHandler(this.progressData);
+    updateProgress(update = {}, stage = null) {
+        if (!this.progressData || !this.progressHandler) {
+            return;
+        }
+
+        const { stage: stageFromUpdate, ...rest } = update;
+        Object.assign(this.progressData, rest);
+
+        if (
+            typeof this.progressData.totalQueries === 'number' &&
+            this.progressData.totalQueries > 0 &&
+            typeof this.progressData.completedQueries === 'number' &&
+            this.progressData.completedQueries > this.progressData.totalQueries
+        ) {
+            this.debug(`[Progress Warning] Completed queries (${this.progressData.completedQueries}) exceeded total (${this.progressData.totalQueries}). Clamping.`);
+            this.progressData.completedQueries = this.progressData.totalQueries;
+        }
+
+        const resolvedStage = stage || stageFromUpdate || this.progressData.status;
+        const snapshot = { ...this.progressData };
+        if (resolvedStage) {
+            snapshot.stage = resolvedStage;
+        }
+
+        this.progressHandler({ ...snapshot });
+        if (this.telemetry?.emitProgress) {
+            this.telemetry.emitProgress({ ...snapshot });
         }
     }
 
@@ -95,7 +113,7 @@ export class ResearchPath {
      */
     async research({ query, depth, breadth }) {
         const queryString = getQueryString(query); // Get the string part for searching/logging
-        this.updateProgress({ status: 'Processing Query', currentAction: `Processing: ${queryString.substring(0, 50)}...` });
+    this.updateProgress({ status: 'Processing Query', currentAction: `Processing: ${queryString.substring(0, 50)}...` }, 'path:start');
         this.telemetry?.emitStatus({
             stage: 'path-processing',
             message: `Processing query at depth ${depth}.`,
@@ -112,7 +130,7 @@ export class ResearchPath {
             // 1. Generate Search Queries (if needed, or use provided query)
             // For the first level (or if no sub-queries generated yet), use the main query.
             // In subsequent levels, this method is called with generated follow-up queries.
-            this.updateProgress({ currentAction: `Searching web for: ${queryString.substring(0, 50)}...` });
+            this.updateProgress({ status: 'Searching', currentAction: `Searching web for: ${queryString.substring(0, 50)}...` }, 'path:searching');
             const searchProvider = this.searchProvider; // Use the instance passed in constructor
 
             // 2. Execute Search
@@ -128,7 +146,7 @@ export class ResearchPath {
             this.debug(`[ResearchPath D:${depth}] Raw search results received (${searchResults?.length || 0}):`, searchResults);
             // --- END ADD DEBUG LOGGING ---
 
-            this.updateProgress({ currentAction: `Found ${searchResults?.length || 0} web results for: ${queryString.substring(0, 50)}...` });
+            this.updateProgress({ status: 'Analyzing', currentAction: `Analyzing ${searchResults?.length || 0} candidates for: ${queryString.substring(0, 50)}...` }, 'path:analyzing');
 
             // Filter out visited URLs and limit results processed per query
             const MAX_RESULTS_PER_QUERY = 5; // Limit processing to avoid excessive cost/time
@@ -145,16 +163,18 @@ export class ResearchPath {
             // --- FIX: Ensure result.url exists before adding to sources ---
             let currentSources = newResults.map(r => r.url).filter(Boolean); // Get sources from the new results, filter out null/empty URLs
             // --- END FIX ---
+            let allowFollowUps = false;
 
             if (newResults.length === 0) {
                 // --- ADD REASON TO LOG ---
                 const reason = (searchResults?.length || 0) > 0 ? "All results were already visited or invalid." : "Search provider returned no results.";
                 this.output(`[ResearchPath D:${depth}] No new relevant search results found for "${queryString}". Reason: ${reason}`);
                 // --- END ADD REASON ---
-                this.updateProgress({ completedQueries: (this.progressData.completedQueries || 0) + 1 }); // Increment completed count
+                this.updateProgress({ completedQueries: (this.progressData.completedQueries || 0) + 1, status: 'Complete', currentAction: `No new sources for: ${queryString.substring(0, 50)}...` }, 'path:complete'); // Increment completed count
+                allowFollowUps = false;
             } else {
                 // 3. Process Results (Extract Learnings)
-                this.updateProgress({ currentAction: `Extracting learnings from ${newResults.length} results...` });
+                this.updateProgress({ status: 'Extracting', currentAction: `Extracting learnings from ${newResults.length} results...` }, 'path:extracting');
                 try {
                     const processed = await processResults({
                         apiKey: this.veniceApiKey, // Pass API key
@@ -168,30 +188,33 @@ export class ResearchPath {
                     this.debug(`[ResearchPath D:${depth}] Extracted ${currentLearnings.length} learnings.`);
                     this.updateProgress({
                         completedQueries: (this.progressData.completedQueries || 0) + 1, // Increment completed count
-                        currentAction: `Extracted ${currentLearnings.length} learnings for: ${queryString.substring(0, 50)}...`
-                    });
+                        currentAction: `Extracted ${currentLearnings.length} learnings for: ${queryString.substring(0, 50)}...`,
+                        status: 'Synthesizing'
+                    }, 'path:synthesizing');
                     this.telemetry?.emitStatus({
                         stage: 'path-processing',
                         message: `Learnings extracted for query.` ,
                         meta: { query: queryString, learnings: currentLearnings.length, depth }
                     });
+                    allowFollowUps = currentLearnings.length > 0;
                 } catch (procError) {
                     this.error(`[ResearchPath D:${depth}] Error processing results for "${queryString}": ${procError.message}`);
                     currentLearnings.push(`Error processing search results for: ${queryString}`);
-                    this.updateProgress({ completedQueries: (this.progressData.completedQueries || 0) + 1 }); // Still increment count on error
+                    this.updateProgress({ completedQueries: (this.progressData.completedQueries || 0) + 1, status: 'Error', currentAction: `Processing failed for: ${queryString.substring(0, 50)}...` }, 'path:error'); // Still increment count on error
                     this.telemetry?.emitStatus({
                         stage: 'path-error',
                         message: 'Error processing search results.',
                         detail: procError.message,
                         meta: { query: queryString, depth }
                     });
+                    allowFollowUps = false;
                 }
             }
 
             // 4. Generate Follow-up Queries (if depth > 0)
             let followUpQueries = [];
-            if (depth > 0) {
-                this.updateProgress({ currentAction: `Generating follow-up queries (Depth ${depth - 1})...` });
+            if (depth > 0 && allowFollowUps) {
+                this.updateProgress({ status: 'Planning', currentAction: `Generating follow-up queries (Depth ${depth - 1})...` }, 'path:planning');
                 try {
                     followUpQueries = await generateQueries({
                         apiKey: this.veniceApiKey, // Pass API key
@@ -203,7 +226,7 @@ export class ResearchPath {
                         errorFn: this.error
                     });
                     this.debug(`[ResearchPath D:${depth}] Generated ${followUpQueries.length} follow-up queries.`);
-                    this.updateProgress({ currentAction: `Generated ${followUpQueries.length} follow-up queries...` });
+                    this.updateProgress({ status: 'Planning', currentAction: `Generated ${followUpQueries.length} follow-up queries...` }, 'path:planning');
                     this.telemetry?.emitStatus({
                         stage: 'path-followups',
                         message: `Generated ${followUpQueries.length} follow-up queries.`,
@@ -213,9 +236,11 @@ export class ResearchPath {
                     this.error(`[ResearchPath D:${depth}] Error generating follow-up queries for "${queryString}": ${genError.message}`);
                     currentLearnings.push(`Error generating follow-up queries for: ${queryString}`);
                 }
+            } else if (depth > 0 && !allowFollowUps) {
+                this.debug(`[ResearchPath D:${depth}] Skipping follow-up generation due to lack of new learnings.`);
             } else {
                  this.debug(`[ResearchPath D:${depth}] Reached max depth, not generating follow-up queries.`);
-                 this.updateProgress({ currentAction: 'Reached maximum research depth.' });
+                 this.updateProgress({ status: 'Complete', currentAction: 'Reached maximum research depth.' }, 'path:complete');
             }
 
             // --- FIX: Combine results from this path ---
@@ -228,7 +253,7 @@ export class ResearchPath {
 
             // --- FIX: Recursive calls for follow-up queries ---
             if (depth > 0 && followUpQueries.length > 0) {
-                this.updateProgress({ currentAction: `Sequentially processing ${followUpQueries.length} sub-paths (Depth ${depth - 1})...` });
+                this.updateProgress({ status: 'Traversing', currentAction: `Sequentially processing ${followUpQueries.length} sub-paths (Depth ${depth - 1})...` }, 'path:traversing');
 
                 // --- CHANGE: Process follow-up queries sequentially ---
                 for (const followUpQueryObj of followUpQueries) {
@@ -263,6 +288,7 @@ export class ResearchPath {
             // --- End FIX ---
 
 
+            this.updateProgress({ status: 'Complete', currentAction: `Completed query: ${queryString.substring(0, 50)}...` }, 'path:complete');
             this.debug(`[ResearchPath D:${depth}] Path finished for "${queryString}".`);
             // Return aggregated results from this path and its children
             return pathResult; // { learnings, sources, followUpQueries (only from this level) }
@@ -270,7 +296,7 @@ export class ResearchPath {
         } catch (err) {
             this.error(`[ResearchPath D:${depth}] Error processing path for query "${queryString}": ${err.message}`);
             this.debug(err.stack); // Log stack trace for debugging
-            this.updateProgress({ currentAction: `Path failed: ${err.message}` });
+            this.updateProgress({ status: 'Error', currentAction: `Path failed: ${err.message}` }, 'path:error');
             this.telemetry?.emitStatus({
                 stage: 'path-error',
                 message: 'Research path failed.',

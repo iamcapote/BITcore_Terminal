@@ -25,6 +25,7 @@ The Deep Research Privacy App is a privacy-focused research tool that automates 
 13. [Troubleshooting](#troubleshooting)
 14. [Research Request Scheduler](#research-request-scheduler)
 15. [Validation & Accuracy Check](#validation--accuracy-check)
+16. [Live Test Checklist](#live-test-checklist)
 16. [Development Guidelines (Agents & Modules)](#development-guidelines-agents--modules)
 
 ---
@@ -85,7 +86,7 @@ This application automates research using AI-driven querying and summarization. 
 
 10. **Post-Research Actions**
    - After research completes, CLI users see a menu while Web users receive a prompt (`post_research_action`) to choose Display, Download, Upload (GitHub), or Discard.
-   - Download leverages the `download_file` WebSocket event, while uploads run through `app/utils/github.utils.mjs` using decrypted user credentials.
+   - Download leverages the `download_file` WebSocket event, while uploads run through the GitHub research sync controller using the decrypted owner/repo/branch/token from the single-user profile. If any field is missing, the server now blocks the upload and instructs the operator to configure `/keys set github` first.
 
 11. **Research Request Scheduler**
    - Node-cron worker (disabled by default) that polls the configured GitHub research repository for pending request files.
@@ -221,13 +222,15 @@ Authentication is removed. The system operates as a single global user:
 
 ### Research Pipeline Overview
 
-1.  **Initiation:** User provides a query via CLI prompt, Web-CLI prompt (`handleCommandMessage` -> `wsPrompt`), or `/research` command (with optional flags like `--depth`, `--breadth`, `--classify`). When the Web terminal receives `/research` with no query, it immediately issues an interactive prompt so the operator can supply one before the engine starts. Handled by `app/commands/research.cli.mjs`.
+1.  **Initiation:** User provides a query via CLI prompt, Web-CLI prompt (`handleCommandMessage` -> `wsPrompt`), or `/research` command (with optional flags like `--depth`, `--breadth`, `--classify`). When the Web terminal receives `/research` with no query, it immediately issues an interactive prompt so the operator can supply one before the engine starts. Web invocations are rate-limited (3/sec per session) and can optionally enforce CSRF tokens (`RESEARCH_WS_CSRF_REQUIRED=true`) to prevent flooding or forged submissions. Handled by `app/commands/research.cli.mjs`.
 2.  **Token Classification (Optional):** If enabled (via prompt or `--classify` flag), the query is sent to Venice API via `app/utils/token-classifier.mjs::callVeniceWithTokenClassifier`. Returned metadata is added to the query object.
 3.  **Query Generation:** `app/features/ai/research.providers.mjs::generateQueries` is intended to expand the query (and metadata, if present) into breadth/depth prompts. The current build ships with a placeholder implementation (see `guides/gaps.md`) until the Venice-backed variant is restored.
 4.  **Search Execution:** `app/infrastructure/research/research.path.mjs` uses `app/infrastructure/search/search.providers.mjs` (Brave) to execute queries, handling rate limits.
 5.  **Processing & Summarization:** Results are processed (`app/features/ai/research.providers.mjs::processResults`), learnings extracted, and a summary generated (`generateSummary`) via LLM once the provider module is reinstated. The placeholder build skips these steps and returns minimal output.
 6.  **Output & Action:** Progress is streamed via WebSockets (`type: 'progress'`). Final learnings, sources, and summary are compiled into Markdown (`research.markdown.mjs::buildResearchMarkdown`). The user is then prompted (CLI or Web-CLI via `wsPrompt` context `post_research_action`) to choose an action: Display, Download, Upload to GitHub, or Discard.
 7.  **Completion:** Research completion signaled via `research_complete` message.
+
+Operators who select **Keep** can follow up with `/export` (local copy) or `/storage save <path>` to upload the cached markdown to GitHub; `/storage list|get|delete` mirrors the repository view across CLI and Web terminals.
 
 **Note:** The token classifier is only used to generate metadata, and the metadata is combined with the user input to create detailed search queries. User input + metadata is never sent directly to Brave. Research results are **not** stored persistently on the server; the user chooses the destination after each research task.
 
@@ -410,6 +413,7 @@ The chat system enables interactive conversations with an AI, featuring context 
 - **HTTPS**: Essential in production.
 - **Input Sanitization**: Query cleaning (`app/utils/research.clean-query.mjs`) exists, but review command parsing and inputs for potential injection risks.
 - **Rate Limiting**: Implemented for login attempts (`app/features/auth/user-manager.mjs`) and external API calls (`app/utils/research.rate-limiter.mjs`).
+- **CSRF Guard (Web `/research`)**: Set `RESEARCH_WS_CSRF_REQUIRED=true` to require every WebSocket research command to echo the per-session token issued at handshake time. Commands missing or mismatching the token are rejected with guidance to refresh the session.
 
 ### Optional Multi-User Adapters
 
@@ -482,8 +486,10 @@ See [`guides/research.md`](./guides/research.md#research-request-scheduler) for 
 ---
 
 ## Validation & Accuracy Check
-This README aims to accurately reflect the application state based on the provided file structure and seed content as of April 25, 2025. Key aspects verified include dual-mode operation, Web-CLI parity, server-driven interaction modes, research pipeline flow, token classification integration, authentication/encryption mechanisms, chat/memory system features, post-research actions, and file structure. **Testing the Web-CLI interaction flows, especially prompt handling and mode transitions, remains crucial.**
+This README aims to accurately reflect the application state based on the provided file structure and seed content as of April 25, 2025. Key aspects verified include dual-mode operation, Web-CLI parity, server-driven interaction modes, research pipeline flow, token classification integration, authentication/encryption mechanisms, chat/memory system features, post-research actions, and file structure. **Testing the Web-CLI interaction flows, especially prompt handling and mode transitions, remains crucial—run `npm run test:webcli` for the automated sweep and `node scripts/webcli-smoke.mjs` to exercise the keep ➜ `/export` download path.**
 
+## Live Test Checklist
+Before inviting operators into a live session, walk through the smoke steps in [`guides/live-test-checklist.md`](./guides/live-test-checklist.md). The document covers environment prep, CLI/Web terminal runs, rate-limit and CSRF toggles, and cleanup reminders so the finish line stays explicit each iteration.
 
 ---
 

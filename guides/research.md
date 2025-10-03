@@ -27,6 +27,9 @@ For roadmap-level planning of retrieval and RAG enhancements, see [`guides/retri
 1. **Dispatch**
    - CLI command router or WebSocket handler recognises `/research` and invokes `executeResearch` with parsed flags (`--depth`, `--breadth`, `--classify`, `--public`, `--verbose`).
    - WebSocket sessions without an explicit query now trigger an immediate `wsPrompt` asking the operator to supply the research question before continuing; the trimmed response is injected back into the command payload.
+   - Prompt cancellations or timeouts surface a user-facing `wsErrorHelper` notice so operators know the research flow was aborted before the engine starts.
+   - WebSocket `/research` commands are rate-limited (3 per second per session) to prevent accidental flooding; exceeding the limit returns a retry-after message.
+   - Optional CSRF enforcement (`RESEARCH_WS_CSRF_REQUIRED=true`) requires each command payload to echo the per-session token broadcast at connection time, blocking mismatched requests.
    - Chat conversations call the same helper through `startResearchFromChat`.
 
 2. **Guard**
@@ -50,10 +53,11 @@ For roadmap-level planning of retrieval and RAG enhancements, see [`guides/retri
    - `ResearchEngine.research({ query, depth, breadth })` builds `ResearchPath` instances per breadth slot.
    - Each path performs Brave fetches, follow-up generation, deduplication, and synthesis via Venice.
    - The engine aggregates learnings, sources, and summary; it also renders Markdown and suggests a filename.
+   - When no learnings survive filtering, the engine emits a fallback summary explaining the empty result instead of surfacing an error to the operator.
 
 7. **Post-action**
-   - CLI prints the Markdown and returns success metadata.
-   - WebSocket flow stores results in the session, caches the trimmed query for follow-up actions, emits `research_complete`, and prompts for `post_research_action` (Display / Download / Upload / Discard).
+   - CLI prints the Markdown, caches the artefact in memory for `/export` (and forthcoming storage commands), and returns structured metadata.
+   - WebSocket flow stores results in the session, caches the trimmed query for follow-up actions, emits `research_complete`, and prompts for `post_research_action` (Display / Download / Upload / Keep / Discard).
 
 ---
 
@@ -63,8 +67,10 @@ For roadmap-level planning of retrieval and RAG enhancements, see [`guides/retri
 - File: `app/commands/research.cli.mjs`
 - Responsibilities: guard options, prompt for credentials, gather preferences, fetch keys, call enrichment/memory helpers, instantiate the engine, and manage post-run prompts.
 - Important behaviours:
-  - Prompts for passwords even in single-user mode (legacy compatibility). Upcoming work should short-circuit this when the vault is disabled.
+   - Prompts for passwords only if the vault is enabled or the user is not `admin` (single-user mode skips password prompt by default).
   - Streams progress via supplied handlers; Web sessions keep input disabled until post-action concludes.
+   - Validates WebSocket CSRF tokens when enabled to prevent forged command submissions.
+   - Clears cached WebSocket session result/query state when failures occur so follow-up actions do not reuse stale content.
 
 ### `ResearchEngine`
 - File: `app/infrastructure/research/research.engine.mjs`
@@ -88,7 +94,8 @@ For roadmap-level planning of retrieval and RAG enhancements, see [`guides/retri
 ## 4. Configuration & Secrets
 
 - **API keys**: Brave and Venice tokens live in `~/.bitcore-terminal/global-user.json` (plaintext) or can be injected via environment variables (`BRAVE_API_KEY`, `VENICE_API_KEY`, `VENICE_PUBLIC_API_KEY`). Always go through `resolveResearchKeys` to honour the precedence rules.
-- **GitHub uploads**: Require `owner`, `repo`, `branch`, and optionally `token` on the same single-user profile. `/keys set github ...` writes these fields.
+- **GitHub uploads**: Require `owner`, `repo`, `branch`, and a Personal Access Token on the single-user profile. `/keys set github ...` writes these fields, and uploads are blocked until all four values are present.
+- **CSRF enforcement**: Set `RESEARCH_WS_CSRF_REQUIRED=true` to force every WebSocket `/research` command to include the per-session token returned during the handshake. Mismatched or missing tokens are rejected immediately so operators must refresh or reconnect before retrying.
 - **Preferences**: Research defaults persist in `~/.bitcore-terminal/research-preferences.json`. The CLI respects stored values whenever flags are omitted; the Web UI exposes sliders/toggles for the same document.
 - **Telemetry**: The engine accepts an optional telemetry channel (Web terminal uses `app/features/research/research.telemetry.mjs`) to emit `status`, `thought`, and `progress` events.
 
@@ -100,10 +107,26 @@ For roadmap-level planning of retrieval and RAG enhancements, see [`guides/retri
 | --- | --- | --- |
 | Prompts | `singlePrompt` (readline) handles password/query prompts. | `wsPrompt` sends prompt envelopes; client renders modal/toggler UI. |
 | Progress | Text streaming via `output()`; optional verbose logs. | JSON messages → `app/public/terminal.research.handlers.js`, rendered in the progress panel. |
-| Post-action | Text menu, manual selection. | Prompt context `post_research_action` with buttons (Download/Upload/Keep/Discard). |
+| Post-action | Text menu or explicit `/export` command; CLI cache cleared after export unless `--keep` is passed. | Prompt context `post_research_action` with buttons (Download/Upload/Keep/Discard) plus `/export` for parity. |
 | Session persistence | Results printed immediately; operator must copy/save manually. | Results cached on the socket session for follow-up actions (download/upload) and cleared afterward. |
 
 Both surfaces share the same orchestration code path; only the prompt/output handlers differ.
+
+### `/export` command (CLI & Web)
+- **Purpose**: Persist the most recent research artefact without re-running the engine. CLI runs write to disk; Web sessions trigger a `download_file` payload that the browser saves locally.
+- **Usage**: `/export [optional-filename] [--keep] [--overwrite]`. Filenames may be relative (stored under `~/.bitcore-terminal/research`) or absolute paths; `.md` is appended automatically if omitted.
+- **Keep semantics**: By default the cached artefact is cleared after export. Pass `--keep` when you plan to re-export (for example, once to disk and once to GitHub via the forthcoming `/storage` helpers).
+- **Overwrite guard**: Existing files remain untouched unless `--overwrite` is set, preventing accidental clobbering during iterative runs.
+
+### `/storage` command suite (CLI & Web)
+- **Purpose**: Interact with the GitHub-backed research library without leaving the terminal. Pairs with `/export`—keep the result, then `/storage save <path>` to commit it.
+- **Primary actions**:
+   - `/storage list [path] [--json]` enumerates artefacts (defaults to the `research/` directory).
+   - `/storage get <path> [--out=local.md] [--overwrite]` fetches an artefact. Web sessions receive a `download_file` event; CLI can print or save locally.
+   - `/storage save <path> [--keep] [--message="..."]` uploads the cached research markdown (CLI cache or Web session). Clears the cache unless `--keep` is provided.
+   - `/storage delete <path> [--message="..."]` removes artefacts when clean-up is required.
+- **Commit hygiene**: Messages default to `Research results for query: ...` using the cached query/summary. Override with `--message` when batching uploads.
+- **Requirements**: GitHub owner/repo/branch/token must be configured (`/keys set github`). The controller rejects relative paths containing `..` to guard against traversal.
 
 ---
 

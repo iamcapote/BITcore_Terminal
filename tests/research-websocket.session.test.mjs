@@ -195,4 +195,63 @@ describe('executeResearch – WebSocket session state', () => {
       'post_research_action',
     );
   });
+
+  it('clears session caches and re-enables input when the engine throws', async () => {
+    researchCallMock.mockRejectedValueOnce(new Error('engine boom'));
+
+    const ws = createSocket();
+    const telemetry = {
+      emitStatus: vi.fn(),
+      emitThought: vi.fn(),
+      emitProgress: vi.fn(),
+      emitComplete: vi.fn(),
+      updateSender: vi.fn(),
+      clearHistory: vi.fn(),
+    };
+
+    const session = {
+      sessionId: 'session-error-1',
+      currentResearchResult: 'stale markdown',
+      currentResearchFilename: 'old.md',
+      currentResearchQuery: 'outdated topic',
+      promptData: { suggestedFilename: 'old.md' },
+      password: 'cached-password',
+      researchTelemetry: telemetry,
+    };
+
+    const wsPrompt = vi.fn();
+
+    const result = await executeResearch({
+      positionalArgs: ['unstable topic'],
+      isWebSocket: true,
+      session,
+      webSocketClient: ws,
+      wsPrompt,
+      output: vi.fn(),
+      error: vi.fn(),
+      currentUser: { username: 'operator', role: 'admin' },
+      telemetry,
+    });
+
+    expect(result).toEqual(expect.objectContaining({ success: false, keepDisabled: false, error: 'engine boom' }));
+    expect(session.currentResearchResult).toBeNull();
+    expect(session.currentResearchFilename).toBeNull();
+    expect(session.currentResearchQuery).toBeUndefined();
+    expect(session.promptData).toBeNull();
+    expect(session.password).toBeNull();
+
+    expect(ws.sent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'research_complete', error: 'engine boom', keepDisabled: false }),
+      ]),
+    );
+
+    // Restore default resolved behaviour for subsequent tests.
+    researchCallMock.mockResolvedValue({
+      success: true,
+      markdownContent: '# Findings',
+      suggestedFilename: 'fresh-topic.md',
+      summary: 'Summary text',
+    });
+  });
 });

@@ -21,6 +21,10 @@
 import { userManager } from '../features/auth/user-manager.mjs';
 import { handleCliError, logCommandStart } from '../utils/cli-error-handler.mjs';
 import { createModuleLogger } from '../utils/logger.mjs';
+import {
+    isSecureConfigAvailable,
+    secureConfigWritesEnabled,
+} from '../features/config/secure-config.service.mjs';
 
 const moduleLogger = createModuleLogger('commands.keys.cli', { emitToStdStreams: false });
 
@@ -105,6 +109,7 @@ async function handleSet(service, value, flags, output, error) {
             service,
             action: value ? 'updated' : 'cleared'
         });
+        await announceSecureConfigUsage(output);
         moduleLogger.info('API key write succeeded.', { service, providedValue: Boolean(value) });
         return { success: true, keepDisabled: false };
     }
@@ -142,6 +147,7 @@ async function handleSet(service, value, flags, output, error) {
                 tokenProvided: Boolean(config.token)
             });
         }
+        await announceSecureConfigUsage(output);
         moduleLogger.info('GitHub configuration stored.', {
             owner: config.owner,
             repo: config.repo,
@@ -232,6 +238,10 @@ export function getKeysHelpText() {
             venice    Set Venice LLM API key.
             github    Configure GitHub owner/repo/token for uploads.
 
+        Encrypted storage:
+            Set BITCORE_CONFIG_SECRET to enable encrypted credential storage.
+            Provide BITCORE_ALLOW_CONFIG_WRITES=1 (or use the encrypted flag) to allow writes.
+
         Examples:
             /keys set brave YOUR_BRAVE_KEY
             /keys set venice ""
@@ -241,4 +251,15 @@ export function getKeysHelpText() {
     /keys check                 Show current configuration status.
     /keys test                  Validate configured credentials.
     /keys help                  Display this help message.`;
+}
+
+async function announceSecureConfigUsage(output) {
+    if (!isSecureConfigAvailable()) {
+        return;
+    }
+    const writesAllowed = await secureConfigWritesEnabled();
+    output('Credentials stored via encrypted secure-config overlay.', {
+        storage: 'secure-config',
+        writesEnabled: writesAllowed,
+    });
 }
