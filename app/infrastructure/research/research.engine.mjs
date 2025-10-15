@@ -316,7 +316,9 @@ export class ResearchEngine {
         metadata: contextQuery.metadata || null, // Pass metadata if available
         apiKey: this.veniceApiKey, // Use engine's key
         outputFn: this.debug,
-        errorFn: this.error
+        errorFn: this.error,
+        telemetry: this.telemetry,
+        telemetryMeta: { depth: currentDepth, breadth: currentBreadth }
       });
       this.output('[ResearchEngine] Summary generated.');
 

@@ -15,37 +15,28 @@
  *     - Prompts for passwords, reads encrypted config, performs external network requests via ResearchEngine, emits telemetry and websocket events.
  */
 
-import { ResearchEngine } from '../infrastructure/research/research.engine.mjs';
-import WebSocket from 'ws';
-import { logCommandStart } from '../utils/cli-error-handler.mjs';
 import { safeSend } from '../utils/websocket.utils.mjs';
 import { output as outputManagerInstance } from '../utils/research.output-manager.mjs';
 import { singlePrompt } from '../utils/research.prompt.mjs';
-import { createMemoryService } from '../features/memory/memory.service.mjs';
-import { resolveResearchDefaults } from '../features/research/research.defaults.mjs';
-import { prepareMemoryContext } from './research/memory-context.mjs';
 import {
-    resolveResearchKeys,
-    MissingResearchKeysError,
-    ResearchKeyResolutionError
-} from './research/keys.mjs';
-import { enrichResearchQuery } from './research/query-classifier.mjs';
+    resolveResearchDefaults,
+    validateDepthOverride,
+    validateBreadthOverride,
+    validateVisibilityOverride
+} from '../features/research/research.defaults.mjs';
 import { createModuleLogger } from '../utils/logger.mjs';
 import { createResearchEmitter } from './research/emitters.mjs';
 import { ensureResearchPassword } from './research/passwords.mjs';
 import { sanitizeResearchOptionsForLog } from './research/logging.mjs';
-import { setCliResearchResult, clearCliResearchResult } from './research/state.mjs';
 import { persistSessionFromRef } from '../infrastructure/session/session.store.mjs';
+import { runResearchWorkflow } from './research/run-workflow.mjs';
+import { resolveResearchAction, isResearchArchiveAction } from './research/action-resolver.mjs';
+import { listResearchArchive, downloadResearchArchive } from './research/archive-actions.mjs';
+import { ensureResearchTelemetryChannel } from '../features/research/research.telemetry.metrics.mjs';
 
 const moduleLogger = createModuleLogger('commands.research.cli', { emitToStdStreams: false });
 
 const PROMPT_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
-const POST_RESEARCH_PROMPT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes for post-research action
-
-const sharedMemoryService = createMemoryService();
-const MEMORY_CONTEXT_MAX_RECORDS = 5;
-
-const CLI_FOLLOW_UP_MESSAGE = 'Next steps: run /export to save locally or /storage save <filename> to upload to GitHub. Latest results stay cached for CLI follow-up commands.';
 
 // Error formatting helper keeps user-facing failures consistent and actionable.
 function formatResearchError(error, { stage = 'pipeline', query = null } = {}) {
@@ -87,6 +78,8 @@ export async function executeResearch(options = {}) {
 
     const {
         positionalArgs = [],
+        flags = {},
+        action: explicitAction,
         query: queryFromOptions,
         depth: depthOverride,
         breadth: breadthOverride,
@@ -108,6 +101,15 @@ export async function executeResearch(options = {}) {
         progressHandler: providedProgressHandler
     } = options;
 
+    const flagsWithExplicitAction = explicitAction
+        ? { ...flags, action: explicitAction }
+        : flags;
+
+    const { action, positionalArgs: resolvedPositionalArgs } = resolveResearchAction({
+        positionalArgs,
+        flags: flagsWithExplicitAction
+    });
+
     if (cmdOutput && typeof cmdOutput !== 'function') {
         moduleLogger.warn('Received non-function output handler. Falling back to stdout.', {
             handlerType: typeof cmdOutput
@@ -119,15 +121,81 @@ export async function executeResearch(options = {}) {
         });
     }
 
+    if (isResearchArchiveAction(action)) {
+        const limitCandidate = flagsWithExplicitAction.limit
+            ?? flagsWithExplicitAction.n
+            ?? flagsWithExplicitAction.count;
+        if (action === 'list') {
+            const limitValue = Number.parseInt(limitCandidate, 10);
+            const limit = Number.isFinite(limitValue) ? limitValue : undefined;
+            return listResearchArchive({
+                limit,
+                output: cmdOutput,
+                error: cmdError
+            });
+        }
+        if (action === 'download') {
+            const idCandidate = flagsWithExplicitAction.id
+                ?? flagsWithExplicitAction.target
+                ?? flagsWithExplicitAction.path
+                ?? resolvedPositionalArgs[0];
+            return downloadResearchArchive({
+                id: idCandidate,
+                output: cmdOutput,
+                error: cmdError,
+                isWebSocket,
+                webSocketClient
+            });
+        }
+    }
+
+    const depthValidation = validateDepthOverride(depthOverride);
+    if (!depthValidation.ok) {
+        const message = depthValidation.error || 'Depth override is invalid.';
+        moduleLogger.warn('Depth override validation failed.', {
+            value: depthOverride,
+            error: message
+        });
+        const emitError = typeof cmdError === 'function' ? cmdError : (value) => process.stderr.write(`${value}\n`);
+        emitError(message);
+        return { success: false, error: message, handled: true, keepDisabled: false };
+    }
+
+    const breadthValidation = validateBreadthOverride(breadthOverride);
+    if (!breadthValidation.ok) {
+        const message = breadthValidation.error || 'Breadth override is invalid.';
+        moduleLogger.warn('Breadth override validation failed.', {
+            value: breadthOverride,
+            error: message
+        });
+        const emitError = typeof cmdError === 'function' ? cmdError : (value) => process.stderr.write(`${value}\n`);
+        emitError(message);
+        return { success: false, error: message, handled: true, keepDisabled: false };
+    }
+
+    const visibilityValidation = validateVisibilityOverride(visibilityOverride);
+    if (!visibilityValidation.ok) {
+        const message = visibilityValidation.error || 'Visibility override is invalid.';
+        moduleLogger.warn('Visibility override validation failed.', {
+            value: visibilityOverride,
+            error: message
+        });
+        const emitError = typeof cmdError === 'function' ? cmdError : (value) => process.stderr.write(`${value}\n`);
+        emitError(message);
+        return { success: false, error: message, handled: true, keepDisabled: false };
+    }
+
     const { depth, breadth, isPublic } = await resolveResearchDefaults({
-        depth: depthOverride,
-        breadth: breadthOverride,
-        isPublic: visibilityOverride,
+        depth: depthValidation.value,
+        breadth: breadthValidation.value,
+        isPublic: visibilityValidation.value,
     });
 
-    Object.assign(options, { depth, breadth, isPublic });
+    Object.assign(options, { depth, breadth, isPublic, classify, action });
+    options.positionalArgs = resolvedPositionalArgs;
+    options.flags = flagsWithExplicitAction;
 
-    const telemetryChannel = telemetry ?? null;
+    let telemetryChannel = telemetry ?? null;
 
     const effectiveOutput = createResearchEmitter({ handler: cmdOutput, level: 'info', logger: moduleLogger });
     const effectiveError = createResearchEmitter({ handler: cmdError, level: 'error', logger: moduleLogger });
@@ -160,7 +228,6 @@ export async function executeResearch(options = {}) {
 
     const commandStartedAt = Date.now();
     let researchStartedAt = null;
-    telemetryChannel?.emitStatus({ stage: 'initializing', message: 'Validating research command options.' });
 
     // --- BLOCK PUBLIC USERS ---
     if (currentUser && currentUser.role === 'public') {
@@ -170,9 +237,10 @@ export async function executeResearch(options = {}) {
 
     // Determine query for 'run' action
     // --- Query now comes ONLY from positionalArgs or options.query ---
-    let researchQuery = positionalArgs.join(' ').trim() || queryFromOptions;
-    const action = 'run';
-    const needsPassword = action === 'run'; // For clarity in catch block
+    let researchQuery = resolvedPositionalArgs.join(' ').trim() || queryFromOptions;
+    const needsPassword = true;
+
+    const queryState = { researchQuery: researchQuery || null, enhancedQuery: null };
 
     try {
     // --- Authentication Check ---
@@ -187,11 +255,12 @@ export async function executeResearch(options = {}) {
             return { success: false, error: 'Authentication required', handled: true, keepDisabled: false }; // Enable input after error
         }
 
-        logCommandStart('research', options); // Log command start after initial checks
-
-        if (!isWebSocket) {
-            clearCliResearchResult();
+        if (!telemetryChannel) {
+            const { channel } = ensureResearchTelemetryChannel({ key: currentUsername });
+            telemetryChannel = channel;
         }
+
+        telemetryChannel?.emitStatus({ stage: 'initializing', message: 'Validating research command options.' });
 
         // --- Password Handling (Get password if needed and available) ---
         let userPassword = password; // Password from handleCommandMessage or cache
@@ -219,274 +288,71 @@ export async function executeResearch(options = {}) {
         // --- End Password Handling ---
 
 
-        // ===========================
-        // --- REMOVED Subcommand Handling for list, download, upload ---
-        // ===========================
+    queryState.researchQuery = researchQuery || null;
 
-        // --- The code now proceeds directly to the RUN action ---
-
-
-        // ===========================
-        // --- RUN Action (Default) ---
-        // ===========================
-        // Condition 'action === run' removed as it's the only path
-
-        let braveKey;
-        let veniceKey;
-        try {
-            ({ braveKey, veniceKey } = await resolveResearchKeys({
-                username: currentUsername,
-                session,
-                telemetry: telemetryChannel,
-                debug: effectiveDebug
-            }));
-        } catch (keyError) {
-            if (keyError instanceof MissingResearchKeysError) {
-                const missingLabel = keyError.missingKeys.join(', ');
-                effectiveError(`Missing API key(s) required for research: ${missingLabel}. Use /keys set to configure.`);
-                return { success: false, error: keyError.message, handled: true, keepDisabled: false };
-            }
-            if (keyError instanceof ResearchKeyResolutionError) {
-                effectiveError(`Unable to resolve API key(s): ${keyError.message}. Configure them via /keys set or environment variables.`);
-                return { success: false, error: keyError.message, handled: true, keepDisabled: false };
-            }
-            throw keyError;
-        }
-
-        if (!researchQuery) {
-             if (isWebSocket) {
-                effectiveError('Internal Error: Research query is missing in WebSocket mode after prompt.');
-                return { success: false, error: 'Query required', handled: true, keepDisabled: false };
-            }
-            researchQuery = await singlePrompt('What would you like to research? ');
-            if (!researchQuery) {
-                effectiveError('Research query cannot be empty.');
-                return { success: false, error: 'Empty query', handled: true };
-            }
-        }
-
-        telemetryChannel?.emitThought({
-            text: `Research focus: ${researchQuery}`,
-            stage: 'planning'
-        });
-        telemetryChannel?.emitStatus({
-            stage: 'planning',
-            message: 'Research query accepted.',
-            meta: {
-                depth,
-                breadth,
-                visibility: isPublic ? 'public' : 'private'
-            }
-        });
-
-        const enhancedQuery = await enrichResearchQuery({
-            query: researchQuery,
-            classify,
-            veniceKey,
-            output: effectiveOutput,
-            error: effectiveError,
-            telemetry: telemetryChannel
-        });
-
-        if (isWebSocket && session) {
-            session.currentResearchQuery = enhancedQuery?.original || researchQuery;
-            session.currentResearchResult = null;
-            session.currentResearchFilename = null;
-            session.currentResearchSummary = null;
-        }
-
-        const { overrideQueries: memoryOverrides } = await prepareMemoryContext({
-            query: researchQuery,
-            memoryService: sharedMemoryService,
-            user: currentUser,
-            fallbackUsername: currentUsername,
-            limit: MEMORY_CONTEXT_MAX_RECORDS,
-            telemetry: telemetryChannel,
-            debug: effectiveDebug
-        });
-
-        const combinedOverrideQueries = [
-            ...(Array.isArray(optionOverrideQueries) ? optionOverrideQueries : []),
-            ...memoryOverrides
-        ];
-
-        // --- Initialize Research Engine ---
-        const userInfo = { username: currentUsername, role: currentUserRole };
-        const engineConfig = {
-            braveApiKey: braveKey,
-            veniceApiKey: veniceKey,
-            verbose: verbose,
-            user: userInfo,
-            outputHandler: effectiveOutput,
-            errorHandler: effectiveError,
-            debugHandler: effectiveDebug,
-            progressHandler: effectiveProgress,
-            telemetry: telemetryChannel,
-            isWebSocket: isWebSocket,
-            webSocketClient: webSocketClient
-        };
-        if (combinedOverrideQueries.length) {
-            engineConfig.overrideQueries = combinedOverrideQueries;
-        }
-        const controller = new ResearchEngine(engineConfig);
-
-        // --- Run Research ---
-        effectiveOutput(`Starting research pipeline... (depth ${depth}, breadth ${breadth}, ${isPublic ? 'public' : 'private'} visibility)`, true);
-        telemetryChannel?.emitStatus({
-            stage: 'running',
-            message: 'Executing research pipeline.',
-            meta: {
-                depth,
-                breadth,
-                query: enhancedQuery.original,
-                visibility: isPublic ? 'public' : 'private'
-            }
-        });
-        telemetryChannel?.emitThought({
-            text: `Initiating research for "${enhancedQuery.original}"`,
-            stage: 'running'
-        });
-        if (isWebSocket && webSocketClient) {
-            safeSend(webSocketClient, { type: 'research_start', keepDisabled: true });
-        }
-
-        researchStartedAt = Date.now();
-
-        const results = await controller.research({
-            query: enhancedQuery,
+        const workflowOutcome = await runResearchWorkflow({
+            options,
+            researchQuery,
+            queryState,
+            currentUser,
+            isWebSocket,
+            session,
+            userPassword,
+            effectiveOutput,
+            effectiveError,
+            effectiveDebug,
+            effectivePrompt,
+            effectiveProgress,
+            telemetryChannel,
+            verbose,
+            optionOverrideQueries,
+            webSocketClient,
             depth,
-            breadth
+            breadth,
+            isPublic,
+            commandStartedAt,
+            logger: moduleLogger,
+            formatError: formatResearchError
         });
 
-        // --- Output Results ---
-    if (results && results.success !== false) { // Check if research didn't explicitly fail
+        ({ researchStartedAt = null } = workflowOutcome);
+        const { commandResult, results } = workflowOutcome;
 
-            // --- Store result markdown content in session for post-research actions ---
-            if (results.markdownContent && isWebSocket && session) {
-                session.currentResearchResult = results.markdownContent; // Store the actual markdown
-                session.currentResearchFilename = results.suggestedFilename; // Store the suggested filename
-                session.promptData = { suggestedFilename: results.suggestedFilename };
-                effectiveDebug("Stored research markdown content and suggested filename in session and promptData.");
-                if (session.password !== userPassword) session.password = userPassword;
-                try {
-                    await persistSessionFromRef(session, {
-                        currentResearchSummary: results.summary ?? null,
-                        currentResearchQuery: enhancedQuery?.original ?? researchQuery,
-                    });
-                } catch (persistError) {
-                    moduleLogger.warn('Failed to persist session snapshot after research completion.', {
-                        message: persistError?.message || String(persistError),
-                        sessionId: session?.sessionId || null,
-                    });
-                }
-            } else if (results.suggestedFilename && isWebSocket && session) {
-                effectiveError(`Internal Warning: Suggested filename exists but markdown content is missing in session ${session.sessionId}.`);
-            } else if (!isWebSocket && results.markdownContent) {
-                setCliResearchResult({
-                    content: results.markdownContent,
-                    filename: results.suggestedFilename,
-                    summary: results.summary ?? null,
-                    query: enhancedQuery?.original ?? researchQuery,
-                    generatedAt: new Date().toISOString()
-                });
-            }
-            // --- Always inform user about session-only persistence ---
-            // Message moved to prompt handler
-        } else {
-            // Handle case where research failed within the engine
-            const failureMessage = formatResearchError(new Error(results?.error || 'Unknown error during research execution.'), {
-                stage: 'engine',
-                query: enhancedQuery?.original || researchQuery
+        const completionDuration = Date.now() - ((researchStartedAt ?? commandStartedAt));
+        if (commandResult.success) {
+            telemetryChannel?.emitComplete({
+                success: true,
+                durationMs: completionDuration,
+                learnings: results?.learnings?.length || 0,
+                sources: results?.sources?.length || 0,
+                suggestedFilename: results?.suggestedFilename || null,
+                summary: results?.summary || null
             });
-            effectiveError(failureMessage);
-            if (!isWebSocket) {
-                clearCliResearchResult();
-            }
-            // No prompt needed if research failed
-            return { success: false, error: results?.error || 'Research failed', handled: true, keepDisabled: false };
+            return {
+                ...commandResult,
+                results,
+                researchComplete: true
+            };
         }
 
-        if (isWebSocket && webSocketClient) {
-            safeSend(webSocketClient, {
-                type: 'research_complete',
-                summary: results?.summary,
-                suggestedFilename: results?.suggestedFilename,
-                keepDisabled: true
-            });
-        }
-
-        // --- Send Prompt or Finalize (WebSocket vs CLI) ---
-        if (isWebSocket && webSocketClient) {
-            // --- Use wsPrompt for post-research action ---
-            effectiveOutput("Research complete. Choose an action:"); // Inform user prompt is coming
-
-            if (!effectivePrompt) {
-                effectiveError("Internal Error: Prompt function not available for post-research action.");
-                return { success: true, results, keepDisabled: false }; // Enable input if prompt fails
-            }
-
-            try {
-                // Initiate the server-side prompt
-                // No need to await here, handleCommandMessage returns keepDisabled=true
-                effectivePrompt(
-                    webSocketClient,
-                    session,
-                    `Choose action for "${results.suggestedFilename || 'research results'}": [Download] | [Upload] | [Keep] | [Discard]`,
-                    POST_RESEARCH_PROMPT_TIMEOUT_MS,
-                    false, // Not a password prompt
-                    'post_research_action' // Set context for handleInputMessage
-                );
-                if (session.password !== userPassword) session.password = userPassword;
-                effectiveDebug("Post-research action prompt sent. Server awaits response via handleInputMessage with context 'post_research_action'.");
-                // Keep input disabled, handleInputMessage will re-enable it after processing the choice.
-
-            } catch (promptError) { // This catch might not be hit if effectivePrompt doesn't throw synchronously
-                effectiveError(`Post-research action prompt failed or timed out: ${promptError.message}`);
-                // Ensure input is re-enabled if the prompt fails server-side before sending
-                return { success: true, results, keepDisabled: false };
-            }
-            // --- End wsPrompt ---
-
-        } else {
-            // CLI mode: Just finish
-            effectiveOutput(`[CMD SUCCESS] research: Completed successfully.`);
-            if (results.summary) {
-                effectiveOutput('');
-                effectiveOutput('Summary:');
-                effectiveOutput(results.summary.trim());
-            }
-            if (results.markdownContent) {
-                effectiveOutput('');
-                effectiveOutput('--- Research Content ---');
-                effectiveOutput(results.markdownContent);
-                effectiveOutput('--- End Content ---');
-                effectiveOutput('');
-                effectiveOutput(CLI_FOLLOW_UP_MESSAGE);
-            }
-            // No automatic upload here anymore
-        }
-
-        const completionDuration = Date.now() - (researchStartedAt || commandStartedAt);
         telemetryChannel?.emitComplete({
-            success: true,
+            success: false,
             durationMs: completionDuration,
-            learnings: results?.learnings?.length || 0,
-            sources: results?.sources?.length || 0,
-            suggestedFilename: results?.suggestedFilename || null,
-            summary: results?.summary || null
+            error: commandResult.error || 'Research failed'
         });
-
-        // Return success state for command handler logic
-        // Keep input disabled if WebSocket because a prompt is now pending
-        return { success: true, results: results, keepDisabled: isWebSocket };
+        return commandResult;
 
         // --- This part should ideally not be reached ---
         // effectiveError(`Unknown research action: ${action}. Only 'run' is supported directly.`);
         // return { success: false, error: `Unknown action: ${action}`, handled: true, keepDisabled: false };
     } catch (error) {
+        const fallbackQuery = queryState.enhancedQuery?.original
+            ?? queryState.researchQuery
+            ?? researchQuery
+            ?? positionalArgs.join(' ');
         const formatted = formatResearchError(error, {
             stage: 'command',
-            query: researchQuery || positionalArgs.join(' ')
+            query: fallbackQuery
         });
         effectiveError(formatted);
         moduleLogger.error('Unhandled error during research command.', {
@@ -517,7 +383,7 @@ export async function executeResearch(options = {}) {
             try {
                 await persistSessionFromRef(session, {
                     currentResearchSummary: null,
-                    currentResearchQuery: enhancedQuery?.original ?? researchQuery,
+                    currentResearchQuery: queryState.enhancedQuery?.original ?? queryState.researchQuery ?? researchQuery,
                 });
             } catch (persistError) {
                 moduleLogger.warn('Failed to persist session snapshot after research failure.', {
@@ -536,7 +402,7 @@ export async function executeResearch(options = {}) {
             try {
                 await persistSessionFromRef(session, {
                     currentResearchSummary: null,
-                    currentResearchQuery: enhancedQuery?.original ?? researchQuery,
+                    currentResearchQuery: queryState.enhancedQuery?.original ?? queryState.researchQuery ?? researchQuery,
                 });
             } catch (persistError) {
                 moduleLogger.warn('Failed to persist session snapshot after clearing password.', {
@@ -553,24 +419,30 @@ export async function executeResearch(options = {}) {
 
 // ... existing getResearchHelpText function ...
 export function getResearchHelpText() {
-    return `
-Usage: /research <query> [--depth=<number>] [--breadth=<number>] [--classify] [--verbose]
-Initiates a research task based on the provided query. Requires login.
-After completion (Web UI), you will be prompted to Download, Upload (to GitHub), Keep (in session), or Discard the result.
+        return `
+Usage:
+    /research <query> [--depth=<number>] [--breadth=<number>] [--classify] [--verbose]
+    /research list [--limit=<n>]
+    /research download <artifact-id>
 
-Arguments:
-  <query>          The topic or question to research. Can be multiple words.
+Run Mode:
+    Executes the research pipeline for the provided query. After completion you can Download, Upload (GitHub), Keep, or Discard the result.
+
+Archive Mode:
+    list       Show durable research artifacts saved locally.
+    download   Print or download an archived artifact by id.
 
 Options:
-  --depth=<number>   Specify the depth of the research (default: 2). Controls how many layers of queries are generated.
-  --breadth=<number> Specify the breadth of the research (default: 3). Controls how many queries are generated per layer.
-  --classify         Enhance the initial query using token classification via Venice AI (requires Venice key).
-  --verbose          Enable detailed logging during the research process.
+    --depth=<number>     Depth between 1-6 (default: 2).
+    --breadth=<number>   Breadth between 1-6 (default: 3).
+    --classify           Enhance the query via token classification.
+    --verbose            Emit detailed progress logs.
 
 Examples:
-  /research history of artificial intelligence
-  /research benefits of renewable energy --depth=3 --breadth=5
-  /research "impact of social media on mental health" --classify
+    /research history of artificial intelligence
+    /research benefits of renewable energy --depth=3 --breadth=5
+    /research list --limit=5
+    /research download 2025-10-15T18-20-00-archon
 `;
 }
 

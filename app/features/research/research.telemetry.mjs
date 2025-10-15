@@ -13,6 +13,7 @@
  *   - emitComplete(payload): publishes a `research-complete` event
  *   - emitMemoryContext(payload): publishes a `research-memory` event
  *   - emitSuggestions(payload): publishes a `research-suggestions` event
+ *   - emitTokenUsage(payload): publishes a `research-token-usage` event capturing prompt/completion token counts
  *   - replay(targetSend?): replays buffered events over the supplied sender (or the active sender)
  *   - updateSender(newSend): swaps the underlying transport function without dropping history
  *   - clearHistory(): empties the buffered events (useful when starting a new research run)
@@ -52,6 +53,7 @@ export function createResearchTelemetry({
   const history = [];
   let lastStatusAt = 0;
   let lastProgressAt = 0;
+  const tokenUsageTracker = createTokenUsageTracker();
 
   const pushEvent = (type, payload = {}, { throttleKey = null } = {}) => {
     const now = Date.now();
@@ -111,6 +113,14 @@ export function createResearchTelemetry({
     emitSuggestions(payload = {}) {
       return pushEvent('research-suggestions', normalizeSuggestions(payload));
     },
+    emitTokenUsage(payload = {}) {
+      const normalized = normalizeTokenUsage(payload);
+      if (!shouldEmitTokenUsage(normalized)) {
+        return false;
+      }
+      tokenUsageTracker.record(normalized);
+      return pushEvent('research-token-usage', normalized);
+    },
     replay(targetSend = sender) {
       if (typeof targetSend !== 'function') return;
       for (const event of history) {
@@ -141,6 +151,12 @@ export function createResearchTelemetry({
         data: { ...event.data },
         timestamp: event.timestamp
       }));
+    },
+    getTokenUsageTotals() {
+      return tokenUsageTracker.snapshot();
+    },
+    resetTokenUsageTotals() {
+      tokenUsageTracker.reset();
     }
   };
 }
@@ -239,6 +255,38 @@ function normalizeSuggestions(input = {}) {
     generatedAt,
     suggestions: normalized
   };
+}
+
+function normalizeTokenUsage(input = {}) {
+  const stage = typeof input.stage === 'string' && input.stage.trim()
+    ? input.stage.trim()
+    : 'unknown';
+  const promptTokens = coalesceUsageNumber(input.promptTokens ?? input.prompt_tokens);
+  const completionTokens = coalesceUsageNumber(input.completionTokens ?? input.completion_tokens);
+  const totalTokensRaw = input.totalTokens ?? input.total_tokens;
+  const totalTokens = coalesceUsageNumber(totalTokensRaw ?? addIfNumbers(promptTokens, completionTokens));
+  const model = typeof input.model === 'string' && input.model.trim() ? input.model.trim() : null;
+  const meta = cloneMeta(input.meta);
+
+  return {
+    stage,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    model,
+    meta
+  };
+}
+
+function shouldEmitTokenUsage(usage) {
+  if (!usage || typeof usage !== 'object') {
+    return false;
+  }
+  return (
+    Number.isFinite(usage.promptTokens) ||
+    Number.isFinite(usage.completionTokens) ||
+    Number.isFinite(usage.totalTokens)
+  );
 }
 
 function normalizeSuggestionEntry(entry) {
@@ -368,6 +416,107 @@ function coalesceCount(value) {
     return 0;
   }
   return Math.round(num);
+}
+
+function coalesceUsageNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) {
+    return null;
+  }
+  return Math.round(num);
+}
+
+function addIfNumbers(a, b) {
+  if (typeof a === 'number' && Number.isFinite(a) && typeof b === 'number' && Number.isFinite(b)) {
+    return a + b;
+  }
+  return null;
+}
+
+function cloneMeta(value) {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    moduleLogger.warn('Failed to clone telemetry meta payload.');
+    return {};
+  }
+}
+
+function createTokenUsageTracker() {
+  const totals = {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    events: 0,
+    updatedAt: null,
+    perStage: new Map()
+  };
+
+  return {
+    record(usage) {
+      if (!usage || typeof usage !== 'object') {
+        return;
+      }
+      totals.events += 1;
+      const prompt = Number.isFinite(usage.promptTokens) ? usage.promptTokens : null;
+      const completion = Number.isFinite(usage.completionTokens) ? usage.completionTokens : null;
+      const total = Number.isFinite(usage.totalTokens) ? usage.totalTokens : addIfNumbers(prompt, completion);
+      if (prompt !== null) totals.promptTokens += prompt;
+      if (completion !== null) totals.completionTokens += completion;
+      if (total !== null) totals.totalTokens += total;
+      totals.updatedAt = Date.now();
+
+      const stageKey = typeof usage.stage === 'string' && usage.stage ? usage.stage : 'unknown';
+      const perStageTotals = totals.perStage.get(stageKey) || {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        events: 0,
+        updatedAt: null
+      };
+      perStageTotals.events += 1;
+      if (prompt !== null) perStageTotals.promptTokens += prompt;
+      if (completion !== null) perStageTotals.completionTokens += completion;
+      if (total !== null) perStageTotals.totalTokens += total;
+      perStageTotals.updatedAt = Date.now();
+      totals.perStage.set(stageKey, perStageTotals);
+    },
+    snapshot() {
+      return cloneTokenUsageTotals(totals);
+    },
+    reset() {
+      totals.promptTokens = 0;
+      totals.completionTokens = 0;
+      totals.totalTokens = 0;
+      totals.events = 0;
+      totals.updatedAt = null;
+      totals.perStage.clear();
+    }
+  };
+}
+
+function cloneTokenUsageTotals(source) {
+  const perStage = {};
+  for (const [stage, value] of source.perStage.entries()) {
+    perStage[stage] = {
+      promptTokens: value.promptTokens,
+      completionTokens: value.completionTokens,
+      totalTokens: value.totalTokens,
+      events: value.events,
+      updatedAt: value.updatedAt ? new Date(value.updatedAt).toISOString() : null
+    };
+  }
+  return {
+    promptTokens: source.promptTokens,
+    completionTokens: source.completionTokens,
+    totalTokens: source.totalTokens,
+    events: source.events,
+    updatedAt: source.updatedAt ? new Date(source.updatedAt).toISOString() : null,
+    perStage
+  };
 }
 
 function normalizeScore(value) {

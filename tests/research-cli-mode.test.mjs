@@ -14,6 +14,12 @@ const resolveResearchDefaultsMock = vi.hoisted(() => vi.fn(async ({ depth, bread
   breadth: breadth ?? 3,
   isPublic: false
 })));
+const validateDepthOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
+const validateBreadthOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
+const validateVisibilityOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
+const listResearchArchiveMock = vi.hoisted(() => vi.fn(async () => ({ success: true, entries: [] })));
+const downloadResearchArchiveMock = vi.hoisted(() => vi.fn(async () => ({ success: true })));
+const saveResearchArtifactMock = vi.hoisted(() => vi.fn(async () => ({ id: 'test-id', createdAt: new Date().toISOString() })));
 
 vi.mock('../app/infrastructure/research/research.engine.mjs', () => ({
   ResearchEngine: vi.fn(() => ({
@@ -44,11 +50,20 @@ vi.mock('../app/features/memory/memory.service.mjs', () => ({
 }));
 
 vi.mock('../app/features/research/research.defaults.mjs', () => ({
-  resolveResearchDefaults: resolveResearchDefaultsMock
+  resolveResearchDefaults: resolveResearchDefaultsMock,
+  validateDepthOverride: validateDepthOverrideMock,
+  validateBreadthOverride: validateBreadthOverrideMock,
+  validateVisibilityOverride: validateVisibilityOverrideMock,
+  RESEARCH_RANGE_LIMITS: { depth: { min: 1, max: 6 }, breadth: { min: 1, max: 6 } }
 }));
 
 vi.mock('../app/commands/research/memory-context.mjs', () => ({
   prepareMemoryContext: vi.fn(async () => ({ overrideQueries: [] }))
+}));
+
+vi.mock('../app/commands/research/archive-actions.mjs', () => ({
+  listResearchArchive: listResearchArchiveMock,
+  downloadResearchArchive: downloadResearchArchiveMock
 }));
 
 vi.mock('../app/commands/research/keys.mjs', () => ({
@@ -91,6 +106,10 @@ vi.mock('../app/commands/research/state.mjs', () => ({
   clearCliResearchResult: clearCliResearchResultMock
 }));
 
+vi.mock('../app/infrastructure/research/research.archive.mjs', () => ({
+  saveResearchArtifact: saveResearchArtifactMock
+}));
+
 let executeResearch;
 
 beforeAll(async () => {
@@ -101,6 +120,12 @@ beforeEach(() => {
   researchRunMock.mockReset();
   setCliResearchResultMock.mockReset();
   clearCliResearchResultMock.mockReset();
+  saveResearchArtifactMock.mockClear();
+  listResearchArchiveMock.mockClear();
+  downloadResearchArchiveMock.mockClear();
+  validateDepthOverrideMock.mockClear();
+  validateBreadthOverrideMock.mockClear();
+  validateVisibilityOverrideMock.mockClear();
 });
 
 describe('executeResearch (CLI mode)', () => {
@@ -138,6 +163,7 @@ describe('executeResearch (CLI mode)', () => {
       filename: 'research-report.md',
       summary: 'Concise summary of findings.'
     }));
+    expect(saveResearchArtifactMock).toHaveBeenCalledTimes(1);
   });
 
   test('surfaces formatted guidance on unexpected failure', async () => {
@@ -160,5 +186,42 @@ describe('executeResearch (CLI mode)', () => {
     const errorTranscript = errors.join('\n');
     expect(errorTranscript).toContain('Try again with --verbose');
     expect(errorTranscript).toContain('Broken topic');
+  });
+
+  test('rejects invalid depth override before executing engine', async () => {
+    validateDepthOverrideMock.mockReturnValueOnce({
+      ok: false,
+      provided: true,
+      error: 'Depth must be between 1 and 6.'
+    });
+
+    const errors = [];
+
+    const result = await executeResearch({
+      positionalArgs: ['invalid-depth-topic'],
+      depth: 'ten',
+      output: () => {},
+      error: (value) => errors.push(value),
+      currentUser: { username: 'operator', role: 'admin' }
+    });
+
+    expect(result.success).toBe(false);
+    expect(researchRunMock).not.toHaveBeenCalled();
+    expect(errors.join(' ')).toContain('Depth');
+  });
+
+  test('routes archive list subcommand to archive helper', async () => {
+    const outputs = [];
+
+    const result = await executeResearch({
+      positionalArgs: ['list'],
+      output: (value) => outputs.push(value),
+      error: (value) => outputs.push(value),
+      currentUser: { username: 'operator', role: 'admin' }
+    });
+
+    expect(result.success).toBe(true);
+    expect(listResearchArchiveMock).toHaveBeenCalledTimes(1);
+    expect(researchRunMock).not.toHaveBeenCalled();
   });
 });

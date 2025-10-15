@@ -5,71 +5,32 @@
  * How: Uses shared registries and IO helpers to maintain per-socket state, push structured events, and reclaim resources on disconnect or errors.
  */
 
-import crypto from 'crypto';
 import { WebSocket } from 'ws';
 import { safeSend } from '../../../utils/websocket.utils.mjs';
 import { output, outputManager } from '../../../utils/research.output-manager.mjs';
-import { userManager } from '../../auth/user-manager.mjs';
-import { createResearchTelemetry } from '../research.telemetry.mjs';
 import { getStatusController } from '../../status/index.mjs';
-import { createGitHubActivityWebComm } from '../github-activity.webcomm.mjs';
 import { getChatHistoryController } from '../../chat-history/index.mjs';
-import { logChannel } from '../../../utils/log-channel.mjs';
 import { createModuleLogger } from '../../../utils/logger.mjs';
 import { handleCommandMessage } from './command-handler.mjs';
 import { handleChatMessage } from './chat-handler.mjs';
 import { handleInputMessage } from './input-handler.mjs';
-import { wsPrompt } from './prompt.mjs';
+import { persistSessionFromRef } from '../../../infrastructure/session/session.store.mjs';
 import {
-  loadSessionState,
-  applySessionStateToRef,
-  persistSessionFromRef,
-} from '../../../infrastructure/session/session.store.mjs';
-import {
-  registerSession,
   getSessionIdBySocket,
   getSessionById,
   unregisterSession,
   unregisterSessionBySocket,
   forEachSession,
   sessionCount,
-  getTelemetryChannel,
-  setTelemetryChannel,
 } from './session-registry.mjs';
-import { enableClientInput, disableClientInput, cloneUserRecord, wsErrorHelper } from './client-io.mjs';
+import { enableClientInput, disableClientInput, wsErrorHelper } from './client-io.mjs';
 import { SESSION_INACTIVITY_TIMEOUT, STATUS_REFRESH_INTERVAL_MS } from './constants.mjs';
+import { bootstrapSession } from './session-bootstrap.mjs';
 
 const socketLogger = createModuleLogger('research.websocket.connection');
 const messageLogger = socketLogger.child('message');
 const cleanupLogger = socketLogger.child('cleanup');
 const activityLogger = socketLogger.child('github-activity');
-
-function attachTelemetryChannel(ws, telemetryKey) {
-  let telemetryChannel = getTelemetryChannel(telemetryKey);
-  if (!telemetryChannel) {
-    telemetryChannel = createResearchTelemetry({
-      send: (type, payload) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          safeSend(ws, { type, data: payload });
-        }
-      },
-    });
-    setTelemetryChannel(telemetryKey, telemetryChannel);
-  } else {
-    telemetryChannel.updateSender((type, payload) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        safeSend(ws, { type, data: payload });
-      }
-    });
-    telemetryChannel.replay((type, payload) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        safeSend(ws, { type, data: payload });
-      }
-    });
-    telemetryChannel.emitStatus({ stage: 'reconnected', message: 'Telemetry channel resumed after reconnect.' });
-  }
-  return telemetryChannel;
-}
 
 export async function handleWebSocketConnection(ws, req) {
   socketLogger.info('New WebSocket connection established.');
@@ -88,105 +49,17 @@ export async function handleWebSocketConnection(ws, req) {
   };
 
   try {
-    const sessionId = crypto.randomUUID();
-    const current = userManager.getCurrentUser();
-    const telemetryKey = current?.username || 'operator';
-
-    const telemetryChannel = attachTelemetryChannel(ws, telemetryKey);
-    const currentUser = cloneUserRecord(current) || null;
-
-    const sessionData = {
-      sessionId,
-      webSocketClient: ws,
-      isChatActive: false,
-      chatHistory: [],
-      memoryManager: null,
-      lastActivity: Date.now(),
-      username: current?.username || 'operator',
-      role: current?.role || 'admin',
-      pendingPromptResolve: null,
-      pendingPromptReject: null,
-      promptTimeoutId: null,
-      promptIsPassword: false,
-      promptContext: null,
-      promptData: null,
-      password: null,
-      currentUser,
-      currentResearchResult: null,
-      currentResearchFilename: null,
-  currentResearchSummary: null,
-  currentResearchQuery: null,
-      sessionModel: null,
-      sessionCharacter: null,
-  memoryEnabled: false,
-  memoryDepth: null,
-  memoryGithubEnabled: false,
-      researchTelemetry: telemetryChannel,
-      githubActivityStream: null,
-      githubActivityStreamDisposer: null,
-      lastGitHubActivityTimestamp: null,
-      csrfToken: crypto.randomBytes(32).toString('hex'),
-      csrfIssuedAt: Date.now(),
-    };
-
-    try {
-      const persistedState = await loadSessionState();
-      applySessionStateToRef(sessionData, persistedState);
-      if (sessionData.currentResearchResult) {
-        safeSend(ws, {
-          type: 'output',
-          data: 'Previous research result restored from last session. Use /export or /storage to continue.',
-        });
-      }
-    } catch (persistError) {
-      socketLogger.warn('Failed to hydrate WebSocket session from persisted snapshot.', {
-        message: persistError?.message || String(persistError),
-      });
-    }
-
-    registerSession(sessionId, sessionData, ws);
-  socketLogger.info('Created session for new connection.', { sessionId, username: sessionData.username });
-
-    output.addWebSocketClient(ws);
-
-    safeSend(ws, { type: 'connection', connected: true });
-    safeSend(ws, { type: 'login_success', username: sessionData.username });
-    safeSend(ws, { type: 'output', data: 'Welcome to MCP Terminal!' });
-    safeSend(ws, { type: 'output', data: `Single-user mode active as ${sessionData.username} (${sessionData.role}). No login required.` });
-    safeSend(ws, { type: 'mode_change', mode: 'command', prompt: '> ' });
-  safeSend(ws, { type: 'csrf_token', value: sessionData.csrfToken });
-
-    const initialLogSnapshot = logChannel.getSnapshot({ limit: 120 });
-    if (initialLogSnapshot.length) {
-      safeSend(ws, { type: 'log-snapshot', logs: initialLogSnapshot });
-    }
-
-  const githubActivityStream = createGitHubActivityWebComm({
-      send: (eventType, payload) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          safeSend(ws, { type: eventType, data: payload });
-        }
-      },
-      snapshotLimit: 80,
-  logger: activityLogger,
+    const { sessionId } = await bootstrapSession({
+      ws,
+      pushStatusSummary,
+      activityLogger
     });
-    githubActivityStream.attach({ limit: 80 });
-    sessionData.githubActivityStream = githubActivityStream;
-    const disposeListener = githubActivityStream.onEntry((entry) => {
-      sessionData.lastGitHubActivityTimestamp = entry?.timestamp ?? Date.now();
-    });
-    sessionData.githubActivityStreamDisposer = typeof disposeListener === 'function' ? disposeListener : null;
 
-    enableClientInput(ws);
-
-    telemetryChannel.emitStatus({ stage: 'connected', message: 'Research telemetry channel ready.' });
-
-    pushStatusSummary({ reason: 'initial' });
     statusIntervalId = setInterval(() => {
       pushStatusSummary({ reason: 'scheduled' });
     }, STATUS_REFRESH_INTERVAL_MS);
 
-  socketLogger.info('Initial setup complete for session.', { sessionId });
+    socketLogger.info('Initial setup complete for session.', { sessionId });
   } catch (setupError) {
     socketLogger.error('Critical error during initial connection setup.', { error: setupError, stack: setupError.stack });
     safeSend(ws, { type: 'error', error: `Server setup error: ${setupError.message}` });

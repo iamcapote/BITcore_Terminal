@@ -5,6 +5,7 @@
  * How: Uses shared IO helpers for structured messaging, enriches options with session context, and propagates telemetry hooks for research flows.
  */
 
+import crypto from 'node:crypto';
 import { WebSocket } from 'ws';
 import { commands, parseCommandArgs } from '../../../commands/index.mjs';
 import { outputManager } from '../../../utils/research.output-manager.mjs';
@@ -14,13 +15,28 @@ import { userManager } from '../../auth/user-manager.mjs';
 import { cloneUserRecord, wsErrorHelper, wsOutputHelper } from './client-io.mjs';
 import { createRateLimiter, RateLimitExceededError } from '../../../utils/rate-limiter.mjs';
 import { wsPrompt } from './prompt.mjs';
+import config from '../../../config/index.mjs';
+import { resolveResearchAction } from '../../../commands/research/action-resolver.mjs';
 
 const commandLogger = createModuleLogger('research.websocket.command-handler');
 const sessionLogger = commandLogger.child('session');
 const executionLogger = commandLogger.child('execution');
 const debugLogger = commandLogger.child('debug');
 
-const researchRateLimiter = createRateLimiter({ maxTokens: 3, intervalMs: 1000 });
+const researchSecurityConfig = config?.security?.research ?? {};
+const rateLimitConfig = researchSecurityConfig.rateLimit ?? {};
+const rateLimitMaxTokens = Number.isInteger(rateLimitConfig.maxTokens) && rateLimitConfig.maxTokens > 0
+  ? rateLimitConfig.maxTokens
+  : 3;
+const rateLimitIntervalMs = Number.isInteger(rateLimitConfig.intervalMs) && rateLimitConfig.intervalMs > 0
+  ? rateLimitConfig.intervalMs
+  : 1000;
+const csrfRequired = researchSecurityConfig.requireWebsocketCsrf !== false;
+const csrfTtlMs = Number.isInteger(researchSecurityConfig.csrfTtlMs) && researchSecurityConfig.csrfTtlMs > 0
+  ? researchSecurityConfig.csrfTtlMs
+  : 15 * 60 * 1000;
+
+const researchRateLimiter = createRateLimiter({ maxTokens: rateLimitMaxTokens, intervalMs: rateLimitIntervalMs });
 
 function normalizeBooleanFlag(value) {
   if (typeof value === 'boolean') return value;
@@ -53,8 +69,22 @@ export async function handleCommandMessage(ws, message, session) {
     return false;
   }
 
-  const requireCsrf = process.env.RESEARCH_WS_CSRF_REQUIRED === 'true';
-  if (requireCsrf) {
+  if (csrfRequired) {
+    const now = Date.now();
+  const issuedAt = session.csrfIssuedAt ?? 0;
+  const expiresAt = session.csrfExpiresAt ?? (issuedAt + csrfTtlMs);
+    if (expiresAt <= now) {
+      session.csrfToken = crypto.randomBytes(32).toString('hex');
+      session.csrfIssuedAt = now;
+      session.csrfExpiresAt = now + csrfTtlMs;
+      safeSend(ws, { type: 'csrf_token', value: session.csrfToken });
+      executionLogger.warn('CSRF token expired and was rotated.', {
+        commandName,
+        sessionId: session.sessionId
+      });
+      wsErrorHelper(ws, 'Session security token expired. Command cancelled. Please retry.', true);
+      return false;
+    }
     if (!session.csrfToken || message.csrfToken !== session.csrfToken) {
       executionLogger.warn('CSRF token validation failed for command.', {
         commandName,
@@ -72,6 +102,12 @@ export async function handleCommandMessage(ws, message, session) {
     session.password = payloadPassword;
   }
   const effectivePassword = payloadPassword ?? session.password ?? null;
+
+  const rawPositionalArgs = Array.isArray(positionalArgs) ? [...positionalArgs] : [];
+  const { action: researchAction, positionalArgs: normalizedResearchArgs } = resolveResearchAction({
+    positionalArgs: rawPositionalArgs,
+    flags
+  });
 
   if (!session.currentUser) {
     try {
@@ -170,11 +206,17 @@ export async function handleCommandMessage(ws, message, session) {
     outputManager.debug(`[WebSocket] Session ${session.sessionId} model defaulted to: ${effectiveModel} as a fallback.`);
   }
 
+  const nonResearchActionFlag = typeof flags.action === 'string' && flags.action.trim()
+    ? flags.action.trim().toLowerCase()
+    : (typeof flags.subcommand === 'string' && flags.subcommand.trim() ? flags.subcommand.trim().toLowerCase() : null);
+
   const options = {
-    positionalArgs,
+    positionalArgs: commandName === 'research' ? normalizedResearchArgs : rawPositionalArgs,
     flags,
-    depth: flags.depth || 2,
-    breadth: flags.breadth || 3,
+    action: commandName === 'research' ? researchAction : nonResearchActionFlag ?? undefined,
+    depth: flags.depth,
+    breadth: flags.breadth,
+    isPublic: flags.public ?? flags.visibility ?? flags['is-public'],
     classify: normalizeBooleanFlag(flags.classify) || false,
     verbose: normalizeBooleanFlag(flags.verbose) || false,
     memory: normalizeBooleanFlag(flags.memory ?? session.memoryEnabled),
@@ -232,7 +274,7 @@ export async function handleCommandMessage(ws, message, session) {
   }
 
   try {
-    if (commandName === 'research') {
+    if (commandName === 'research' && researchAction === 'run') {
       try {
         await researchRateLimiter(rateLimitKey);
       } catch (limitError) {
@@ -258,6 +300,7 @@ export async function handleCommandMessage(ws, message, session) {
       sessionId: session.sessionId,
       positionalArgs,
       flags,
+      action: options.action,
       model: options.model,
       character: options.character,
       verbose: options.verbose,
@@ -275,72 +318,79 @@ export async function handleCommandMessage(ws, message, session) {
     }
 
     if (commandName === 'research') {
-      const telemetry = session.researchTelemetry;
-      if (telemetry) {
-        telemetry.updateSender((type, payload) => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            safeSend(ws, { type, data: payload });
-          }
-        });
-        telemetry.clearHistory();
-        telemetry.emitStatus({ stage: 'preparing', message: 'Preparing research command.' });
-        options.telemetry = telemetry;
-      }
-      if (!options.query || !options.query.trim()) {
-        if (typeof wsPrompt !== 'function') {
-          executionLogger.error('wsPrompt unavailable for research query prompt.', {
-            sessionId: session.sessionId,
+      if (researchAction === 'run') {
+        const telemetry = session.researchTelemetry;
+        if (telemetry) {
+          telemetry.updateSender((type, payload) => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              safeSend(ws, { type, data: payload });
+            }
           });
-          commandError('Research query is missing and the interactive prompt is unavailable.');
-          return false;
+          telemetry.clearHistory();
+          telemetry.emitStatus({ stage: 'preparing', message: 'Preparing research command.' });
+          options.telemetry = telemetry;
         }
+        if (!options.query || !options.query.trim()) {
+          if (typeof wsPrompt !== 'function') {
+            executionLogger.error('wsPrompt unavailable for research query prompt.', {
+              sessionId: session.sessionId,
+            });
+            commandError('Research query is missing and the interactive prompt is unavailable.');
+            return false;
+          }
 
-        try {
-          wsOutputHelper(ws, 'Research requires a query. Respond to the prompt to continue.');
-          const promptResponse = await wsPrompt(
-            ws,
-            session,
-            'Enter research query:',
-            undefined,
-            false,
-            'research_query'
-          );
-          const normalizedQuery = typeof promptResponse === 'string' ? promptResponse.trim() : '';
+          try {
+            wsOutputHelper(ws, 'Research requires a query. Respond to the prompt to continue.');
+            const promptResponse = await wsPrompt(
+              ws,
+              session,
+              'Enter research query:',
+              undefined,
+              false,
+              'research_query'
+            );
+            const normalizedQuery = typeof promptResponse === 'string' ? promptResponse.trim() : '';
 
-          if (!normalizedQuery) {
-            wsErrorHelper(ws, 'Research cancelled: query cannot be empty.', true);
+            if (!normalizedQuery) {
+              wsErrorHelper(ws, 'Research cancelled: query cannot be empty.', true);
+              return true;
+            }
+
+            options.query = normalizedQuery;
+            options.positionalArgs = [normalizedQuery];
+            executionLogger.debug('Research query obtained via prompt.', {
+              sessionId: session.sessionId,
+              queryPreview: normalizedQuery.substring(0, 120)
+            });
+          } catch (promptError) {
+            const promptMessage = promptError?.message ?? String(promptError);
+            const isTimeout = promptError instanceof Error && promptMessage === 'Prompt timed out.';
+
+            executionLogger.warn('Research query prompt failed or was cancelled.', {
+              sessionId: session.sessionId,
+              error: promptMessage,
+              isTimeout
+            });
+
+            const errorNotice = isTimeout
+              ? 'Research cancelled: prompt timed out.'
+              : `Research cancelled: ${promptMessage}`;
+
+            wsErrorHelper(ws, errorNotice, true);
             return true;
           }
-
-          options.query = normalizedQuery;
-          options.positionalArgs = [normalizedQuery];
-          executionLogger.debug('Research query obtained via prompt.', {
-            sessionId: session.sessionId,
-            queryPreview: normalizedQuery.substring(0, 120)
-          });
-        } catch (promptError) {
-          const promptMessage = promptError?.message ?? String(promptError);
-          const isTimeout = promptError instanceof Error && promptMessage === 'Prompt timed out.';
-
-          executionLogger.warn('Research query prompt failed or was cancelled.', {
-            sessionId: session.sessionId,
-            error: promptMessage,
-            isTimeout
-          });
-
-          const errorNotice = isTimeout
-            ? 'Research cancelled: prompt timed out.'
-            : `Research cancelled: ${promptMessage}`;
-
-          wsErrorHelper(ws, errorNotice, true);
-          return true;
         }
+        options.progressHandler = (progressData) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            safeSend(ws, { type: 'progress', data: progressData });
+          }
+        };
+      } else {
+        executionLogger.debug('Skipping telemetry bootstrap for non-run research action.', {
+          sessionId: session.sessionId,
+          action: researchAction
+        });
       }
-      options.progressHandler = (progressData) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          safeSend(ws, { type: 'progress', data: progressData });
-        }
-      };
     }
 
     const result = await commandFunction(options);

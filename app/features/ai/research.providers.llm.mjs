@@ -71,9 +71,65 @@ export async function callVeniceLLM({ apiKey, type, system, prompt, temperature 
       type,
       venice_parameters: character_slug ? { character_slug } : {}
     });
-    return { success: true, content: response.content };
+    return {
+      success: true,
+      content: response.content,
+      usage: normalizeUsage(response, client)
+    };
   } catch (error) {
     const errorMessage = error instanceof LLMError ? `${error.name}: ${error.message}` : error.message;
     return { success: false, error: `LLM API Error: ${errorMessage}`, isApiError: true };
   }
+}
+
+function normalizeUsage(response = {}, client) {
+  if (!response || typeof response !== 'object') {
+    return null;
+  }
+  const usage = response.usage && typeof response.usage === 'object' ? response.usage : null;
+  if (!usage) {
+    return null;
+  }
+
+  const promptTokens = coerceUsageNumber(usage.prompt_tokens ?? usage.promptTokens);
+  const completionTokens = coerceUsageNumber(usage.completion_tokens ?? usage.completionTokens);
+  const totalTokensRaw = usage.total_tokens ?? usage.totalTokens ?? addIfNumbers(promptTokens, completionTokens);
+  const totalTokens = coerceUsageNumber(totalTokensRaw);
+  const model = typeof response.model === 'string' && response.model.trim()
+    ? response.model.trim()
+    : safeClientModel(client);
+
+  if (promptTokens == null && completionTokens == null && totalTokens == null) {
+    return null;
+  }
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    model
+  };
+}
+
+function coerceUsageNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) {
+    return null;
+  }
+  return Math.round(num);
+}
+
+function addIfNumbers(a, b) {
+  if (typeof a === 'number' && Number.isFinite(a) && typeof b === 'number' && Number.isFinite(b)) {
+    return a + b;
+  }
+  return null;
+}
+
+function safeClientModel(client) {
+  if (!client || typeof client !== 'object') {
+    return null;
+  }
+  const model = client.config?.model || client.model;
+  return typeof model === 'string' && model.trim() ? model.trim() : null;
 }

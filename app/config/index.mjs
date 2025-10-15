@@ -7,6 +7,7 @@
 
 import dotenv from 'dotenv';
 import path from 'path';
+import os from 'os';
 import { loadEncryptedConfigSync } from '../infrastructure/config/encrypted-config.store.mjs';
 import { validateSecureConfigPayload, mergeSecureConfig } from '../features/config/config.schema.mjs';
 import { createModuleLogger } from '../utils/logger.mjs';
@@ -39,6 +40,26 @@ function parseInteger(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parsePositiveInteger(value, fallback) {
+  const parsed = parseInteger(value, fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function parseNonNegativeInteger(value, fallback) {
+  const parsed = parseInteger(value, fallback);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+const DEFAULT_STORAGE_DIR = process.env.BITCORE_STORAGE_DIR
+  ? path.resolve(process.env.BITCORE_STORAGE_DIR)
+  : path.join(os.homedir(), '.bitcore-terminal');
+
 const baseConfig = {
   venice: {
     // Use a specific public key env var, or fallback if needed
@@ -64,6 +85,14 @@ const baseConfig = {
     github: {
       requestsPath: process.env.RESEARCH_GITHUB_REQUESTS_PATH || 'requests',
       processedPath: process.env.RESEARCH_GITHUB_PROCESSED_PATH || null
+    },
+    archive: {
+      enabled: parseBoolean(process.env.RESEARCH_ARCHIVE_ENABLED, true),
+      directory: process.env.RESEARCH_ARCHIVE_DIR
+        ? path.resolve(process.env.RESEARCH_ARCHIVE_DIR)
+        : path.join(DEFAULT_STORAGE_DIR, 'research-archive'),
+      maxEntries: parsePositiveInteger(process.env.RESEARCH_ARCHIVE_MAX_ENTRIES, 100),
+      maxSizeBytes: parseNonNegativeInteger(process.env.RESEARCH_ARCHIVE_MAX_SIZE_BYTES, 0)
     }
   },
   chat: {
@@ -131,7 +160,35 @@ const baseConfig = {
       parseBoolean(process.env.TERMINAL_MODEL_BROWSER_ENABLED, true)
     ),
   },
+  security: {
+    research: {
+      requireWebsocketCsrf: parseBoolean(process.env.RESEARCH_WS_CSRF_REQUIRED, true),
+      csrfTtlMs: parsePositiveInteger(process.env.RESEARCH_WS_CSRF_TTL_MS, 15 * 60 * 1000),
+      rateLimit: {
+        maxTokens: parsePositiveInteger(process.env.RESEARCH_RATE_LIMIT_MAX_TOKENS, 3),
+        intervalMs: parsePositiveInteger(process.env.RESEARCH_RATE_LIMIT_INTERVAL_MS, 1000)
+      },
+      depthRange: {
+        min: parsePositiveInteger(process.env.RESEARCH_DEPTH_MIN, 1),
+        max: parsePositiveInteger(process.env.RESEARCH_DEPTH_MAX, 6)
+      },
+      breadthRange: {
+        min: parsePositiveInteger(process.env.RESEARCH_BREADTH_MIN, 1),
+        max: parsePositiveInteger(process.env.RESEARCH_BREADTH_MAX, 6)
+      }
+    }
+  },
 };
+
+const securityResearch = baseConfig.security?.research;
+if (securityResearch) {
+  if (securityResearch.depthRange.max < securityResearch.depthRange.min) {
+    securityResearch.depthRange.max = securityResearch.depthRange.min;
+  }
+  if (securityResearch.breadthRange.max < securityResearch.breadthRange.min) {
+    securityResearch.breadthRange.max = securityResearch.breadthRange.min;
+  }
+}
 
 let resolvedConfig = baseConfig;
 

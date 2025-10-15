@@ -10,8 +10,9 @@ import {
   getDefaultResearchPreferences,
 } from '../preferences/index.mjs';
 import { createModuleLogger } from '../../utils/logger.mjs';
+import config from '../../config/index.mjs';
 
-const INTEGER_RANGE = Object.freeze({
+const RANGE_LIMITS = Object.freeze({
   depth: Object.freeze({ min: 1, max: 6 }),
   breadth: Object.freeze({ min: 1, max: 6 }),
 });
@@ -20,6 +21,25 @@ const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on', 'public']);
 const FALSE_VALUES = new Set(['0', 'false', 'no', 'off', 'private']);
 
 const moduleLogger = createModuleLogger('research.defaults');
+
+const researchSecurityConfig = config?.security?.research ?? {};
+
+function normalizeRange(range, fallback) {
+  if (!range) {
+    return fallback;
+  }
+  const min = Number.isInteger(range.min) && range.min > 0 ? range.min : fallback.min;
+  const maxCandidate = Number.isInteger(range.max) && range.max >= min ? range.max : fallback.max;
+  const max = maxCandidate >= min ? maxCandidate : min;
+  return Object.freeze({ min, max });
+}
+
+const EFFECTIVE_RANGE_LIMITS = Object.freeze({
+  depth: normalizeRange(researchSecurityConfig.depthRange, RANGE_LIMITS.depth),
+  breadth: normalizeRange(researchSecurityConfig.breadthRange, RANGE_LIMITS.breadth)
+});
+
+export const RESEARCH_RANGE_LIMITS = EFFECTIVE_RANGE_LIMITS;
 
 function parseIntegerInRange(value, { min, max }) {
   if (value == null) {
@@ -68,15 +88,56 @@ function parseBoolean(value) {
 }
 
 export function parseDepthInput(value) {
-  return parseIntegerInRange(value, INTEGER_RANGE.depth);
+  return parseIntegerInRange(value, EFFECTIVE_RANGE_LIMITS.depth);
 }
 
 export function parseBreadthInput(value) {
-  return parseIntegerInRange(value, INTEGER_RANGE.breadth);
+  return parseIntegerInRange(value, EFFECTIVE_RANGE_LIMITS.breadth);
 }
 
 export function parseVisibilityInput(value) {
   return parseBoolean(value);
+}
+
+function createRangeValidation(range, label) {
+  return (raw) => {
+    if (raw === undefined || raw === null || raw === '') {
+      return { ok: true, provided: false, value: undefined };
+    }
+    if (typeof raw === 'boolean') {
+      return { ok: false, provided: true, error: `${label} must be an integer between ${range.min} and ${range.max}.` };
+    }
+    const normalized = typeof raw === 'string' ? raw.trim() : raw;
+    if (typeof normalized === 'string' && normalized.length === 0) {
+      return { ok: true, provided: false, value: undefined };
+    }
+    const parsed = Number.parseInt(normalized, 10);
+    if (!Number.isFinite(parsed)) {
+      return { ok: false, provided: true, error: `${label} must be an integer between ${range.min} and ${range.max}.` };
+    }
+    if (parsed < range.min || parsed > range.max) {
+      return { ok: false, provided: true, error: `${label} must be between ${range.min} and ${range.max}.` };
+    }
+    return { ok: true, provided: true, value: parsed };
+  };
+}
+
+export const validateDepthOverride = createRangeValidation(EFFECTIVE_RANGE_LIMITS.depth, 'Depth');
+export const validateBreadthOverride = createRangeValidation(EFFECTIVE_RANGE_LIMITS.breadth, 'Breadth');
+
+export function validateVisibilityOverride(raw) {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, provided: false, value: undefined };
+  }
+  const parsed = parseVisibilityInput(raw);
+  if (parsed === undefined) {
+    return {
+      ok: false,
+      provided: true,
+      error: 'Visibility must be set using --public/--private or boolean equivalents.'
+    };
+  }
+  return { ok: true, provided: true, value: parsed };
 }
 
 export async function resolveResearchDefaults(overrides = {}, options = {}) {

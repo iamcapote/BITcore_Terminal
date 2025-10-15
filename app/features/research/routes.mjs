@@ -24,25 +24,19 @@ router.all('/github/:legacyAction', (req, res) => {
     });
 });
 
-router.post('/', async (req, res) => {
-    try {
-        const { query, depth = 2, breadth = 3 } = req.body;
-        if (!query || typeof query !== 'string') {
-            return res.status(400).json({ error: 'Query is required and must be a string' });
+router.post('/', (req, res) => {
+    moduleLogger.info('Rejected legacy HTTP research request. CLI/Web terminal remain the supported interfaces.', {
+        method: req.method,
+        path: req.originalUrl,
+        client: req.ip
+    });
+    return res.status(410).json({
+        error: 'HTTP research endpoint is no longer available. Use the CLI or Web terminal to run /research.',
+        nextSteps: {
+            cli: 'npm start -- cli',
+            web: 'npm start'
         }
-
-        moduleLogger.warn('Research HTTP endpoint invoked.', {
-            method: 'POST',
-            path: '/api/research'
-        });
-        res.status(501).json({ error: 'HTTP research endpoint not fully implemented/secured.' });
-    } catch (error) {
-        moduleLogger.error('Error handling research HTTP request.', {
-            message: error?.message || String(error),
-            stack: error?.stack || null
-        });
-        res.status(500).json({ error: error.message });
-    }
+    });
 });
 
 export { handleWebSocketConnection, cleanupInactiveSessions };

@@ -181,7 +181,9 @@ export class ResearchPath {
                         query: queryString,        // Pass query string for context
                         content: newContent,       // Pass search results content array
                         outputFn: this.debug,      // Pass handlers
-                        errorFn: this.error
+                        errorFn: this.error,
+                        telemetry: this.telemetry,
+                        telemetryMeta: { depth, breadth }
                     });
                     currentLearnings = processed.learnings || [];
                     // Note: processResults doesn't return sources, we got them above
@@ -223,7 +225,9 @@ export class ResearchPath {
                         numQueries: breadth,       // Pass breadth
                         metadata: query.metadata,  // Pass metadata from original query object
                         outputFn: this.debug,      // Pass handlers
-                        errorFn: this.error
+                        errorFn: this.error,
+                        telemetry: this.telemetry,
+                        telemetryMeta: { depth, breadth }
                     });
                     this.debug(`[ResearchPath D:${depth}] Generated ${followUpQueries.length} follow-up queries.`);
                     this.updateProgress({ status: 'Planning', currentAction: `Generated ${followUpQueries.length} follow-up queries...` }, 'path:planning');

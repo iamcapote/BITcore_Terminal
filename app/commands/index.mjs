@@ -18,6 +18,7 @@ import * as researchSchedulerCli from './research-scheduler.cli.mjs';
 import * as usersCli from './users.cli.mjs';
 import * as exportCli from './export.cli.mjs';
 import * as storageCli from './storage.cli.mjs';
+import * as securityCli from './security.cli.mjs';
 import { createModuleLogger } from '../utils/logger.mjs';
 
 /**
@@ -50,6 +51,7 @@ export const commands = {
     users: usersCli.executeUsers,
     export: exportCli.executeExport,
     storage: storageCli.executeStorage,
+    security: securityCli.executeSecurity,
     // Add other commands here
 };
 
@@ -146,6 +148,7 @@ export function getHelpText() {
     register('research-scheduler', researchSchedulerCli.getResearchSchedulerHelpText);
     register('status', statusCli.getStatusHelpText);
     register('storage', storageCli.getStorageHelpText);
+    register('security', securityCli.getSecurityHelpText);
     register('terminal', terminalCli.getTerminalHelpText);
     register('users', usersCli.getUsersHelpText);
 

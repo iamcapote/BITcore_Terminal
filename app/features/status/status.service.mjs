@@ -8,11 +8,12 @@
  *   - Object.freeze({ generatedAt: ISO string, statuses: { [key]: StatusDescriptor } })
  *   - StatusDescriptor: { state: string, label: string, message: string, meta: object }
  * Error modes:
- *   - Propagates unexpected errors from dependency layers (user manager, GitHub controller, memory service).
+ *   - Propagates unexpected errors from dependency layers (user manager, GitHub controller, memory service, config overlay).
  *   - Individual status builders swallow known failure modes and downgrade the resulting status instead of throwing.
  * Performance:
  *   - Each call issues lightweight user/config lookups and, when validateGitHub=true, a single GitHub verify call.
  *   - Memory health probe performs a stats() request once per invocation with optional fallback.
+ *   - Security status reads config overlays only; no IO performed.
  * Side effects:
  *   - When validateGitHub=true, performs a remote GitHub API call via the research sync controller.
  */
@@ -20,12 +21,16 @@
 import { userManager as defaultUserManager } from '../auth/user-manager.mjs';
 import { getGitHubResearchSyncController } from '../research/research.github-sync.controller.mjs';
 import { createMemoryService } from '../memory/memory.service.mjs';
+import config from '../../config/index.mjs';
+import { RESEARCH_RANGE_LIMITS } from '../research/research.defaults.mjs';
+import { snapshotTokenUsageTotals } from '../research/research.telemetry.metrics.mjs';
 
 const STATUS_LABELS = Object.freeze({
   venice: 'Venice LLM',
   brave: 'Brave Search',
   github: 'GitHub Sync',
-  memory: 'Memory Core'
+  memory: 'Memory Core',
+  security: 'Research Security'
 });
 
 const STATUS_CLASSIFICATIONS = Object.freeze([
@@ -87,12 +92,15 @@ export class StatusService {
 
     const githubStatus = await this.#buildGitHubStatus({ validateGitHub });
     const memoryStatus = await this.#buildMemoryStatus({ githubStatus });
+  const tokenUsageSnapshot = snapshotTokenUsageTotals();
+  const securityStatus = await this.#buildSecurityStatus({ tokenUsageSnapshot });
 
     const statuses = Object.freeze({
       venice: veniceStatus,
       brave: braveStatus,
       github: githubStatus,
-      memory: memoryStatus
+      memory: memoryStatus,
+      security: securityStatus
     });
 
     return Object.freeze({
@@ -254,6 +262,50 @@ export class StatusService {
         meta: { ...meta, error: error.message }
       });
     }
+  }
+
+  async #buildSecurityStatus({ tokenUsageSnapshot }) {
+    const researchSecurity = config?.security?.research ?? {};
+    const rateLimit = researchSecurity.rateLimit ?? {};
+
+    const rateLimitMaxTokens = Number.isInteger(rateLimit.maxTokens) && rateLimit.maxTokens > 0
+      ? rateLimit.maxTokens
+      : 3;
+    const rateLimitIntervalMs = Number.isInteger(rateLimit.intervalMs) && rateLimit.intervalMs > 0
+      ? rateLimit.intervalMs
+      : 1000;
+
+    const depthRange = {
+      min: Number.isInteger(researchSecurity.depthRange?.min) ? researchSecurity.depthRange.min : RESEARCH_RANGE_LIMITS.depth.min,
+      max: Number.isInteger(researchSecurity.depthRange?.max) ? researchSecurity.depthRange.max : RESEARCH_RANGE_LIMITS.depth.max
+    };
+
+    const breadthRange = {
+      min: Number.isInteger(researchSecurity.breadthRange?.min) ? researchSecurity.breadthRange.min : RESEARCH_RANGE_LIMITS.breadth.min,
+      max: Number.isInteger(researchSecurity.breadthRange?.max) ? researchSecurity.breadthRange.max : RESEARCH_RANGE_LIMITS.breadth.max
+    };
+
+    const csrfRequired = researchSecurity.requireWebsocketCsrf !== false;
+    const ttlMs = Number.isInteger(researchSecurity.csrfTtlMs) && researchSecurity.csrfTtlMs > 0
+      ? researchSecurity.csrfTtlMs
+      : null;
+
+    return freezeStatusDescriptor({
+      state: csrfRequired ? 'active' : 'warning',
+      label: STATUS_LABELS.security,
+      message: csrfRequired ? 'CSRF required with rate limiting enforced.' : 'CSRF optional; ensure deployment boundary is trusted.',
+      meta: {
+        csrfRequired,
+        csrfTtlMs: ttlMs,
+        rateLimit: Object.freeze({
+          maxTokens: rateLimitMaxTokens,
+          intervalMs: rateLimitIntervalMs
+        }),
+        depthRange: Object.freeze(depthRange),
+        breadthRange: Object.freeze(breadthRange),
+        tokenUsage: tokenUsageSnapshot
+      }
+    });
   }
 }
 

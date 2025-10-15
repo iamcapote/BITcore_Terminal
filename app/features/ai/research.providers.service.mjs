@@ -115,7 +115,7 @@ export async function generateOutput({
   });
 
   if (!result.success) {
-    return { success: false, error: result.error, isApiError: result.isApiError };
+    return { success: false, error: result.error, isApiError: result.isApiError, usage: result.usage || null };
   }
 
   const rawContent = result.content;
@@ -124,14 +124,15 @@ export async function generateOutput({
   const parsed = processResponse(type, rawContent);
   if (parsed.success) {
     outputFn(`[generateOutput] Initial parsing successful for type ${type}.`);
-    return { success: true, data: parsed };
+    return { success: true, data: parsed, usage: result.usage || null };
   }
 
   errorFn(`[generateOutput] Initial parsing failed for type ${type}. Error: ${parsed.error}.`);
   return {
     success: false,
     error: parsed.error || 'Failed to parse LLM response.',
-    rawContent
+    rawContent,
+    usage: result.usage || null
   };
 }
 
@@ -143,7 +144,9 @@ export async function generateQueries({
   metadata = null,
   outputFn = defaultOutput,
   errorFn = defaultError,
-  llmClient = null
+  llmClient = null,
+  telemetry = null,
+  telemetryMeta = null
 }) {
   const hasApiKey = !!ensureApiKey(apiKey);
 
@@ -197,6 +200,17 @@ export async function generateQueries({
       errorFn,
       llmClient
     });
+    emitTokenUsageEvent({
+      telemetry,
+      usage: result.usage,
+      stage: 'generate-queries',
+      meta: {
+        ...(isPlainObject(telemetryMeta) ? telemetryMeta : {}),
+        queryLength: typeof query === 'string' ? query.length : (typeof query?.original === 'string' ? query.original.length : 0),
+        learningsCount: Array.isArray(learnings) ? learnings.length : 0,
+        requestedQueries: Number.isFinite(Number(numQueries)) ? Number(numQueries) : 0
+      }
+    });
   } else {
     errorFn('[generateQueries] No API key available. Using simple fallback queries.');
   }
@@ -238,7 +252,9 @@ export async function processResults({
   metadata = null,
   outputFn = defaultOutput,
   errorFn = defaultError,
-  llmClient = null
+  llmClient = null,
+  telemetry = null,
+  telemetryMeta = null
 }) {
   const hasApiKey = !!ensureApiKey(apiKey);
 
@@ -280,6 +296,17 @@ export async function processResults({
       outputFn,
       errorFn,
       llmClient
+    });
+    emitTokenUsageEvent({
+      telemetry,
+      usage: result.usage,
+      stage: 'process-results',
+      meta: {
+        ...(isPlainObject(telemetryMeta) ? telemetryMeta : {}),
+        queryLength: typeof query === 'string' ? query.length : (typeof query?.original === 'string' ? query.original.length : 0),
+        contentItems: Array.isArray(content) ? content.length : 0,
+        metadataPresent: Boolean(metadata)
+      }
     });
   } else {
     errorFn('[processResults] No API key available. Using simple fallback analysis.');
@@ -341,7 +368,9 @@ export async function generateSummary({
   metadata = null,
   outputFn = defaultOutput,
   errorFn = defaultError,
-  llmClient = null
+  llmClient = null,
+  telemetry = null,
+  telemetryMeta = null
 }) {
   const effectiveKey = ensureApiKey(apiKey);
   if (!effectiveKey) {
@@ -396,6 +425,17 @@ export async function generateSummary({
     outputFn,
     errorFn,
     llmClient
+  });
+
+  emitTokenUsageEvent({
+    telemetry,
+    usage: result.usage,
+    stage: 'generate-summary',
+    meta: {
+      ...(isPlainObject(telemetryMeta) ? telemetryMeta : {}),
+      learningsCount: validLearnings.length,
+      metadataPresent: Boolean(metadata)
+    }
   });
 
   if (result.success && result.data.reportMarkdown) {
@@ -481,4 +521,43 @@ export async function processResultsLLM({ results, query, llmClient, characterSl
   }
 
   throw new Error(`Failed to parse learnings from LLM response: ${responseContent}`);
+}
+
+function emitTokenUsageEvent({ telemetry, usage, stage, meta }) {
+  if (!telemetry || typeof telemetry.emitTokenUsage !== 'function' || !usage) {
+    return;
+  }
+  telemetry.emitTokenUsage({
+    stage,
+    model: usage.model || null,
+    promptTokens: usage.promptTokens ?? null,
+    completionTokens: usage.completionTokens ?? null,
+    totalTokens: usage.totalTokens ?? null,
+    meta: sanitizeMeta(meta)
+  });
+}
+
+function sanitizeMeta(meta) {
+  if (!isPlainObject(meta)) {
+    return {};
+  }
+  const safe = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (typeof value === 'string') {
+      safe[key] = value.length > 240 ? `${value.slice(0, 237)}...` : value;
+      continue;
+    }
+    if (Number.isFinite(value) || typeof value === 'boolean' || value === null) {
+      safe[key] = value;
+      continue;
+    }
+    if (value && typeof value === 'object') {
+      safe[key] = sanitizeMeta(value);
+    }
+  }
+  return safe;
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }

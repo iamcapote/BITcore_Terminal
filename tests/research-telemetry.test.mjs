@@ -154,4 +154,60 @@ describe('research telemetry core events', () => {
 			meta: {}
 		}));
 	});
+
+	it('normalizes token usage payloads for research-token-usage events', () => {
+		const send = vi.fn();
+		const telemetry = createResearchTelemetry({ send, bufferSize: 4 });
+
+		telemetry.emitTokenUsage({
+			stage: 'generate-queries',
+			promptTokens: '42',
+			completion_tokens: 13.7,
+			totalTokens: undefined,
+			model: ' llama-3.3-70b ',
+			meta: { depth: 2, details: { breadth: 3, description: 'x'.repeat(400) } }
+		});
+
+		expect(send).toHaveBeenCalledWith('research-token-usage', expect.objectContaining({
+			stage: 'generate-queries',
+			promptTokens: 42,
+			completionTokens: 14,
+			totalTokens: 56,
+			model: 'llama-3.3-70b',
+			meta: expect.objectContaining({ depth: 2, details: expect.objectContaining({ breadth: 3 }) })
+		}));
+	});
+
+	it('ignores token usage events without numeric measurements', () => {
+		const send = vi.fn();
+		const telemetry = createResearchTelemetry({ send, bufferSize: 2 });
+
+		const result = telemetry.emitTokenUsage({ stage: 'generate-summary', model: 'foo' });
+
+		expect(result).toBe(false);
+		expect(send).not.toHaveBeenCalled();
+		expect(telemetry.getTokenUsageTotals().events).toBe(0);
+	});
+
+	it('tracks aggregate token usage and supports reset', () => {
+		const telemetry = createResearchTelemetry();
+		telemetry.emitTokenUsage({ stage: 'generate-queries', promptTokens: 10, completionTokens: 5 });
+		telemetry.emitTokenUsage({ stage: 'process-results', promptTokens: 3, completion_tokens: 7, totalTokens: 15 });
+		telemetry.emitTokenUsage({ stage: 'generate-queries', promptTokens: 2 });
+
+		const totals = telemetry.getTokenUsageTotals();
+		expect(totals.promptTokens).toBe(15);
+		expect(totals.completionTokens).toBe(12);
+		expect(totals.totalTokens).toBe(30);
+		expect(totals.events).toBe(3);
+		expect(totals.perStage['generate-queries'].promptTokens).toBe(12);
+		expect(totals.perStage['generate-queries'].events).toBe(2);
+		expect(totals.perStage['process-results'].completionTokens).toBe(7);
+
+		telemetry.resetTokenUsageTotals();
+		const resetTotals = telemetry.getTokenUsageTotals();
+		expect(resetTotals.promptTokens).toBe(0);
+		expect(resetTotals.events).toBe(0);
+		expect(Object.keys(resetTotals.perStage)).toHaveLength(0);
+	});
 });
