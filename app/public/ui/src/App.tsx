@@ -83,11 +83,9 @@ function App(): JSX.Element {
   const themes = listAvailableThemes();
   const openCommandPalette = useCommandPaletteStore((state) => state.open);
   const openCommandPaletteWithQuery = useCommandPaletteStore((state) => state.openWithQuery);
-  const { openPassword, openConfirm, openSelect } = usePromptModalStore((state) => ({
-    openPassword: state.openPassword,
-    openConfirm: state.openConfirm,
-    openSelect: state.openSelect
-  }));
+  const openPassword = usePromptModalStore((state) => state.openPassword);
+  const openConfirm = usePromptModalStore((state) => state.openConfirm);
+  const openSelect = usePromptModalStore((state) => state.openSelect);
   const appendEntry = useTerminalStore((state) => state.appendEntry);
   const prompt = useTerminalStore((state) => state.prompt);
   const isFocusMode = useInterfaceStore((state) => state.isFocusMode);
@@ -356,59 +354,71 @@ function App(): JSX.Element {
 
   const focusModeLabel = isFocusMode ? 'Exit Focus Mode (Esc)' : 'Toggle Focus Mode (⌘⇧F)';
 
-  const sidebarActions = (
-    <>
-      <Button type="button" variant="outline" onClick={openCommandPalette}>
-        Open Command Palette (⌘K)
-      </Button>
-      <Button type="button" intent="secondary" variant="outline" onClick={toggleFocusMode}>
-        {focusModeLabel}
-      </Button>
-      <Button type="button" intent="secondary" variant="outline" onClick={openSettings}>
-        Open Settings (⌘,)
-      </Button>
-      <Button type="button" intent="secondary" variant="ghost" onClick={cycleTheme}>
-        Cycle Theme (Ctrl/Cmd + Alt + T)
-      </Button>
-    </>
+  const sidebarActions = useMemo(
+    () => (
+      <>
+        <Button type="button" variant="outline" onClick={openCommandPalette}>
+          Open Command Palette (⌘K)
+        </Button>
+        <Button type="button" intent="secondary" variant="outline" onClick={toggleFocusMode}>
+          {focusModeLabel}
+        </Button>
+        <Button type="button" intent="secondary" variant="outline" onClick={openSettings}>
+          Open Settings (⌘,)
+        </Button>
+        <Button type="button" intent="secondary" variant="ghost" onClick={cycleTheme}>
+          Cycle Theme (Ctrl/Cmd + Alt + T)
+        </Button>
+      </>
+    ),
+    [focusModeLabel, openCommandPalette, toggleFocusMode, openSettings, cycleTheme]
   );
 
-  const sidebarMeta = (
-    <>
-      <strong>Active theme: {theme}</strong>
-      <span>Manage appearance in the settings drawer or run `/config set ui.theme`.</span>
-    </>
+  const sidebarMeta = useMemo(
+    () => (
+      <>
+        <strong>Active theme: {theme}</strong>
+        <span>Manage appearance in the settings drawer or run `/config set ui.theme`.</span>
+      </>
+    ),
+    [theme]
   );
 
-  const commandSurface = (
-    <CommandSurface
-      title="Console Prototype"
-      subtitle="Virtualized terminal output and command palette shell are wired here while backend bridges are in flight."
-    >
-      <div className="command-surface__terminal">
-        <TerminalShell height={isFocusMode ? 480 : 400} />
-      </div>
-    </CommandSurface>
+  const commandSurface = useMemo(
+    () => (
+      <CommandSurface
+        title="Console Prototype"
+        subtitle="Virtualized terminal output and command palette shell are wired here while backend bridges are in flight."
+      >
+        <div className="command-surface__terminal">
+          <TerminalShell height={isFocusMode ? 480 : 400} />
+        </div>
+      </CommandSurface>
+    ),
+    [isFocusMode]
   );
 
-  const insightDeck = (
-    <InsightDeck>
-      <InsightDeck.Section>
-        <ResearchTelemetryCard />
-      </InsightDeck.Section>
-      <InsightDeck.Section>
-        <ChatTranscript />
-      </InsightDeck.Section>
-      <InsightDeck.Section>
-        <MemoryTimeline />
-      </InsightDeck.Section>
-      <InsightDeck.Section>
-        <LogsViewer />
-      </InsightDeck.Section>
-      <InsightDeck.Section span="full">
-        <ModelBrowser />
-      </InsightDeck.Section>
-    </InsightDeck>
+  const insightDeck = useMemo(
+    () => (
+      <InsightDeck>
+        <InsightDeck.Section>
+          <ResearchTelemetryCard />
+        </InsightDeck.Section>
+        <InsightDeck.Section>
+          <ChatTranscript />
+        </InsightDeck.Section>
+        <InsightDeck.Section>
+          <MemoryTimeline />
+        </InsightDeck.Section>
+        <InsightDeck.Section>
+          <LogsViewer />
+        </InsightDeck.Section>
+        <InsightDeck.Section span="full">
+          <ModelBrowser />
+        </InsightDeck.Section>
+      </InsightDeck>
+    ),
+    []
   );
 
   return (

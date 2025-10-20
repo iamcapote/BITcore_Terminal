@@ -4,9 +4,9 @@
  * How: Reads from useTerminalStore, appends optimistic input/output entries, and exposes callbacks for future WebSocket wiring.
  */
 
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { FormEvent } from 'react';
-import { List, type ListImperativeAPI, type RowComponentProps, useListRef } from 'react-window';
+import { List, type ListImperativeAPI, useListRef } from 'react-window';
 
 import { Input } from './primitives';
 import { useTerminalStore } from '../stores/terminalStore';
@@ -33,9 +33,9 @@ export function TerminalShell({ height = DEFAULT_HEIGHT, rowHeight = DEFAULT_ROW
   const listRef = useListRef();
 
   const handleRowsRendered = useCallback(
-    ({ visibleStopIndex }: { visibleStartIndex: number; visibleStopIndex: number }) => {
+    ({ stopIndex }: { startIndex: number; stopIndex: number }) => {
       const lastIndex = history.length - 1;
-      if (visibleStopIndex >= lastIndex) {
+      if (stopIndex >= lastIndex) {
         return;
       }
       listRef.current?.scrollToRow(lastIndex, 'end');
@@ -44,8 +44,11 @@ export function TerminalShell({ height = DEFAULT_HEIGHT, rowHeight = DEFAULT_ROW
   );
 
   const renderRow = useCallback(
-  ({ index, style }: RowComponentProps) => {
+  ({ index, style }: { index: number; style: React.CSSProperties; ariaAttributes: Record<string, unknown> }) => {
       const entry = history[index];
+      if (!entry) {
+        return null;
+      }
       const color = theme === 'hacker'
         ? entry.type === 'input'
           ? 'var(--ansi-green)'
@@ -132,6 +135,7 @@ export function TerminalShell({ height = DEFAULT_HEIGHT, rowHeight = DEFAULT_ROW
           rowHeight={rowHeight}
           onRowsRendered={handleRowsRendered}
           rowComponent={renderRow}
+          rowProps={{}}
         />
       </div>
       <form onSubmit={handleSubmit} style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
