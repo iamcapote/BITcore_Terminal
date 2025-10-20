@@ -14,36 +14,46 @@ import { ThemeProvider } from '../theme/ThemeProvider';
 
 vi.mock('react-window', async () => {
   const React = await import('react');
-  const { forwardRef, useEffect, useImperativeHandle } = React;
+  const { forwardRef, useEffect, useImperativeHandle, useRef } = React;
 
-  const FixedSizeList = forwardRef(function FixedSizeListMock(props: any, ref) {
-    const { itemCount, children, onItemsRendered } = props;
-
-    useImperativeHandle(ref, () => ({
-      scrollToItem: () => {}
-    }));
+  const List = forwardRef(function ListMock(props: any, _ref) {
+    const { rowCount, rowComponent, onRowsRendered, rowProps = {} } = props;
 
     useEffect(() => {
-      onItemsRendered?.({
-        overscanStartIndex: 0,
-        overscanStopIndex: Math.max(itemCount - 1, 0),
-        visibleStartIndex: Math.max(itemCount - 1, 0),
-        visibleStopIndex: Math.max(itemCount - 1, 0)
-      });
-    }, [itemCount, onItemsRendered]);
+      onRowsRendered?.(
+        { startIndex: 0, stopIndex: Math.max(rowCount - 1, 0) },
+        { startIndex: 0, stopIndex: Math.max(rowCount - 1, 0) }
+      );
+    }, [rowCount, onRowsRendered]);
 
     return (
       <div data-testid="mock-list">
-        {Array.from({ length: itemCount }).map((_, index) => {
-          const row = children({ index, style: {}, data: undefined, isScrolling: false });
+        {Array.from({ length: rowCount }).map((_, index) => {
+          const row = rowComponent({ 
+            index, 
+            style: {}, 
+            ariaAttributes: {
+              'aria-posinset': index + 1,
+              'aria-setsize': rowCount,
+              role: 'listitem'
+            },
+            ...rowProps
+          });
           return React.createElement(React.Fragment, { key: index }, row);
         })}
       </div>
     );
   });
 
+  function useListRef() {
+    return useRef({
+      scrollToRow: () => {}
+    });
+  }
+
   return {
-    FixedSizeList
+    List,
+    useListRef
   };
 });
 

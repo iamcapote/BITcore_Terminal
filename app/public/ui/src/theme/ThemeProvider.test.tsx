@@ -1,3 +1,4 @@
+/* @vitest-environment jsdom */
 /**
  * Why: Validate theme persistence, cycling, and keyboard affordances to keep GUI and CLI skins aligned.
  * What: Exercises the ThemeProvider hook surface to ensure state, storage, and DOM integration behave deterministically.
