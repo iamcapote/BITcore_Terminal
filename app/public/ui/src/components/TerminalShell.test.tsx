@@ -14,7 +14,7 @@ import { ThemeProvider } from '../theme/ThemeProvider';
 
 vi.mock('react-window', async () => {
   const React = await import('react');
-  const { forwardRef, useEffect, useImperativeHandle, useRef } = React;
+  const { forwardRef, useEffect, useRef } = React;
 
   const List = forwardRef(function ListMock(props: any, _ref) {
     const { rowCount, rowComponent, onRowsRendered, rowProps = {} } = props;

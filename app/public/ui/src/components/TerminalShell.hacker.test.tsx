@@ -46,7 +46,7 @@ vi.mock('react-window', async () => {
 
   function useListRef() {
     return useRef({
-      scrollToRow: vi.fn()
+      scrollToRow: () => {}
     });
   }
 
