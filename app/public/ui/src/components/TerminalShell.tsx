@@ -6,7 +6,7 @@
 
 import { useCallback, useMemo, useRef } from 'react';
 import type { FormEvent } from 'react';
-import { FixedSizeList as List, type FixedSizeListHandle, type ListChildComponentProps, type ListOnItemsRenderedProps } from 'react-window';
+import { List, type ListImperativeAPI, type RowComponentProps, useListRef } from 'react-window';
 
 import { Input } from './primitives';
 import { useTerminalStore } from '../stores/terminalStore';
@@ -30,21 +30,21 @@ export function TerminalShell({ height = DEFAULT_HEIGHT, rowHeight = DEFAULT_ROW
   const inputDisabled = useTerminalStore((state) => state.inputDisabled);
   const { theme } = useTheme();
 
-  const listRef = useRef<FixedSizeListHandle | null>(null);
+  const listRef = useListRef();
 
-  const handleItemsRendered = useCallback(
-    ({ visibleStopIndex }: ListOnItemsRenderedProps) => {
+  const handleRowsRendered = useCallback(
+    ({ visibleStopIndex }: { visibleStartIndex: number; visibleStopIndex: number }) => {
       const lastIndex = history.length - 1;
       if (visibleStopIndex >= lastIndex) {
         return;
       }
-      listRef.current?.scrollToItem(lastIndex, 'end');
+      listRef.current?.scrollToRow(lastIndex, 'end');
     },
-    [history.length]
+    [history.length, listRef]
   );
 
   const renderRow = useCallback(
-  ({ index, style }: ListChildComponentProps) => {
+  ({ index, style }: RowComponentProps) => {
       const entry = history[index];
       const color = theme === 'hacker'
         ? entry.type === 'input'
@@ -126,16 +126,13 @@ export function TerminalShell({ height = DEFAULT_HEIGHT, rowHeight = DEFAULT_ROW
     >
       <div style={panelStyle}>
         <List
-          ref={listRef}
-          height={listHeight}
-          itemCount={history.length}
-          itemSize={rowHeight}
-          width="100%"
-          onItemsRendered={handleItemsRendered}
-          itemKey={itemKey}
-        >
-          {renderRow}
-        </List>
+          listRef={listRef}
+          defaultHeight={listHeight}
+          rowCount={history.length}
+          rowHeight={rowHeight}
+          onRowsRendered={handleRowsRendered}
+          rowComponent={renderRow}
+        />
       </div>
       <form onSubmit={handleSubmit} style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
         <span style={{ color: promptColor, fontFamily: 'var(--typography-font-family-mono)' }}>{prompt}</span>
