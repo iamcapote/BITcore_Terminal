@@ -49,6 +49,26 @@ function formatResearchError(error, { stage = 'pipeline', query = null } = {}) {
     return `[Research ${stageLabel}] ${messageWithPeriod}${querySuffix}${guidance}`;
 }
 
+function normalizeOptionalBoolean(value) {
+    if (value === undefined) return undefined;
+    if (typeof value === 'boolean') return value;
+    if (value === null) return undefined;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (!normalized) {
+            return true;
+        }
+        if (['true', '1', 'yes', 'on', 'enable', 'enabled'].includes(normalized)) {
+            return true;
+        }
+        if (['false', '0', 'no', 'off', 'disable', 'disabled'].includes(normalized)) {
+            return false;
+        }
+        return undefined;
+    }
+    return Boolean(value);
+}
+
 /**
  * CLI command for executing research.
  * @param {Object} options - Command options including positionalArgs, flags, session, output/error handlers.
@@ -98,12 +118,22 @@ export async function executeResearch(options = {}) {
         wsPrompt: cmdPrompt, // Renamed from options.wsPrompt
         // --- Ensure debug is correctly destructured and has a default ---
         debug = options.verbose ? outputManagerInstance.debug.bind(outputManagerInstance) : () => {}, // Default to no-op if not verbose
-        progressHandler: providedProgressHandler
+        progressHandler: providedProgressHandler,
+        langChainQueryChainOverride
     } = options;
 
     const flagsWithExplicitAction = explicitAction
         ? { ...flags, action: explicitAction }
         : flags;
+
+    const rawLangChainFlag = flagsWithExplicitAction['langchain-query-chain']
+        ?? flagsWithExplicitAction.langchainQueryChain
+        ?? flagsWithExplicitAction.langchain;
+    const parsedLangChainFlag = normalizeOptionalBoolean(rawLangChainFlag);
+    const effectiveLangChainQueryChainOverride =
+        typeof langChainQueryChainOverride === 'boolean'
+            ? langChainQueryChainOverride
+            : parsedLangChainFlag;
 
     const { action, positionalArgs: resolvedPositionalArgs } = resolveResearchAction({
         positionalArgs,
@@ -191,7 +221,14 @@ export async function executeResearch(options = {}) {
         isPublic: visibilityValidation.value,
     });
 
-    Object.assign(options, { depth, breadth, isPublic, classify, action });
+    Object.assign(options, {
+        depth,
+        breadth,
+        isPublic,
+        classify,
+        action,
+        langChainQueryChainOverride: effectiveLangChainQueryChainOverride
+    });
     options.positionalArgs = resolvedPositionalArgs;
     options.flags = flagsWithExplicitAction;
 
@@ -312,7 +349,8 @@ export async function executeResearch(options = {}) {
             isPublic,
             commandStartedAt,
             logger: moduleLogger,
-            formatError: formatResearchError
+            formatError: formatResearchError,
+            langChainQueryChainOverride: effectiveLangChainQueryChainOverride
         });
 
         ({ researchStartedAt = null } = workflowOutcome);
@@ -436,6 +474,8 @@ Options:
     --depth=<number>     Depth between 1-6 (default: 2).
     --breadth=<number>   Breadth between 1-6 (default: 3).
     --classify           Enhance the query via token classification.
+    --langchain-query-chain[=true|false]
+                         Override the LangChain query chain flag (default: environment setting).
     --verbose            Emit detailed progress logs.
 
 Examples:

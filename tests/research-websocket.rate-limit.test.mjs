@@ -52,11 +52,15 @@ vi.mock('../app/commands/index.mjs', () => ({
 const { handleCommandMessage } = await import('../app/features/research/websocket/command-handler.mjs');
 
 function createSession() {
+  const now = Date.now();
   return {
     sessionId: 'session-rl-1',
     currentUser: { username: 'operator', role: 'admin' },
     isChatActive: false,
     researchTelemetry: null,
+    csrfToken: 'csrf-rate-limit',
+    csrfIssuedAt: now,
+    csrfExpiresAt: now + (15 * 60 * 1000),
   };
 }
 
@@ -78,7 +82,7 @@ describe('research command rate limiting', () => {
   it('allows limited research commands then blocks with retry message', async () => {
     const ws = createSocket();
     const session = createSession();
-    const message = { command: 'research', args: [], password: null };
+    const message = { command: 'research', args: [], password: null, csrfToken: session.csrfToken };
 
     for (let i = 0; i < 3; i += 1) {
       const result = await handleCommandMessage(ws, message, session);
@@ -88,7 +92,7 @@ describe('research command rate limiting', () => {
     wsErrorHelperMock.mockClear();
     commandMock.mockClear();
 
-    const blocked = await handleCommandMessage(ws, message, session);
+  const blocked = await handleCommandMessage(ws, { ...message }, session);
     expect(blocked).toBe(false);
     expect(commandMock).not.toHaveBeenCalled();
     expect(wsErrorHelperMock).toHaveBeenCalledWith(ws, expect.stringMatching(/too many research requests/i), true);
@@ -97,7 +101,7 @@ describe('research command rate limiting', () => {
     wsErrorHelperMock.mockClear();
     commandMock.mockClear();
 
-    const afterReset = await handleCommandMessage(ws, message, session);
+  const afterReset = await handleCommandMessage(ws, { ...message }, session);
     expect(afterReset).toBe(true);
     expect(commandMock).toHaveBeenCalled();
   });

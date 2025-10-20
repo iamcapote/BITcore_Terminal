@@ -111,9 +111,11 @@ vi.mock('../app/infrastructure/research/research.archive.mjs', () => ({
 }));
 
 let executeResearch;
+let ResearchEngine;
 
 beforeAll(async () => {
   ({ executeResearch } = await import('../app/commands/research.cli.mjs'));
+  ({ ResearchEngine } = await import('../app/infrastructure/research/research.engine.mjs'));
 });
 
 beforeEach(() => {
@@ -126,6 +128,7 @@ beforeEach(() => {
   validateDepthOverrideMock.mockClear();
   validateBreadthOverrideMock.mockClear();
   validateVisibilityOverrideMock.mockClear();
+  ResearchEngine.mockClear();
 });
 
 describe('executeResearch (CLI mode)', () => {
@@ -223,5 +226,27 @@ describe('executeResearch (CLI mode)', () => {
     expect(result.success).toBe(true);
     expect(listResearchArchiveMock).toHaveBeenCalledTimes(1);
     expect(researchRunMock).not.toHaveBeenCalled();
+  });
+
+  test('propagates LangChain query chain override to ResearchEngine config', async () => {
+    researchRunMock.mockResolvedValueOnce({
+      learnings: [],
+      sources: [],
+      summary: null,
+      markdownContent: null,
+      suggestedFilename: null
+    });
+
+    await executeResearch({
+      positionalArgs: ['toggle-check'],
+      depth: 1,
+      breadth: 1,
+      currentUser: { username: 'operator', role: 'admin' },
+      langChainQueryChainOverride: false
+    });
+
+    expect(ResearchEngine).toHaveBeenCalled();
+    const engineConfigArg = ResearchEngine.mock.calls.at(-1)?.[0] ?? {};
+    expect(engineConfigArg.langChainQueryChainOverride).toBe(false);
   });
 });

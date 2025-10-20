@@ -1,0 +1,29 @@
+/*
+ * Why: Establish baseline typography and layout primitives that consume token-generated variables.
+ * What: Applies global box-sizing, font defaults, and background/foreground pairs for the Hacker theme.
+ * How: Relies on CSS custom properties produced by the token pipeline, keeping overrides minimal and theme-agnostic.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--typography-font-family-mono);
+  font-size: var(--typography-font-size-base);
+  line-height: var(--typography-line-height-regular);
+  color: var(--color-fg-primary);
+  background: var(--color-bg-primary);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}

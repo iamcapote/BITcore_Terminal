@@ -107,7 +107,8 @@ export async function runResearchWorkflow({
   isPublic,
   commandStartedAt,
   logger,
-  formatError
+  formatError,
+  langChainQueryChainOverride
 }) {
   const currentUsername = currentUser ? currentUser.username : 'public';
   const currentUserRole = currentUser ? currentUser.role : 'public';
@@ -255,7 +256,8 @@ export async function runResearchWorkflow({
     progressHandler: effectiveProgress,
     telemetry: telemetryChannel,
     isWebSocket,
-    webSocketClient
+    webSocketClient,
+    langChainQueryChainOverride
   };
 
   if (combinedOverrideQueries.length) {

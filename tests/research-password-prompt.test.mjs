@@ -38,12 +38,20 @@ vi.mock('../app/utils/websocket.utils.mjs', () => ({
   safeSend: vi.fn(),
 }));
 
+const resolveResearchDefaultsMock = vi.hoisted(() => vi.fn(async ({ depth, breadth, isPublic } = {}) => ({
+  depth: depth ?? 2,
+  breadth: breadth ?? 3,
+  isPublic: isPublic ?? false,
+})));
+const validateDepthOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
+const validateBreadthOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
+const validateVisibilityOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
+
 vi.mock('../app/features/research/research.defaults.mjs', () => ({
-  resolveResearchDefaults: vi.fn(async ({ depth, breadth, isPublic } = {}) => ({
-    depth: depth ?? 2,
-    breadth: breadth ?? 3,
-    isPublic: isPublic ?? false,
-  })),
+  resolveResearchDefaults: resolveResearchDefaultsMock,
+  validateDepthOverride: validateDepthOverrideMock,
+  validateBreadthOverride: validateBreadthOverrideMock,
+  validateVisibilityOverride: validateVisibilityOverrideMock,
 }));
 
 vi.mock('../app/commands/research/keys.mjs', () => ({

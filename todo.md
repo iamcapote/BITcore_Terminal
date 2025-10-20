@@ -1,73 +1,184 @@
-# BITcore Terminal Application - To Do List
+<!--
+Why: Keep GUI overhaul execution aligned with gui-plan and exemplar research while communicating precise, auditable work slices.
+What: Tracks remaining implementation batches for the BITcore UI Next surface with file-level references and test/verification hooks.
+How: Presents machine-readable backlog data plus terse narrative sections so engineers and automations can consume the same source of truth.
+-->
 
-> **Note:** Treat this plan as additive context. Engineers should feel empowered to iterate, split, or parallelize tasks as bandwidth allows while preserving our architectural standards and security posture.
+```json
+{
+	"artifact": "ui-next-overhaul",
+	"inputs": [
+		"app/public/ui/src/App.tsx",
+		"app/public/ui/src/components/layout/",
+		"app/public/ui/src/components/primitives/",
+		"refactor-plan/gui-plan.md",
+		"refactor-plan/perfected-architecture/08-interface-system.md",
+		"refactor-plan/sandbox/vendor/agent-zero/webui/",
+		"refactor-plan/sandbox/vendor/semantic_flow/",
+		"refactor-plan/sandbox/vendor/chatbot-ui/"
+	],
+	"outputs": [
+		"Refactored shell layout with Sidebar + CommandSurface + InsightDeck",
+		"Navigation parity matrix sourced from CLI metadata",
+		"Modular insight deck with mission/tool controls",
+		"Skin-specific overrides honoring ThemeProvider tokens",
+		"Transport adapters for telemetry/log streams",
+		"Updated Ladle captures and test coverage"
+	],
+	"batches": [
+		{
+			"id": "FR-401",
+			"title": "Implement ShellLayout orchestration",
+			"status": "in-progress",
+			"references": [
+				"app/public/ui/src/components/layout/ShellLayout.tsx",
+				"app/public/ui/src/App.tsx",
+				"refactor-plan/gui-plan.md#41-layout--skins"
+			]
+		},
+		{
+			"id": "FR-402",
+			"title": "Build ShellSidebar + CommandSurface wiring",
+			"status": "in-progress",
+			"references": [
+				"app/public/ui/src/components/layout/ShellSidebar.tsx",
+				"app/public/ui/src/stores/commandPaletteStore.ts",
+				"refactor-plan/sandbox/vendor/chatbot-ui/app/[locale]/[workspaceid]/page.tsx"
+			]
+		},
+		{
+			"id": "FR-403",
+			"title": "Responsive grid + focus mode behavior",
+			"status": "in-progress",
+			"references": [
+				"app/public/ui/src/components/layout/ShellLayout.tsx",
+				"app/public/ui/src/stores/interfaceStore.ts",
+				"refactor-plan/sandbox/vendor/vector-admin/frontend/src/layout"
+			]
+		},
+		{
+			"id": "FR-404",
+			"title": "CLI metadata ingestion + sidebar navigation",
+			"status": "in-progress",
+			"references": [
+				"app/commands",
+				"app/public/ui/src/data/commandMetadata.ts",
+				"refactor-plan/gui-plan.md#21-strategy-snapshot"
+			]
+		},
+		{
+			"id": "FR-405",
+			"title": "Command palette parity enhancements",
+			"status": "todo",
+			"references": [
+				"app/public/ui/src/components/CommandPalette.tsx",
+				"refactor-plan/sandbox/vendor/agent-zero/webui/src/lib/components/CommandPalette.svelte"
+			]
+		},
+		{
+			"id": "FR-406",
+			"title": "Modular InsightDeck with telemetry panels",
+			"status": "todo",
+			"references": [
+				"app/public/ui/src/components/ResearchTelemetryCard.tsx",
+				"app/public/ui/src/components/LogsViewer.tsx",
+				"refactor-plan/sandbox/vendor/deerflow/web/src/components/telemetry"
+			]
+		},
+		{
+			"id": "FR-407",
+			"title": "Mission control + tool dock scaffolding",
+			"status": "todo",
+			"references": [
+				"app/public/ui/src/stores/missionStore.ts",
+				"refactor-plan/sandbox/vendor/agent-zero/webui/src/routes/(app)/scheduler",
+				"refactor-plan/gui-plan.md#43-observability-surfaces"
+			]
+		},
+		{
+			"id": "FR-408",
+			"title": "Skin-specific shell overrides (Hacker/Modern/Retro)",
+			"status": "todo",
+			"references": [
+				"app/public/ui/src/theme/ThemeProvider.tsx",
+				"refactor-plan/sandbox/vendor/semantic_flow/src/styles",
+				"refactor-plan/sandbox/vendor/chatbot-ui/components/ui"
+			]
+		},
+		{
+			"id": "FR-409",
+			"title": "Transport adapters (React Query + WebSocket bridge)",
+			"status": "todo",
+			"references": [
+				"app/public/ui/src/utils/time.ts",
+				"app/public/ui/src/stores/researchTelemetryStore.ts",
+				"refactor-plan/gui-plan.md#42-state--transport"
+			]
+		},
+		{
+			"id": "FR-410",
+			"title": "Accessibility + performance hardening",
+			"status": "todo",
+			"references": [
+				"app/public/ui/src/components/primitives",
+				"refactor-plan/gui-plan.md#6-parity-accessibility-performance"
+			]
+		},
+		{
+			"id": "FR-411",
+			"title": "Regression guards + Ladle capture",
+			"status": "todo",
+			"references": [
+				"tests/ui",
+				"gui-improvements/",
+				"refactor-plan/sandbox/current_gui_photos"
+			]
+		}
+	]
+}
+```
 
-## Verification Snapshot — 2025-10-15
+# UI Next Overhaul Backlog (Revision 2025-10-20)
 
-- ✅ Full `npx vitest run` (359 passed, 4 skipped) at 22:04 UTC.
-- ✅ Research orchestration split across `app/commands/research/run-workflow.mjs` and `app/features/research/websocket/session-bootstrap.mjs`; both siblings now sit inside the 300–500 LOC guardrail.
-- ✅ Logs HTTP surface restored (`app/features/logs/routes.mjs`) with tests back to green.
-- ℹ️ Memory manager still exposes `ephemeralMemories`; monitor for more legacy callers before the next refactor wave.
+- **Batch FR-401 → FR-403 (Shell Architecture — In Progress)**: split `App.tsx` into `ShellLayout`, `ShellSidebar`, `CommandSurface`, `InsightDeck`; apply responsive breakpoints and focus-mode collapse using tokenized styles (refs: `app/public/ui/src/components/layout/`, `refactor-plan/gui-plan.md §4.1`, Agent Zero dashboard shell).
+- **Batch FR-404 → FR-405 (Navigation Parity)**: hydrate sidebar from `app/commands/*.cli.mjs`, surface categories, flags, shortcuts, and deepen command palette parity with keyboard badges (refs: Chatbot UI sidebar, `refactor-plan/gui-plan.md §2`).
+- **Batch FR-406 → FR-407 (Insight & Missions)**: compose telemetry/log/memory panels into a slot-based deck, add mission control and tool dock scaffolds inspired by Agent Zero and Deerflow observability modules (`refactor-plan/gui-plan.md §4.3`).
+- **Batch FR-408 (Skin Overrides)**: ensure Hacker/Modern/Retro skins restyle the new shell, cards, and typography consistently with Semantic Flow and Chatbot UI motif captures; respect `/config set ui.theme` parity.
+- **Batch FR-409 (Transport Bridge)**: add cancellable React Query polling and WebSocket adapters for telemetry + mission events, exposing discriminated unions per blueprint (`refactor-plan/gui-plan.md §4.2`).
+- **Batch FR-410 (A11y + Performance)**: enforce WCAG focus states, semantic landmarks, lazy loading, and bundle guardrails; verify with axe + Lighthouse targets (`refactor-plan/gui-plan.md §6`).
+- **Batch FR-411 (Verification Assets)**: extend Vitest coverage for new stores/components, run Ladle smoke, capture updated screenshots for change log, and sync with `gui-improvements/` gallery.
 
-## Active Focus
+> Status legend: `todo` = not started, `in-progress` = active development, `blocked` = awaiting dependency, `done` = merged & verified.
+# UI Next Overhaul
 
-- [x] Execute live-readiness dry run (followed `guides/live-test-checklist.md`; see `guides/live-test-dry-run-2025-10-15.md` for results and open issues around credentials and automation gaps).
-- [ ] Consolidate command-execution wiring shared by `app/start.mjs` and CLI routers without breaking the LOC envelope.
-- [ ] Merge or replace duplicate argument parsers across CLI and WebSocket surfaces.
-- [x] Implement durable storage for research artifacts beyond session/GitHub (`/research list`, `/research download <id>`).
-- [x] Harden input validation for research depth/breadth and related flags.
-- [x] Add API token usage telemetry (counts per session/operator).
-- [ ] Review residual security posture (rate limiting, CSRF toggles, input sanitisation).
-- [ ] Continue LOC audit: current >500 line files are documentation (`README.md` at 547 lines) and generated assets; application modules now comply.
+## Batch 1 – Phase 0 Foundations (In Progress)
+- [x] FR-001 Extract canonical design tokens from legacy CSS into `app/public/ui/tokens.json` plus generator script for `tokens.css` and ANSI map.
+- [x] FR-002 Scaffold Vite + React + TypeScript workspace under `app/public/ui/` with linting aligned to repo standards.
+- [x] FR-003 Implement `ThemeProvider` with Hacker/Modern/Retro skins and persisted selection.
+- [x] FR-004 Stand up Ladle component catalog showcasing primitives (Button, Input, Card, ProgressRing) fed by shared tokens.
 
-### Recently Completed (2025-10-15)
+## Batch 2 – Phase 1 Console Core (Queued)
+- [x] FR-101 Implement `useTerminalStore` with Zustand and scaffold `TerminalShell` using `react-window` virtualization.
+- [x] FR-102 Draft command palette shell with Fuse-powered fuzzy search and CLI metadata stubs.
+- [x] FR-103 Introduce prompt modal primitives for password/confirm/select flows (placeholder wiring).
+- [x] FR-104 Wire keyboard shortcut handlers (`⌘K`, focus mode toggles) guarding browser conflicts.
 
-- Research archive introduced with `/research list` + `/research download`, including on-disk retention and WebSocket parity.
-- Input validation tightened with configurable range checks and the `/security` telemetry surface.
-- Research CLI refactored into `run-workflow.mjs` with refreshed tests and telemetry handling.
-- WebSocket connection bootstrap moved to `session-bootstrap.mjs`; rate-limit/session suites pass with cleaner orchestration.
-- Logs router reinstated, docs/tasks synced, and CLI/Web parity confirmed end to end.
-- Token usage telemetry now emits per-run events and `/security` aggregates counts by operator across CLI and WebSocket surfaces.
+## Batch 3 – Phase 2 Insights & Dashboards
+- [x] FR-201 Stand up research telemetry card with progress ring, stage timeline, and token stats (demo wiring).
+- [x] FR-202 Refresh model browser with filter chips, sortable columns, and detail drawer.
+- [x] FR-203 Lay out memory timeline panel with commit history and GitHub sync indicators.
+- [x] FR-204 Build logs viewer with streaming tail, severity filters, and search.
 
----
+## Batch 4 – Phase 3 Multi-Skin Surface
+- [x] FR-301 Ship retro Win95 skin with window chrome accents and theme-aware component styling.
+- [x] FR-302 Deliver modern chat skin with bubble layout and avatar styling.
+- [x] FR-303 Harden hacker console skin with ANSI accent states and reduced chrome.
+- [x] FR-304 Surface theme switcher in settings drawer and wire `/config set ui.theme` parity.
+- [x] FR-305 Allow skin-specific component overrides for card/window primitives.
 
-## Completed
-
-*   [COMPLETED] Fix `effectiveError is not a function` in `executeResearch` catch block.
-*   [COMPLETED] Fix `cmdOutput is not a function` in `executeChat` for public users.
-*   [COMPLETED] Ensure public users cannot execute `/research` command (block early).
-*   [COMPLETED] Ensure public users receive the correct notice in `/chat` and are returned to command mode.
-*   [COMPLETED] Ensure output/error handlers are correctly passed from `handleCommandMessage` to `executeChat` and `executeResearch`.
-*   [COMPLETED] Verify GitHub upload pipeline in `handleInputMessage`:
-    *   [COMPLETED] Ensure `userManager.getGitHubConfig` resolves plaintext credentials from the single-user profile or environment.
-    *   [COMPLETED] Ensure the resolved token is passed to `uploadToGitHub`.
-    *   [COMPLETED] Add robust error handling for config retrieval and upload.
-*   [COMPLETED] Documented comment precision philosophy in `AGENTS.md` so code comments stay timeless and architectural.
-*   [COMPLETED] Ensure `promptData` (like `suggestedFilename`) is correctly set in `executeResearch` before prompting for post-research action.
-*   [COMPLETED] Web-CLI `startResearchFromChat` now pulls Brave/Venice keys from the single-user profile with environment fallbacks (`app/commands/chat.cli.mjs`).
-*   [COMPLETED] WebSocket `exitMemory` reuses injected output/error handlers and re-enables input on completion (`app/commands/chat.cli.mjs`).
-*   [COMPLETED] Hardened `handleChatMessage` prompt/error flow for memory and LLM operations (`app/features/research/routes.mjs`).
-*   [COMPLETED] Guarded `generateQueries` input contract to prevent undefined arguments in `/research test` (`app/features/ai/research.providers.mjs`).
-*   [COMPLETED] Implemented `userManager.checkApiKeys`/`testApiKeys` and `/keys stat` alias resolution (`app/features/auth/user-manager.mjs`, `app/commands/keys.cli.mjs`).
-*   [COMPLETED] `/diagnose` consumes environment-backed API checks without password prompts and uses the single-user compatibility shim (`app/commands/diagnose.cli.mjs`, `app/features/auth/user-manager.mjs`).
-*   [COMPLETED] Centralised Brave/Venice API-key resolution via `app/utils/api-keys.mjs` and refactored chat/research flows to consume the helper.
-*   [COMPLETED] Trimmed `/missions` CLI into modular handlers to satisfy the 500-line guideline and prepare for further decomposition.
-*   [COMPLETED] `/users` command now surfaces a single-user compatibility notice and defers to optional adapters for multi-user flows (`app/commands/users.cli.mjs`, `app/commands/index.mjs`, `app/features/auth/user-manager.mjs`).
-*   [COMPLETED] `/chat` → `/research` bridge returns a guard message when chat history is missing, avoiding generic failures (`app/commands/chat/research/start.mjs`).
-*   [COMPLETED] Double-check `enableClientInput` / `disableClientInput` pairing across all flows (prompts, errors, success).
-*   [COMPLETED] Add GitHub-token tests to `/keys test`, `/diagnose`.
-
----
-
----
-
-Important to remember:
-- [x] Length of files. According to #AGENTS.md , the max size for files should be 300-500 LoC . We need to review file by file for the entire codebase to verify it is following this rule. the more modular and micro-architecture structure the better it is for the developers that debug. First start by identifying the files to fix and then related files that are connectedd to this long file. since files are connected and reference each other you have to edit meticulously and intelligently. You can separate files by nodes and modules and divide everything into micro structures (routers, orchestrators, managers, systems) . 
-
-- Related to the last item -> each file in our codebase should have at the top a descriptive and comprehensive comments written in a precise brief and accurate way that describes at a glance what each file does. Additionally each sections should have their own comments to explain and expandd what each functiion is doing . The text should be as short as possible to be clear but as long as poossible to be precise. Information must be condensed. Comments should be timeless and not hard to undertstand. Comments should not be meta-commentary. signal-posting or similar. It must be straight forward to the point and assume the reader is intelligent. Short precise sentences. Posting fixes and to dos in comments is prohibited, there are files for this. use the appropriate channels. comments are there to explain and describe the code architecture structure functional systemic behaviors and similar. After reading this include a summarized version of this philosophy described in this paragraph in the #AGENTS.md 
-
-- [ ] Latest line-count audit (2025-10-15): `app/commands/research.cli.mjs` (356 after `run-workflow.mjs` extraction ✅), `app/features/research/websocket/connection.mjs` (413 after `session-bootstrap.mjs` split ✅). Markdown plans and `package-lock.json` are tracked separately; continue scanning for >500 LOC outliers now that research surfaces are modular.
-
-- Every function and every setting should be displayed and easily accessed from both the terminal and the web-cli display . This creates power users that understand EXACTLY what is under the hood. 
-
-> **Note:** Treat this plan as additive context. Engineers should feel empowered to iterate, split, or parallelize tasks as bandwidth allows while preserving BITcore’s architectural standards and security posture.
+## Verification Checklist
+- [x] Document Why/What/How docblocks for every new source file.
+- [x] Run `pnpm install` after dependency changes and capture output summary.
+- [x] Add minimal unit tests (Vitest) for token generator and ThemeProvider switching.
+- [ ] Capture Ladle smoke screenshot once UI primitives stabilize.
+- [x] Validate new console primitives via targeted Vitest suites (Ladle stories pending).

@@ -1,0 +1,31 @@
+/*
+ * Why: Define a polished chat skin that feels distinct from the hacker console while reusing shared tokens.
+ * What: Applies glassmorphism panels, rounded typography, and gradient accents for the modern chat theme.
+ * How: Adjusts CSS variables and utility classes when `data-theme="modern"` is active.
+ */
+
+:root[data-theme='modern'] {
+  --chat-bubble-user: linear-gradient(135deg, rgba(56, 189, 248, 0.85), rgba(139, 92, 246, 0.85));
+  --chat-bubble-assistant: rgba(17, 24, 39, 0.72);
+  --chat-bubble-shadow: rgba(15, 23, 42, 0.4);
+  --panel-blur: saturate(120%) blur(16px);
+  --chat-avatar-size: 42px;
+  --chat-avatar-user: linear-gradient(135deg, rgba(20, 184, 166, 0.85), rgba(59, 130, 246, 0.85));
+  --chat-avatar-assistant: linear-gradient(135deg, rgba(139, 92, 246, 0.9), rgba(236, 72, 153, 0.85));
+  --chat-avatar-ring: rgba(226, 232, 240, 0.5);
+}
+
+body[data-theme='modern'] {
+  font-family: var(--typography-font-family-sans);
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 35%),
+    radial-gradient(circle at bottom right, rgba(139, 92, 246, 0.12), transparent 45%),
+    var(--color-bg-primary);
+  color: var(--color-fg-primary);
+}
+
+body[data-theme='modern'] button,
+body[data-theme='modern'] input,
+body[data-theme='modern'] textarea {
+  font-family: var(--typography-font-family-sans);
+}

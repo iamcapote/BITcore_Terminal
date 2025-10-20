@@ -1,0 +1,46 @@
+/*
+ * Why: Supply dedicated console styling and ANSI palettes for the hacker skin so the terminal feels neon and low-chrome.
+ * What: Declares terminal surfaces, glow effects, and ANSI color ramps keyed to the hacker theme without disturbing other skins.
+ * How: Scopes custom properties to data-theme="hacker" allowing components to reference them through CSS variables and inline styles.
+ */
+
+:root[data-theme='hacker'] {
+  --terminal-bg: linear-gradient(160deg, rgba(5, 10, 18, 0.95), rgba(7, 16, 28, 0.92));
+  --terminal-border: rgba(20, 241, 255, 0.28);
+  --terminal-shadow: 0 28px 80px -60px rgba(20, 241, 255, 0.6);
+  --terminal-grid-overlay: radial-gradient(circle at 15% 15%, rgba(20, 241, 255, 0.08), transparent 55%), radial-gradient(circle at 85% 25%, rgba(197, 146, 255, 0.06), transparent 60%);
+  --hacker-card-bg: rgba(6, 13, 24, 0.85);
+  --hacker-card-border: rgba(20, 241, 255, 0.22);
+  --hacker-card-shadow: 0 24px 60px -48px rgba(20, 241, 255, 0.65);
+  --ansi-black: #050608;
+  --ansi-red: #ff5470;
+  --ansi-green: #35ebae;
+  --ansi-yellow: #f7c948;
+  --ansi-blue: #38bdf8;
+  --ansi-magenta: #c592ff;
+  --ansi-cyan: #14f1ff;
+  --ansi-white: #e6edf7;
+  --ansi-bright-black: #1f2a3a;
+  --ansi-bright-red: #ff718c;
+  --ansi-bright-green: #5dffcc;
+  --ansi-bright-yellow: #ffe26d;
+  --ansi-bright-blue: #60d8ff;
+  --ansi-bright-magenta: #d8a7ff;
+  --ansi-bright-cyan: #53fbff;
+  --ansi-bright-white: #f8fbff;
+}
+
+body[data-theme='hacker'] {
+  background:
+    linear-gradient(160deg, rgba(5, 10, 18, 0.96), rgba(7, 16, 28, 0.92)),
+    radial-gradient(circle at 0% 0%, rgba(20, 241, 255, 0.07), transparent 55%),
+    radial-gradient(circle at 100% 100%, rgba(197, 146, 255, 0.04), transparent 55%),
+    #050608;
+  color: var(--color-fg-primary);
+}
+
+body[data-theme='hacker'] button,
+body[data-theme='hacker'] input,
+body[data-theme='hacker'] textarea {
+  font-family: var(--typography-font-family-mono);
+}

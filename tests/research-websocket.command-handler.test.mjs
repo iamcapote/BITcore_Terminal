@@ -12,20 +12,33 @@ const chatCommandMock = vi.fn(async () => ({ success: true, keepDisabled: false 
 const parseCommandArgsMock = vi.fn((input) => {
   const trimmed = (input || '').trim();
   if (!trimmed) return { commandName: '', positionalArgs: [], flags: {} };
+
   const parts = trimmed.split(/\s+/);
   const commandPart = parts.shift() || '';
   const commandName = commandPart.replace(/^\//, '').toLowerCase();
-  const positionalArgs = parts;
+  const positionalArgs = [];
   const flags = {};
-  positionalArgs.forEach((value, index) => {
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const value = parts[index];
     if (value.startsWith('--')) {
-      const flagName = value.slice(2);
-      const flagValue = positionalArgs[index + 1] && !positionalArgs[index + 1].startsWith('--')
-        ? positionalArgs[index + 1]
-        : true;
-      flags[flagName] = flagValue;
+      const [flagName, flagValue] = value.slice(2).split('=', 2);
+      if (flagValue !== undefined) {
+        flags[flagName] = flagValue;
+        continue;
+      }
+      const nextValue = parts[index + 1];
+      if (nextValue && !nextValue.startsWith('--')) {
+        flags[flagName] = nextValue;
+        index += 1;
+      } else {
+        flags[flagName] = true;
+      }
+    } else {
+      positionalArgs.push(value);
     }
-  });
+  }
+
   return { commandName, positionalArgs, flags };
 });
 
@@ -95,6 +108,7 @@ let sessionCounter = 0;
 
 function createSession(overrides = {}) {
   sessionCounter += 1;
+  const now = Date.now();
   return {
     sessionId: `session-${sessionCounter}`,
     sessionModel: null,
@@ -102,6 +116,9 @@ function createSession(overrides = {}) {
     currentUser: { username: 'test-user', role: 'admin' },
     isChatActive: false,
     researchTelemetry: null,
+    csrfToken: `csrf-token-${sessionCounter}`,
+    csrfIssuedAt: now,
+    csrfExpiresAt: now + (15 * 60 * 1000),
     ...overrides,
   };
 }
@@ -141,7 +158,8 @@ describe('handleCommandMessage (research command interactive query)', () => {
   it('prompts for a query when none provided and forwards trimmed response to command', async () => {
     const ws = createSocket();
     const session = createSession();
-  const message = createCommandMessage({ args: ['topic'] });
+  const message = createCommandMessage();
+    message.csrfToken = session.csrfToken;
 
     wsPromptMock.mockResolvedValueOnce('   Investigate AI ethics   ');
 
@@ -164,10 +182,26 @@ describe('handleCommandMessage (research command interactive query)', () => {
     expect(wsErrorHelperMock).not.toHaveBeenCalled();
   });
 
+  it('passes LangChain override flag through to research command options', async () => {
+    const ws = createSocket();
+    const session = createSession();
+    const message = createCommandMessage({ args: ['topic', '--langchain-query-chain=false'] });
+    message.csrfToken = session.csrfToken;
+
+    const result = await handleCommandMessage(ws, message, session);
+
+    expect(result).toBe(true);
+    expect(researchCommandMock).toHaveBeenCalledTimes(1);
+    const optionsPassed = researchCommandMock.mock.calls.at(-1)?.[0];
+    expect(optionsPassed).toBeDefined();
+    expect(optionsPassed.langChainQueryChainOverride).toBe(false);
+  });
+
   it('cancels research when prompt returns empty query and notifies client', async () => {
     const ws = createSocket();
     const session = createSession();
     const message = createCommandMessage();
+    message.csrfToken = session.csrfToken;
 
     wsPromptMock.mockResolvedValueOnce('   ');
 
@@ -182,6 +216,7 @@ describe('handleCommandMessage (research command interactive query)', () => {
     const ws = createSocket();
     const session = createSession();
     const message = createCommandMessage();
+    message.csrfToken = session.csrfToken;
 
     wsPromptMock.mockRejectedValueOnce(new Error('Prompt timed out.'));
 
@@ -215,7 +250,7 @@ describe('handleCommandMessage (research command interactive query)', () => {
     const session = createSession();
     session.csrfToken = 'secure-token';
 
-  const message = createCommandMessage({ args: [], csrfToken: 'secure-token' });
+    const message = createCommandMessage({ args: [], csrfToken: 'secure-token' });
   wsPromptMock.mockResolvedValueOnce('topic query');
 
     const result = await handleCommandMessage(ws, message, session);
@@ -254,6 +289,7 @@ describe('handleCommandMessage (chat command single-user flows)', () => {
     const ws = createSocket();
     const session = createSession({ sessionModel: null, sessionCharacter: null });
     const message = createCommandMessage({ command: 'chat', args: [] });
+  message.csrfToken = session.csrfToken;
 
     const result = await handleCommandMessage(ws, message, session);
 
@@ -274,6 +310,7 @@ describe('handleCommandMessage (chat command single-user flows)', () => {
     const ws = createSocket();
     const session = createSession();
     const message = createCommandMessage({ command: 'chat', args: [] });
+  message.csrfToken = session.csrfToken;
 
     const result = await handleCommandMessage(ws, message, session);
 

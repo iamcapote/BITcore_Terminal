@@ -16,6 +16,7 @@ import {
 import { processResponse, trimPrompt } from './research.providers.utils.mjs';
 import { callVeniceLLM } from './research.providers.llm.mjs';
 import { computeFallbackTopic, buildFallbackQueries } from './research.providers.fallbacks.mjs';
+import { runQueryGenerationChain } from '../../infrastructure/ai/langchain/chains/query-generation.chain.mjs';
 
 const moduleLogger = createModuleLogger('ai.research.providers.service');
 
@@ -146,9 +147,12 @@ export async function generateQueries({
   errorFn = defaultError,
   llmClient = null,
   telemetry = null,
-  telemetryMeta = null
+  telemetryMeta = null,
+  langChainQueryChainOverride = undefined
 }) {
-  const hasApiKey = !!ensureApiKey(apiKey);
+  const effectiveKey = ensureApiKey(apiKey);
+  const hasApiKey = !!effectiveKey;
+  const useLangChain = determineLangChainQueryChainUsage(langChainQueryChainOverride);
 
   if (!query || typeof query !== 'string' || !query.trim()) {
     errorFn(`[generateQueries] Error: Invalid query provided: ${query}`);
@@ -164,6 +168,7 @@ export async function generateQueries({
     numQueries = 3;
   }
 
+  const characterSlug = determineCharacterSlug('research');
   const logQuery = query.length > 300 ? `${query.substring(0, 300)}...` : query;
   outputFn(`[generateQueries] Generating ${numQueries} queries for context: "${logQuery}"${metadata ? ' with metadata: Yes' : ''}`);
   if (metadata) {
@@ -188,9 +193,44 @@ export async function generateQueries({
   }
 
   let result = { success: false };
-  if (hasApiKey) {
+  let resultSource = 'none';
+
+  if (hasApiKey && useLangChain) {
+    try {
+      outputFn('[generateQueries] LangChain query chain enabled. Invoking chain.');
+      const chainOutcome = await runQueryGenerationChain({
+        apiKey: effectiveKey,
+        query,
+        learnings,
+        temperature: 0.7,
+        maxTokens: 500,
+        veniceParameters: characterSlug ? { character_slug: characterSlug } : undefined
+      });
+
+      if (chainOutcome?.content && chainOutcome.content.trim()) {
+        const parsed = processResponse('query', chainOutcome.content);
+        if (parsed.success) {
+          result = {
+            success: true,
+            data: parsed,
+            usage: normalizeLangChainUsage(chainOutcome.usage, chainOutcome?.model)
+          };
+          resultSource = 'langchain';
+        } else {
+          errorFn(`[generateQueries] LangChain chain returned unparsable content. Error: ${parsed.error || 'Unknown parse failure'}. Falling back to legacy flow.`);
+        }
+      } else {
+        errorFn('[generateQueries] LangChain chain returned empty content. Falling back to legacy flow.');
+      }
+    } catch (chainError) {
+      const message = chainError instanceof Error ? chainError.message : String(chainError);
+      errorFn(`[generateQueries] LangChain chain invocation failed: ${message}. Falling back to legacy flow.`, chainError);
+    }
+  }
+
+  if (!result.success && hasApiKey) {
     result = await generateOutput({
-      apiKey,
+      apiKey: effectiveKey,
       type: 'query',
       system: systemPrompt(),
       prompt: enrichedPrompt,
@@ -200,6 +240,14 @@ export async function generateQueries({
       errorFn,
       llmClient
     });
+    resultSource = 'legacy';
+  }
+
+  if (!result.success && !hasApiKey) {
+    errorFn('[generateQueries] No API key available. Using simple fallback queries.');
+  }
+
+  if (result.usage) {
     emitTokenUsageEvent({
       telemetry,
       usage: result.usage,
@@ -208,16 +256,15 @@ export async function generateQueries({
         ...(isPlainObject(telemetryMeta) ? telemetryMeta : {}),
         queryLength: typeof query === 'string' ? query.length : (typeof query?.original === 'string' ? query.original.length : 0),
         learningsCount: Array.isArray(learnings) ? learnings.length : 0,
-        requestedQueries: Number.isFinite(Number(numQueries)) ? Number(numQueries) : 0
+        requestedQueries: Number.isFinite(Number(numQueries)) ? Number(numQueries) : 0,
+        resultSource
       }
     });
-  } else {
-    errorFn('[generateQueries] No API key available. Using simple fallback queries.');
   }
 
   outputFn('[generateQueries] LLM result for query generation:', JSON.stringify(result));
 
-  if (result.success && result.data.queries && result.data.queries.length > 0) {
+  if (result.success && result.data?.queries && result.data.queries.length > 0) {
     const queries = result.data.queries
       .map((q) => q.trim())
       .filter(Boolean)
@@ -521,6 +568,52 @@ export async function processResultsLLM({ results, query, llmClient, characterSl
   }
 
   throw new Error(`Failed to parse learnings from LLM response: ${responseContent}`);
+}
+
+function determineLangChainQueryChainUsage(override) {
+  if (typeof override === 'boolean') {
+    return override;
+  }
+  const flag = process.env.RESEARCH_LANGCHAIN_QUERY_CHAIN;
+  if (typeof flag !== 'string') {
+    return false;
+  }
+  const normalized = flag.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+}
+
+function normalizeLangChainUsage(usage, fallbackModel) {
+  if (!usage || typeof usage !== 'object') {
+    return null;
+  }
+
+  const promptTokens = coerceUsageInteger(usage.promptTokens ?? usage.prompt_tokens);
+  const completionTokens = coerceUsageInteger(usage.completionTokens ?? usage.completion_tokens);
+  const totalTokensInput = usage.totalTokens ?? usage.total_tokens ?? (promptTokens != null && completionTokens != null ? promptTokens + completionTokens : null);
+  const totalTokens = coerceUsageInteger(totalTokensInput);
+
+  if (promptTokens == null && completionTokens == null && totalTokens == null) {
+    return null;
+  }
+
+  const model = typeof usage.model === 'string' && usage.model.trim()
+    ? usage.model.trim()
+    : (typeof fallbackModel === 'string' && fallbackModel.trim() ? fallbackModel.trim() : null);
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    model
+  };
+}
+
+function coerceUsageInteger(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) {
+    return null;
+  }
+  return Math.round(num);
 }
 
 function emitTokenUsageEvent({ telemetry, usage, stage, meta }) {

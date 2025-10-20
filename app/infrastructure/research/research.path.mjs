@@ -43,7 +43,8 @@ export class ResearchPath {
             debug = defaultDebug,
             progressHandler = () => {},
             searchProvider, // <-- ADD: Accept searchProvider instance
-            telemetry = null
+            telemetry = null,
+            langChainQueryChainOverride = undefined
         } = engineConfig; // Destructure from engineConfig
 
         // if (!query) throw new Error('Query is required for ResearchPath'); // Query passed later
@@ -65,6 +66,9 @@ export class ResearchPath {
         this.config = engineConfig; // Store original config which NOW includes the provider
         this.searchProvider = searchProvider; // <-- STORE the passed provider instance
         this.telemetry = telemetry || null;
+        this.langChainQueryChainOverride = typeof langChainQueryChainOverride === 'boolean'
+            ? langChainQueryChainOverride
+            : undefined;
 
         // Pass handlers if LLMClient is used here (or create instance as needed)
         // this.llmClient = new LLMClient({ apiKey: this.veniceApiKey /*, other options */ });
@@ -227,7 +231,8 @@ export class ResearchPath {
                         outputFn: this.debug,      // Pass handlers
                         errorFn: this.error,
                         telemetry: this.telemetry,
-                        telemetryMeta: { depth, breadth }
+                        telemetryMeta: { depth, breadth },
+                        langChainQueryChainOverride: this.langChainQueryChainOverride
                     });
                     this.debug(`[ResearchPath D:${depth}] Generated ${followUpQueries.length} follow-up queries.`);
                     this.updateProgress({ status: 'Planning', currentAction: `Generated ${followUpQueries.length} follow-up queries...` }, 'path:planning');

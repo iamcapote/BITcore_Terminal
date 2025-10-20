@@ -227,6 +227,10 @@ export async function handleCommandMessage(ws, message, session) {
     password: effectivePassword,
     currentUser: sessionUser,
     requestingUser: sessionUser,
+    langChainQueryChainOverride: (() => {
+      const raw = flags['langchain-query-chain'] ?? flags.langchainQueryChain ?? flags.langchain;
+      return raw === undefined ? undefined : normalizeBooleanFlag(raw);
+    })()
   };
 
   const commandOutput = (data) => {
@@ -319,6 +323,10 @@ export async function handleCommandMessage(ws, message, session) {
 
     if (commandName === 'research') {
       if (researchAction === 'run') {
+        const providedQuery = Array.isArray(normalizedResearchArgs) ? normalizedResearchArgs[0] : undefined;
+        if (!options.query && typeof providedQuery === 'string' && providedQuery.trim()) {
+          options.query = providedQuery.trim();
+        }
         const telemetry = session.researchTelemetry;
         if (telemetry) {
           telemetry.updateSender((type, payload) => {

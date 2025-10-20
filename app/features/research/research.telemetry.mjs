@@ -419,6 +419,9 @@ function coalesceCount(value) {
 }
 
 function coalesceUsageNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
   const num = Number(value);
   if (!Number.isFinite(num) || num < 0) {
     return null;

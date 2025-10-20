@@ -64,7 +64,8 @@ export class ResearchEngine {
       isWebSocket = false,
       webSocketClient = null,
       overrideQueries = null, // --- NEW: Accept overrideQueries in config ---
-      telemetry = null
+      telemetry = null,
+      langChainQueryChainOverride = undefined
     } = config;
 
     // --- store config ---
@@ -85,6 +86,9 @@ export class ResearchEngine {
     this.webSocketClient = webSocketClient;
     this.overrideQueries = overrideQueries;
     this.telemetry = telemetry || null;
+    this.langChainQueryChainOverride = typeof langChainQueryChainOverride === 'boolean'
+      ? langChainQueryChainOverride
+      : undefined;
 
     // --- NEW: Add convenience aliases using the correctly assigned handlers ---
     this.output = this.outputHandler;
@@ -94,6 +98,7 @@ export class ResearchEngine {
 
     // Store the original config object if needed elsewhere, though direct properties are preferred
     this.config = config; // Store the passed config
+  this.config.langChainQueryChainOverride = this.langChainQueryChainOverride;
 
     // Validate essential config
     if (!this.braveApiKey || !this.veniceApiKey) {
@@ -416,7 +421,8 @@ export class ResearchEngine {
         query: context,
         numQueries: numQueries,
         outputFn: this.debug,
-        errorFn: this.error
+    errorFn: this.error,
+    langChainQueryChainOverride: this.langChainQueryChainOverride
     });
   }
 

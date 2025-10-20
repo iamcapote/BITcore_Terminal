@@ -1,0 +1,18 @@
+<!--
+  Why: Provide the HTML shell for the next-generation UI while bootstrapping the default Hacker skin.
+  What: Loads generated design tokens and mounts the React bundle inside the root container.
+  How: Delegates rendering to src/main.tsx and sets the initial theme via data-theme attribute.
+-->
+<!DOCTYPE html>
+<html lang="en" data-theme="hacker">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BITcore Terminal UI</title>
+    <link rel="stylesheet" href="/tokens.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -14,6 +14,14 @@ const enrichResearchQueryMock = vi.fn();
 const prepareMemoryContextMock = vi.fn();
 const ensureResearchPasswordMock = vi.fn();
 const createResearchEmitterMock = vi.fn();
+const resolveResearchDefaultsMock = vi.hoisted(() => vi.fn(async ({ depth, breadth, isPublic } = {}) => ({
+  depth: depth ?? 2,
+  breadth: breadth ?? 3,
+  isPublic: isPublic ?? false,
+})));
+const validateDepthOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
+const validateBreadthOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
+const validateVisibilityOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true, provided: false, value: undefined })));
 
 vi.mock('ws', () => ({
   default: class WebSocketMock {
@@ -46,11 +54,10 @@ vi.mock('../app/features/memory/memory.service.mjs', () => ({
 }));
 
 vi.mock('../app/features/research/research.defaults.mjs', () => ({
-  resolveResearchDefaults: vi.fn(async ({ depth, breadth, isPublic } = {}) => ({
-    depth: depth ?? 2,
-    breadth: breadth ?? 3,
-    isPublic: isPublic ?? false,
-  })),
+  resolveResearchDefaults: resolveResearchDefaultsMock,
+  validateDepthOverride: validateDepthOverrideMock,
+  validateBreadthOverride: validateBreadthOverrideMock,
+  validateVisibilityOverride: validateVisibilityOverrideMock,
 }));
 
 vi.mock('../app/commands/research/memory-context.mjs', () => ({
