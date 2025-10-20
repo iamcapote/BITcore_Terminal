@@ -14,26 +14,45 @@ import { useTerminalStore } from '../stores/terminalStore';
 
 vi.mock('react-window', async () => {
   const React = await import('react');
-  const { cloneElement, forwardRef, useEffect, useImperativeHandle } = React;
+  const { cloneElement, forwardRef, useEffect, useRef } = React;
 
-  const FixedSizeList = forwardRef(function FixedSizeListMock(props: any, ref) {
-    const { itemCount, children, onItemsRendered } = props;
-
-    useImperativeHandle(ref, () => ({ scrollToItem: vi.fn() }));
+  const List = forwardRef(function ListMock(props: any, _ref) {
+    const { rowCount, rowComponent, onRowsRendered, rowProps = {} } = props;
 
     useEffect(() => {
-      onItemsRendered?.({ visibleStartIndex: 0, visibleStopIndex: itemCount - 1, overscanStartIndex: 0, overscanStopIndex: itemCount - 1 });
-    }, [itemCount, onItemsRendered]);
+      onRowsRendered?.(
+        { startIndex: 0, stopIndex: rowCount - 1 },
+        { startIndex: 0, stopIndex: rowCount - 1 }
+      );
+    }, [rowCount, onRowsRendered]);
 
     return (
       <div data-testid="fixed-size-list">
-        {Array.from({ length: itemCount }).map((_, index) => cloneElement(children({ index, style: {} }), { key: index }))}
+        {Array.from({ length: rowCount }).map((_, index) => 
+          cloneElement(rowComponent({ 
+            index, 
+            style: {},
+            ariaAttributes: {
+              'aria-posinset': index + 1,
+              'aria-setsize': rowCount,
+              role: 'listitem'
+            },
+            ...rowProps
+          }), { key: index })
+        )}
       </div>
     );
   });
 
+  function useListRef() {
+    return useRef({
+      scrollToRow: () => {}
+    });
+  }
+
   return {
-    FixedSizeList
+    List,
+    useListRef
   };
 });
 
