@@ -22,7 +22,8 @@ import {
     resolveResearchDefaults,
     validateDepthOverride,
     validateBreadthOverride,
-    validateVisibilityOverride
+    validateVisibilityOverride,
+    RESEARCH_RANGE_LIMITS
 } from '../features/research/research.defaults.mjs';
 import { createModuleLogger } from '../utils/logger.mjs';
 import { createResearchEmitter } from './research/emitters.mjs';
@@ -30,9 +31,14 @@ import { ensureResearchPassword } from './research/passwords.mjs';
 import { sanitizeResearchOptionsForLog } from './research/logging.mjs';
 import { persistSessionFromRef } from '../infrastructure/session/session.store.mjs';
 import { runResearchWorkflow } from './research/run-workflow.mjs';
-import { resolveResearchAction, isResearchArchiveAction } from './research/action-resolver.mjs';
+import { resolveResearchAction, isResearchArchiveAction, isResearchPreferencesAction } from './research/action-resolver.mjs';
 import { listResearchArchive, downloadResearchArchive } from './research/archive-actions.mjs';
 import { ensureResearchTelemetryChannel } from '../features/research/research.telemetry.metrics.mjs';
+import {
+    getResearchPreferences,
+    updateResearchPreferences,
+    resetResearchPreferences
+} from '../features/preferences/index.mjs';
 
 const moduleLogger = createModuleLogger('commands.research.cli', { emitToStdStreams: false });
 
@@ -67,6 +73,164 @@ function normalizeOptionalBoolean(value) {
         return undefined;
     }
     return Boolean(value);
+}
+
+const PREFERENCE_DEPTH_FLAGS = Object.freeze(['depth', 'default-depth', 'defaults-depth']);
+const PREFERENCE_BREADTH_FLAGS = Object.freeze(['breadth', 'default-breadth', 'defaults-breadth']);
+const PREFERENCE_PUBLIC_FLAGS = Object.freeze(['public', 'is-public', 'visibility']);
+
+function pickFlagValue(flags = {}, keys = []) {
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(flags, key)) {
+            return flags[key];
+        }
+    }
+    return undefined;
+}
+
+function buildResearchPreferencesPatchFromFlags(flags = {}) {
+    if (!flags || typeof flags !== 'object') {
+        return null;
+    }
+
+    const defaults = {};
+    let mutated = false;
+
+    const depthCandidate = pickFlagValue(flags, PREFERENCE_DEPTH_FLAGS);
+    if (depthCandidate !== undefined) {
+        const validation = validateDepthOverride(depthCandidate);
+        if (!validation.ok) {
+            const { min, max } = RESEARCH_RANGE_LIMITS.depth;
+            throw new Error(validation.error || `Depth must be between ${min} and ${max}.`);
+        }
+        if (validation.provided && validation.value !== undefined) {
+            defaults.depth = validation.value;
+            mutated = true;
+        }
+    }
+
+    const breadthCandidate = pickFlagValue(flags, PREFERENCE_BREADTH_FLAGS);
+    if (breadthCandidate !== undefined) {
+        const validation = validateBreadthOverride(breadthCandidate);
+        if (!validation.ok) {
+            const { min, max } = RESEARCH_RANGE_LIMITS.breadth;
+            throw new Error(validation.error || `Breadth must be between ${min} and ${max}.`);
+        }
+        if (validation.provided && validation.value !== undefined) {
+            defaults.breadth = validation.value;
+            mutated = true;
+        }
+    }
+
+    let visibilitySet = false;
+    const publicCandidate = pickFlagValue(flags, PREFERENCE_PUBLIC_FLAGS);
+    if (publicCandidate !== undefined) {
+        const validation = validateVisibilityOverride(publicCandidate);
+        if (!validation.ok) {
+            throw new Error(validation.error || 'Visibility must be set using --public/--private or boolean equivalents.');
+        }
+        if (validation.provided && validation.value !== undefined) {
+            defaults.isPublic = validation.value;
+            mutated = true;
+            visibilitySet = true;
+        }
+    }
+
+    if (!visibilitySet && Object.prototype.hasOwnProperty.call(flags, 'private')) {
+        const privateFlag = normalizeOptionalBoolean(flags.private);
+        const resolved = privateFlag === undefined ? true : privateFlag;
+        defaults.isPublic = !resolved;
+        mutated = true;
+        visibilitySet = true;
+    }
+
+    return mutated ? { defaults } : null;
+}
+
+function formatResearchPreferencesSnapshot(preferences) {
+    const lines = ['--- Research Defaults ---'];
+    const depth = Number.isFinite(preferences?.defaults?.depth) ? preferences.defaults.depth : null;
+    const breadth = Number.isFinite(preferences?.defaults?.breadth) ? preferences.defaults.breadth : null;
+    const isPublic = typeof preferences?.defaults?.isPublic === 'boolean' ? preferences.defaults.isPublic : false;
+
+    lines.push(`Depth: ${depth != null ? `Level ${depth}` : 'Level —'}`);
+    lines.push(`Breadth: ${breadth != null ? `${breadth} source${breadth === 1 ? '' : 's'}` : '—'}`);
+    lines.push(`Public visibility: ${isPublic ? 'enabled' : 'disabled'}`);
+    if (preferences?.updatedAt) {
+        try {
+            const timestamp = new Date(preferences.updatedAt).toISOString();
+            lines.push(`Updated: ${timestamp}`);
+        } catch (error) {
+            moduleLogger.warn('Failed to format research preferences timestamp.', {
+                updatedAt: preferences.updatedAt,
+                message: error?.message || String(error)
+            });
+        }
+    }
+    return lines;
+}
+
+function sendResearchPreferencesAck(handler) {
+    if (typeof handler !== 'function') {
+        return;
+    }
+    try {
+        handler({ type: 'output', data: '', keepDisabled: false });
+    } catch (ackError) {
+        moduleLogger.warn('Failed to emit research preferences acknowledgement.', {
+            message: ackError?.message || String(ackError)
+        });
+    }
+}
+
+async function handleResearchPreferencesAction({ flags = {}, outputHandler, errorHandler, wantsJson }) {
+    const outputFn = createResearchEmitter({ handler: outputHandler, level: 'info', logger: moduleLogger });
+    const errorFn = createResearchEmitter({ handler: errorHandler, level: 'error', logger: moduleLogger });
+
+    try {
+        const resetFlag = normalizeOptionalBoolean(flags.reset);
+        const refreshFlag = normalizeOptionalBoolean(flags.refresh);
+        let preferences;
+        let action = 'read';
+
+        if (resetFlag === true) {
+            preferences = await resetResearchPreferences();
+            action = 'reset';
+        } else {
+            const patch = buildResearchPreferencesPatchFromFlags(flags);
+            if (patch) {
+                preferences = await updateResearchPreferences(patch);
+                action = 'update';
+            } else {
+                preferences = await getResearchPreferences({ refresh: refreshFlag === true });
+            }
+        }
+
+        if (wantsJson) {
+            outputFn(JSON.stringify(preferences, null, 2), { subcommand: 'preferences', format: 'json', action });
+        } else {
+            formatResearchPreferencesSnapshot(preferences).forEach((line, index) => {
+                if (index === 0) {
+                    outputFn(line, { subcommand: 'preferences', action });
+                } else {
+                    outputFn(line);
+                }
+            });
+        }
+
+        sendResearchPreferencesAck(outputHandler);
+        moduleLogger.info('Research preferences processed.', { action, wantsJson: Boolean(wantsJson) });
+        return { success: true, handled: true, preferences };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errorFn(message, { subcommand: 'preferences' });
+        sendResearchPreferencesAck(outputHandler);
+        moduleLogger.error('Research preferences subcommand failed.', {
+            message,
+            stack: error instanceof Error ? error.stack : null
+        });
+        return { success: false, handled: true, error: message };
+    }
 }
 
 /**
@@ -126,6 +290,9 @@ export async function executeResearch(options = {}) {
         ? { ...flags, action: explicitAction }
         : flags;
 
+    const wantsJsonFlag = normalizeOptionalBoolean(flagsWithExplicitAction.json);
+    const wantsJson = wantsJsonFlag === undefined ? false : wantsJsonFlag;
+
     const rawLangChainFlag = flagsWithExplicitAction['langchain-query-chain']
         ?? flagsWithExplicitAction.langchainQueryChain
         ?? flagsWithExplicitAction.langchain;
@@ -148,6 +315,15 @@ export async function executeResearch(options = {}) {
     if (cmdError && typeof cmdError !== 'function') {
         moduleLogger.warn('Received non-function error handler. Falling back to stderr.', {
             handlerType: typeof cmdError
+        });
+    }
+
+    if (isResearchPreferencesAction(action)) {
+        return handleResearchPreferencesAction({
+            flags: flagsWithExplicitAction,
+            outputHandler: cmdOutput,
+            errorHandler: cmdError,
+            wantsJson
         });
     }
 
@@ -462,6 +638,7 @@ Usage:
     /research <query> [--depth=<number>] [--breadth=<number>] [--classify] [--verbose]
     /research list [--limit=<n>]
     /research download <artifact-id>
+    /research preferences [--depth=<number>] [--breadth=<number>] [--public=true|false] [--reset] [--refresh] [--json]
 
 Run Mode:
     Executes the research pipeline for the provided query. After completion you can Download, Upload (GitHub), Keep, or Discard the result.
@@ -470,12 +647,19 @@ Archive Mode:
     list       Show durable research artifacts saved locally.
     download   Print or download an archived artifact by id.
 
+Preferences Mode:
+    preferences   View or update persisted research defaults shared by CLI and Nova.
+
 Options:
     --depth=<number>     Depth between 1-6 (default: 2).
     --breadth=<number>   Breadth between 1-6 (default: 3).
     --classify           Enhance the query via token classification.
     --langchain-query-chain[=true|false]
                          Override the LangChain query chain flag (default: environment setting).
+    --public=<boolean>   Toggle whether research outputs default to public visibility.
+    --reset              Reset research defaults to their shipped baseline values.
+    --refresh            Force reload of research defaults from disk when viewing preferences.
+    --json               Emit structured JSON snapshots for scripting.
     --verbose            Emit detailed progress logs.
 
 Examples:
@@ -483,6 +667,7 @@ Examples:
     /research benefits of renewable energy --depth=3 --breadth=5
     /research list --limit=5
     /research download 2025-10-15T18-20-00-archon
+    /research preferences --depth=4 --public=true
 `;
 }
 

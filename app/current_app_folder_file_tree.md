@@ -17,7 +17,11 @@ commands/
 
   chat-history.cli.mjs
   chat.cli.mjs
+  diagnose/
+    checks.mjs
+
   diagnose.cli.mjs
+  export.cli.mjs
   index.mjs
   keys.cli.mjs
   login.cli.mjs
@@ -33,9 +37,16 @@ commands/
   password.cli.mjs
   prompts.cli.mjs
   research/
+    action-resolver.mjs
+    archive-actions.mjs
+    emitters.mjs
     keys.mjs
+    logging.mjs
     memory-context.mjs
+    passwords.mjs
     query-classifier.mjs
+    run-workflow.mjs
+    state.mjs
 
   research-github.cli.mjs
   research-scheduler.cli.mjs
@@ -43,11 +54,25 @@ commands/
   research.command.mjs
   research.github-sync.cli.mjs
   research.mjs
+  security.cli.mjs
   status.cli.mjs
+  storage.cli.mjs
   terminal.cli.mjs
   users.cli.mjs
 
+components/
+  layout/
+    Dashboard.tsx
+
+  ui/
+    Button.tsx
+    Card.tsx
+    Input.tsx
+    Textarea.tsx
+
+
 config/
+  cli-metadata.json
   index.mjs
   websocket.mjs
 
@@ -61,6 +86,7 @@ features/
       model-browser.service.mjs
 
     research.providers.controller.mjs
+    research.providers.fallbacks.mjs
     research.providers.llm.mjs
     research.providers.mjs
     research.providers.service.mjs
@@ -92,6 +118,7 @@ features/
 
   config/
     config.schema.mjs
+    secure-config.service.mjs
 
   logs/
     routes.mjs
@@ -155,6 +182,7 @@ features/
     research.defaults.mjs
     research.github-sync.controller.mjs
     research.github-sync.service.mjs
+    research.telemetry.metrics.mjs
     research.telemetry.mjs
     routes.mjs
     websocket/
@@ -165,6 +193,7 @@ features/
       constants.mjs
       input-handler.mjs
       prompt.mjs
+      session-bootstrap.mjs
       session-registry.mjs
 
 
@@ -178,6 +207,15 @@ features/
 filetree.mjs
 infrastructure/
   ai/
+    langchain/
+      chains/
+        query-generation.chain.mjs
+
+      prompts/
+        research.prompts.mjs
+
+      venice-chat-model.mjs
+
     venice.characters.mjs
     venice.llm-client.mjs
     venice.models.mjs
@@ -191,6 +229,7 @@ infrastructure/
     memory.helpers.mjs
     memory.manager.mjs
     memory.prompts.mjs
+    memory.settings.mjs
     memory.store.mjs
     memory.validators.mjs
 
@@ -199,6 +238,7 @@ infrastructure/
 
   research/
     github-sync.mjs
+    research.archive.mjs
     research.engine.mjs
     research.markdown.mjs
     research.override-runner.mjs
@@ -207,6 +247,9 @@ infrastructure/
   search/
     search.mjs
     search.providers.mjs
+
+  session/
+    session.store.mjs
 
 
 public/
@@ -326,6 +369,198 @@ public/
   terminal.js
   theme-preload.js
   theme-toggle.js
+  ui/
+    ansi-map.json
+    index.html
+    ladle-screens/
+
+    node_modules/
+      .vite/
+        deps/
+          @ladle_react-context.js
+          @ladle_react-context.js.map
+          @ladle_react.js
+          @ladle_react.js.map
+          @mdx-js_react.js
+          @mdx-js_react.js.map
+          _metadata.json
+          chunk-7DVDPDKJ.js
+          chunk-7DVDPDKJ.js.map
+          chunk-BFKM6BAR.js
+          chunk-BFKM6BAR.js.map
+          chunk-FEAW5Q5V.js
+          chunk-FEAW5Q5V.js.map
+          chunk-G3PMV62Z.js
+          chunk-G3PMV62Z.js.map
+          chunk-IUPVGT5T.js
+          chunk-IUPVGT5T.js.map
+          chunk-P2VVPHDX.js
+          chunk-P2VVPHDX.js.map
+          classnames.js
+          classnames.js.map
+          debug.js
+          debug.js.map
+          history.js
+          history.js.map
+          lodash__merge.js
+          lodash__merge.js.map
+          package.json
+          prism-react-renderer.js
+          prism-react-renderer.js.map
+          query-string.js
+          query-string.js.map
+          react-dom.js
+          react-dom.js.map
+          react-dom_client.js
+          react-dom_client.js.map
+          react-hotkeys-hook.js
+          react-hotkeys-hook.js.map
+          react-inspector.js
+          react-inspector.js.map
+          react.js
+          react.js.map
+          react_jsx-dev-runtime.js
+          react_jsx-dev-runtime.js.map
+          react_jsx-runtime.js
+          react_jsx-runtime.js.map
+
+        vitest/
+          da39a3ee5e6b4b0d3255bfef95601890afd80709/
+            results.json
+
+
+
+
+    screenshots/
+
+    src/
+      App.new.tsx
+      App.theme-command.test.tsx
+      App.tsx
+      components/
+        ChatTranscript.test.tsx
+        ChatTranscript.tsx
+        CommandPalette.test.tsx
+        CommandPalette.tsx
+        LogsViewer.test.tsx
+        LogsViewer.tsx
+        MemoryTimeline.test.tsx
+        MemoryTimeline.tsx
+        MissionControlCard.tsx
+        ModalManager.tsx
+        ModelBrowser.test.tsx
+        ModelBrowser.tsx
+        PromptModal.test.tsx
+        PromptModal.tsx
+        ResearchTelemetryCard.test.tsx
+        ResearchTelemetryCard.tsx
+        SettingsDrawer.test.tsx
+        SettingsDrawer.tsx
+        TerminalShell.hacker.test.tsx
+        TerminalShell.test.tsx
+        TerminalShell.tsx
+        ToolDockCard.tsx
+        common/
+          Modal.css
+          Modal.tsx
+
+        layout/
+          CommandSurface.tsx
+          Dashboard.css
+          Dashboard.tsx
+          InsightDeck.tsx
+          ShellHeader.tsx
+          ShellLayout.tsx
+          ShellSidebar.tsx
+          Sidebar.css
+          Sidebar.tsx
+          SidebarNavigation.tsx
+
+        modals/
+          SettingsModal.css
+          SettingsModal.tsx
+
+        primitives/
+          Button.css
+          Button.tsx
+          Card.css
+          Card.test.tsx
+          Card.tsx
+          Input.css
+          Input.tsx
+          ProgressRing.tsx
+          Select.css
+          Select.tsx
+          Textarea.css
+          Textarea.tsx
+          Window.test.tsx
+          Window.tsx
+          index.ts
+
+
+      controllers/
+        runConfigSetThemeCommand.ts
+
+      data/
+        commandMetadata.ts
+        modelCatalog.ts
+
+      hooks/
+        useCommandSections.ts
+        useGlobalShortcuts.test.tsx
+        useGlobalShortcuts.ts
+
+      main.tsx
+      stores/
+        commandPaletteStore.test.ts
+        commandPaletteStore.ts
+        interfaceStore.test.ts
+        interfaceStore.ts
+        logsViewerStore.test.ts
+        logsViewerStore.ts
+        memoryTimelineStore.test.ts
+        memoryTimelineStore.ts
+        modelBrowserStore.test.ts
+        modelBrowserStore.ts
+        promptModalStore.test.ts
+        promptModalStore.ts
+        researchTelemetryStore.test.ts
+        researchTelemetryStore.ts
+        terminalStore.test.ts
+        terminalStore.ts
+        useModalStore.ts
+
+      styles/
+        chat-theme.css
+        dashboard-app.css
+        foundations.css
+        hacker-theme.css
+        root.css
+        shell-layout.css
+        themes.css
+
+      theme/
+        ThemeProvider.test.tsx
+        ThemeProvider.tsx
+        constants.ts
+        themeOverrides.ts
+
+      types/
+        react-window.d.ts
+
+      utils/
+        time.ts
+
+
+    stories/
+      Primitives.stories.tsx
+
+    token-normalizer.mjs
+    tokens.css
+    tokens.json
+    tsconfig.json
+    vitest.setup.ts
+
   webcomm.js
 
 start.mjs
@@ -355,11 +590,13 @@ utils/
   api-keys.mjs
   cli-args-parser.mjs
   cli-error-handler.mjs
+  cli-metadata-extractor.mjs
   cli-runner.mjs
   github.utils.mjs
   log-channel.mjs
   logger.mjs
   object.freeze.mjs
+  rate-limiter.mjs
   research.clean-query.mjs
   research.ensure-dir.mjs
   research.file-utils.mjs

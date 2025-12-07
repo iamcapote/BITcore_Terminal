@@ -1,0 +1,1134 @@
+{
+  "version": "1.1.0",
+  "generated": "2025-10-21T00:13:32.450Z",
+  "description": "CLI command metadata for parity validation and GUI binding.",
+  "commands": {
+    "chat-history": {
+      "id": "chat-history",
+      "signature": "/chat-history list",
+      "example": "/chat-history show session-id --json",
+      "category": "chat",
+      "description": "Inspect, export, or clear stored chat conversations.",
+      "helpText": "/chat-history list [--json] [--limit=20]             List recent conversations.\n/chat-history show <id> [--json] [--limit=20]       Inspect a conversation.\n/chat-history export <id> [--file=path]             Export conversation to stdout or file.\n/chat-history clear [--id=<id>] [--older-than-days=] [--json]  Clear single or multiple conversations.",
+      "usageExamples": [
+        "/chat-history list [--json] [--limit=20]             List recent conversations.",
+        "/chat-history show <id> [--json] [--limit=20]       Inspect a conversation.",
+        "/chat-history export <id> [--file=path]             Export conversation to stdout or file.",
+        "/chat-history clear [--id=<id>] [--older-than-days=] [--json]  Clear single or multiple conversations."
+      ],
+      "flags": [
+        {
+          "name": "json",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "file",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "older-than-days",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "list",
+          "description": ""
+        },
+        {
+          "name": "show",
+          "description": ""
+        },
+        {
+          "name": "export",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "chat": {
+      "id": "chat",
+      "signature": "/chat --memory",
+      "example": "/chat --character architect",
+      "category": "chat",
+      "description": "Start an interactive chat session with memory-aware personas.",
+      "helpText": "/chat [--memory=true] [--depth=short|medium|long] [--character=<slug>] - Start an interactive chat session. Requires login.\n    --memory=true: Enable memory persistence for the session.\n    --depth=<level>: Set memory depth (short, medium, long). Requires --memory=true.\n    --character=<slug>: Temporarily override the default persona for this session.\n    Persona management: /chat persona list|get|set|reset [options]\n    In-chat commands: /exit, /exitmemory, /memory stats, /research <query>, /exitresearch, /help",
+      "usageExamples": [
+        "/chat [--memory=true] [--depth=short|medium|long] [--character=<slug>] - Start an interactive chat session. Requires login."
+      ],
+      "flags": [
+        {
+          "name": "memory",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "depth",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "character",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "subcommands": [],
+      "requiresAuth": true,
+      "requiresPassword": true,
+      "shortcut": "⌘N",
+      "aliases": []
+    },
+    "diagnose": {
+      "id": "diagnose",
+      "signature": "/diagnose",
+      "example": "/diagnose --full",
+      "category": "system",
+      "description": "Run diagnostics to verify connectivity, config, and credentials.",
+      "helpText": "/diagnose [check...] - Run system diagnostics (admin only).\n  Checks: system, users, api, keys, perms, storage, all (default)",
+      "usageExamples": [
+        "/diagnose [check...] - Run system diagnostics (admin only)."
+      ],
+      "flags": [],
+      "subcommands": [],
+      "requiresAuth": false,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "export": {
+      "id": "export",
+      "signature": "/export report",
+      "example": "/export report --format markdown",
+      "category": "tools",
+      "description": "Export research reports, missions, or memory datasets.",
+      "helpText": "/export [filename] [--keep] [--overwrite] - Download the latest research result (CLI writes to disk, Web triggers file download).",
+      "usageExamples": [
+        "/export [filename] [--keep] [--overwrite] - Download the latest research result (CLI writes to disk, Web triggers file download)."
+      ],
+      "flags": [
+        {
+          "name": "keep",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "overwrite",
+          "type": "boolean",
+          "required": false
+        }
+      ],
+      "subcommands": [],
+      "requiresAuth": true,
+      "requiresPassword": true,
+      "shortcut": null,
+      "aliases": []
+    },
+    "keys": {
+      "id": "keys",
+      "signature": "/keys set <provider>",
+      "example": "/keys set venice sk-live-…",
+      "category": "system",
+      "description": "Store, rotate, and test provider API keys.",
+      "helpText": "API Key & GitHub Configuration\n\n    /keys set <service> [options]   Update stored credentials.\n\n        Services:\n            brave     Set Brave Search API key.\n            venice    Set Venice LLM API key.\n            github    Configure GitHub owner/repo/token for uploads.\n\n        Encrypted storage:\n            Set BITCORE_CONFIG_SECRET to enable encrypted credential storage.\n            Provide BITCORE_ALLOW_CONFIG_WRITES=1 (or use the encrypted flag) to allow writes.\n\n        Examples:\n            /keys set brave YOUR_BRAVE_KEY\n            /keys set venice \"\"\n            /keys set github --github-owner=user --github-repo=my-repo --github-branch=main\n            /keys set github --github-owner=user --github-repo=my-repo --github-token=YOUR_PAT\n\n    /keys check                 Show current configuration status.\n    /keys test                  Validate configured credentials.\n    /keys help                  Display this help message.",
+      "usageExamples": [
+        "/keys set <service> [options]   Update stored credentials.",
+        "/keys set brave YOUR_BRAVE_KEY",
+        "/keys set venice \"\"",
+        "/keys set github --github-owner=user --github-repo=my-repo --github-branch=main",
+        "/keys set github --github-owner=user --github-repo=my-repo --github-token=YOUR_PAT",
+        "/keys check                 Show current configuration status.",
+        "/keys test                  Validate configured credentials.",
+        "/keys help                  Display this help message."
+      ],
+      "flags": [
+        {
+          "name": "github-owner",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "github-repo",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "github-branch",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "github-token",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "set",
+          "description": ""
+        },
+        {
+          "name": "set",
+          "description": ""
+        },
+        {
+          "name": "set",
+          "description": ""
+        },
+        {
+          "name": "set",
+          "description": ""
+        },
+        {
+          "name": "set",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": true,
+      "shortcut": null,
+      "aliases": []
+    },
+    "login": {
+      "id": "login",
+      "signature": "/login <username>",
+      "example": "/login admin",
+      "category": "system",
+      "description": "Authenticate a user account via password.",
+      "helpText": "/login - Single-user mode is active. No login required.",
+      "usageExamples": [
+        "/login - Single-user mode is active. No login required."
+      ],
+      "flags": [],
+      "subcommands": [],
+      "requiresAuth": false,
+      "requiresPassword": true,
+      "shortcut": null,
+      "aliases": []
+    },
+    "logout": {
+      "id": "logout",
+      "signature": "/logout",
+      "example": "/logout",
+      "category": "system",
+      "description": "Terminate the active authenticated session.",
+      "helpText": "/logout - Single-user mode is active. Logout is a no-op.",
+      "usageExamples": [
+        "/logout - Single-user mode is active. Logout is a no-op."
+      ],
+      "flags": [],
+      "subcommands": [],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "logs": {
+      "id": "logs",
+      "signature": "/logs --tail",
+      "example": "/logs --level=warn",
+      "category": "system",
+      "description": "Stream structured application logs with severity filters.",
+      "helpText": "/logs tail [--limit=200] [--levels=info,error] [--sample=1] [--search=\"term\"] [--follow] [--duration=30s] [--max=50] [--json]  Show and optionally stream recent log entries.\n/logs stats [--since=<timestamp|ISO>]  Summarize log counts by level.\n/logs settings [--json]  Display current buffer size and supported levels.\n/logs retention <size>  Update the in-memory buffer size (50-5000).\n/logs purge  Clear the buffered log entries.",
+      "usageExamples": [
+        "/logs tail [--limit=200] [--levels=info,error] [--sample=1] [--search=\"term\"] [--follow] [--duration=30s] [--max=50] [--json]  Show and optionally stream recent log entries.",
+        "/logs stats [--since=<timestamp|ISO>]  Summarize log counts by level.",
+        "/logs settings [--json]  Display current buffer size and supported levels.",
+        "/logs retention <size>  Update the in-memory buffer size (50-5000).",
+        "/logs purge  Clear the buffered log entries."
+      ],
+      "flags": [
+        {
+          "name": "limit",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "levels",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "sample",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "search",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "follow",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "duration",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "max",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "since",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "settings",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": "⌘L",
+      "aliases": []
+    },
+    "memory": {
+      "id": "memory",
+      "signature": "/memory stats",
+      "example": "/memory recall \"venice rate limits\"",
+      "category": "memory",
+      "description": "Query, persist, and consolidate long-term memory artifacts.",
+      "helpText": "/memory stats [--layer=<name>] [--github] [--json]  Show per-layer usage metrics.\n/memory recall <query> [--layer=<name>] [--limit=5] [--short-term] [--long-term=false] [--meta=false] [--github] [--json]  Retrieve relevant memories.\n/memory store <text> [--layer=<name>] [--role=user] [--tags=a,b] [--source=origin] [--github] [--json]  Persist a new memory.\n/memory summarize [--layer=<name>] [--conversation=\"...\"] [--github]  Trigger summarize/finalize pipeline.",
+      "usageExamples": [
+        "/memory stats [--layer=<name>] [--github] [--json]  Show per-layer usage metrics.",
+        "/memory recall <query> [--layer=<name>] [--limit=5] [--short-term] [--long-term=false] [--meta=false] [--github] [--json]  Retrieve relevant memories.",
+        "/memory store <text> [--layer=<name>] [--role=user] [--tags=a,b] [--source=origin] [--github] [--json]  Persist a new memory.",
+        "/memory summarize [--layer=<name>] [--conversation=\"...\"] [--github]  Trigger summarize/finalize pipeline."
+      ],
+      "flags": [
+        {
+          "name": "layer",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "github",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "short-term",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "long-term",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "meta",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "role",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tags",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "conversation",
+          "type": "boolean",
+          "required": false
+        }
+      ],
+      "subcommands": [],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "missions": {
+      "id": "missions",
+      "signature": "/missions list",
+      "example": "/missions run mission-123",
+      "category": "missions",
+      "description": "Queue, run, and archive mission automation pipelines.",
+      "helpText": "/missions list [--status=idle] [--tag=ops] [--include-disabled] [--json]  Display stored missions.\n/missions inspect <missionId> [--json]  Show mission details.\n/missions run <missionId> [--json]  Force-run a mission immediately.\n/missions tick  Trigger the scheduler loop once to process due missions.\n/missions status [--json]  Show scheduler runtime state and feature flag status.\n/missions start  Enable and start the mission scheduler if allowed.\n/missions stop  Stop the mission scheduler loop.\n/missions templates [--json]  List available mission templates for scaffolding.\n/missions templates show <templateSlug> [--json]  Inspect a template definition.\n/missions templates save [<templateSlug>] [--from-file=path.yaml] [--name=] [--priority=] [--tags=] [--interval-minutes=|--cron=] [--timezone=] [--enable=true|false] [--payload=\"{...}\"] [--json]  Create or update a template.\n/missions templates delete <templateSlug> [--json]  Remove a template from disk.\n/missions scaffold <templateSlug> [--name=] [--tags=tag1,tag2] [--priority=5] [--interval-minutes=60|--cron=\"*\"] [--timezone=UTC] [--dry-run] [--json]  Create a mission from a template.\n/missions sync status [--json] [--repo-path=] [--file-path=] [--branch=]  Inspect GitHub sync status.\n/missions sync pull [--json] [--repo-path=] [--file-path=] [--branch=]  Load mission manifest from GitHub.\n/missions sync push --content=\"...\"|--from-file=path [--json] [--commit-message=] [--strategy=ours|theirs]  Save mission manifest to GitHub.\n/missions sync resolve [--strategy=ours|theirs] [--file-path=] [--json]  Resolve merge conflicts for the manifest.",
+      "usageExamples": [
+        "/missions list [--status=idle] [--tag=ops] [--include-disabled] [--json]  Display stored missions.",
+        "/missions inspect <missionId> [--json]  Show mission details.",
+        "/missions run <missionId> [--json]  Force-run a mission immediately.",
+        "/missions tick  Trigger the scheduler loop once to process due missions.",
+        "/missions status [--json]  Show scheduler runtime state and feature flag status.",
+        "/missions start  Enable and start the mission scheduler if allowed.",
+        "/missions stop  Stop the mission scheduler loop.",
+        "/missions templates [--json]  List available mission templates for scaffolding.",
+        "/missions templates show <templateSlug> [--json]  Inspect a template definition.",
+        "/missions templates save [<templateSlug>] [--from-file=path.yaml] [--name=] [--priority=] [--tags=] [--interval-minutes=|--cron=] [--timezone=] [--enable=true|false] [--payload=\"{...}\"] [--json]  Create or update a template.",
+        "/missions templates delete <templateSlug> [--json]  Remove a template from disk.",
+        "/missions scaffold <templateSlug> [--name=] [--tags=tag1,tag2] [--priority=5] [--interval-minutes=60|--cron=\"*\"] [--timezone=UTC] [--dry-run] [--json]  Create a mission from a template.",
+        "/missions sync status [--json] [--repo-path=] [--file-path=] [--branch=]  Inspect GitHub sync status.",
+        "/missions sync pull [--json] [--repo-path=] [--file-path=] [--branch=]  Load mission manifest from GitHub.",
+        "/missions sync push --content=\"...\"|--from-file=path [--json] [--commit-message=] [--strategy=ours|theirs]  Save mission manifest to GitHub.",
+        "/missions sync resolve [--strategy=ours|theirs] [--file-path=] [--json]  Resolve merge conflicts for the manifest."
+      ],
+      "flags": [
+        {
+          "name": "status",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tag",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "include-disabled",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "from-file",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "priority",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "tags",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "interval-minutes",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "cron",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "timezone",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "enable",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "payload",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "repo-path",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "file-path",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "branch",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "content",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "commit-message",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "strategy",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "list",
+          "description": ""
+        },
+        {
+          "name": "run",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": true,
+      "shortcut": null,
+      "aliases": []
+    },
+    "password-change": {
+      "id": "password-change",
+      "signature": "/password-change --user <username>",
+      "example": "/password-change --user admin",
+      "category": "system",
+      "description": "Change an account password or rotate credentials.",
+      "helpText": "/password-change - Not applicable in single-user mode (no passwords).",
+      "usageExamples": [
+        "/password-change - Not applicable in single-user mode (no passwords)."
+      ],
+      "flags": [],
+      "subcommands": [],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "prompts": {
+      "id": "prompts",
+      "signature": "/prompts list",
+      "example": "/prompts set executive-summary --file=summary.md",
+      "category": "system",
+      "description": "List, edit, and reset system and custom prompts.",
+      "helpText": "/prompts list [--tags=a,b] [--limit=20] [--json]                 List prompt summaries.\n/prompts get <id> [--json]                                      Fetch a prompt by id.\n/prompts save [--id=<id>] --title=\"...\" --body=\"...\" [--description=\"...\"] [--tags=a,b] [--metadata=\"{}\"] [--file=path] [--json]  Create or update a prompt.\n/prompts delete <id>                                            Remove a prompt.\n/prompts exists <id>                                            Check if a prompt exists.\n/prompts search [--query=text] [--tags=a,b] [--limit=10] [--include-body=false] [--json]  Search prompts.\n/prompts github <status|pull|push|sync> [--repo=<path>] [--directory=prompts] [--branch=main] [--remote=origin] [--json]  Manage GitHub prompt sync.",
+      "usageExamples": [
+        "/prompts list [--tags=a,b] [--limit=20] [--json]                 List prompt summaries.",
+        "/prompts get <id> [--json]                                      Fetch a prompt by id.",
+        "/prompts save [--id=<id>] --title=\"...\" --body=\"...\" [--description=\"...\"] [--tags=a,b] [--metadata=\"{}\"] [--file=path] [--json]  Create or update a prompt.",
+        "/prompts delete <id>                                            Remove a prompt.",
+        "/prompts exists <id>                                            Check if a prompt exists.",
+        "/prompts search [--query=text] [--tags=a,b] [--limit=10] [--include-body=false] [--json]  Search prompts.",
+        "/prompts github <status|pull|push|sync> [--repo=<path>] [--directory=prompts] [--branch=main] [--remote=origin] [--json]  Manage GitHub prompt sync."
+      ],
+      "flags": [
+        {
+          "name": "tags",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "id",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "title",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "body",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "description",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "metadata",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "file",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "query",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "include-body",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "repo",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "directory",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "branch",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "remote",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "list",
+          "description": ""
+        },
+        {
+          "name": "get",
+          "description": ""
+        },
+        {
+          "name": "delete",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "research-github": {
+      "id": "research-github",
+      "signature": "/research-github <owner>/<repo>",
+      "example": "/research-github iamcapote/bitcore --topic telemetry",
+      "category": "research",
+      "description": "Augment research with GitHub repository context and code insights.",
+      "helpText": "/research-github verify [--json]                                 Validate GitHub credentials and show repository metadata.\n/research-github list [path] [--ref=branchOrSha] [--json]        List files under the research directory (defaults to repo root).\n/research-github fetch <path> [--ref=...] [--stdout] [--json]    Fetch a file, optionally print to stdout or emit JSON metadata.\n/research-github download <path> [--out=local] [--ref=...]       Save a repository file to the local filesystem.\n/research-github upload --path=repo/file.md [--file=local.md|--content=\"...\"] [--message=\"Commit msg\"] [--branch=name] [--json]  Upload or update a single file.\n/research-github push --manifest=files.json [--message=\"Commit\" ] [--branch=name] [--json]  Push multiple files using a JSON manifest.",
+      "usageExamples": [
+        "/research-github verify [--json]                                 Validate GitHub credentials and show repository metadata.",
+        "/research-github list [path] [--ref=branchOrSha] [--json]        List files under the research directory (defaults to repo root).",
+        "/research-github fetch <path> [--ref=...] [--stdout] [--json]    Fetch a file, optionally print to stdout or emit JSON metadata.",
+        "/research-github download <path> [--out=local] [--ref=...]       Save a repository file to the local filesystem.",
+        "/research-github upload --path=repo/file.md [--file=local.md|--content=\"...\"] [--message=\"Commit msg\"] [--branch=name] [--json]  Upload or update a single file.",
+        "/research-github push --manifest=files.json [--message=\"Commit\" ] [--branch=name] [--json]  Push multiple files using a JSON manifest."
+      ],
+      "flags": [
+        {
+          "name": "json",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "ref",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "stdout",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "out",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "file",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "content",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "message",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "branch",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "manifest",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "list",
+          "description": ""
+        },
+        {
+          "name": "fetch",
+          "description": ""
+        },
+        {
+          "name": "upload",
+          "description": ""
+        },
+        {
+          "name": "push",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "research-scheduler": {
+      "id": "research-scheduler",
+      "signature": "/research-scheduler list",
+      "example": "/research-scheduler create daily-news --cron \"0 9 * * *\"",
+      "category": "missions",
+      "description": "Create and manage scheduled research runs.",
+      "helpText": "/research-scheduler <action>\n  Manage the GitHub research request scheduler.\n  Actions:\n    status – show scheduler status and last run summary (default).\n    run    – trigger an immediate polling run.\n    start  – start the cron worker using configured cadence.\n    stop   – stop the cron worker.",
+      "usageExamples": [
+        "/research-scheduler <action>"
+      ],
+      "flags": [],
+      "subcommands": [],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "research": {
+      "id": "research",
+      "signature": "/research <query>",
+      "example": "/research \"latest agentframework update\"",
+      "category": "research",
+      "description": "Run adaptive deep research with Venice, GitHub, and memory enrichment.",
+      "helpText": "Usage:\n    /research <query> [--depth=<number>] [--breadth=<number>] [--classify] [--verbose]\n    /research list [--limit=<n>]\n    /research download <artifact-id>\n\nRun Mode:\n    Executes the research pipeline for the provided query. After completion you can Download, Upload (GitHub), Keep, or Discard the result.\n\nArchive Mode:\n    list       Show durable research artifacts saved locally.\n    download   Print or download an archived artifact by id.\n\nOptions:\n    --depth=<number>     Depth between 1-6 (default: 2).\n    --breadth=<number>   Breadth between 1-6 (default: 3).\n    --classify           Enhance the query via token classification.\n    --langchain-query-chain[=true|false]\n                         Override the LangChain query chain flag (default: environment setting).\n    --verbose            Emit detailed progress logs.\n\nExamples:\n    /research history of artificial intelligence\n    /research benefits of renewable energy --depth=3 --breadth=5\n    /research list --limit=5\n    /research download 2025-10-15T18-20-00-archon",
+      "usageExamples": [
+        "/research <query> [--depth=<number>] [--breadth=<number>] [--classify] [--verbose]",
+        "/research list [--limit=<n>]",
+        "/research download <artifact-id>",
+        "/research history of artificial intelligence",
+        "/research benefits of renewable energy --depth=3 --breadth=5",
+        "/research list --limit=5",
+        "/research download 2025-10-15T18-20-00-archon"
+      ],
+      "flags": [
+        {
+          "name": "depth",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "breadth",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "classify",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "verbose",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "langchain-query-chain",
+          "type": "boolean",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "list",
+          "description": ""
+        },
+        {
+          "name": "list",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": true,
+      "shortcut": "⌘R",
+      "aliases": [
+        "/r"
+      ]
+    },
+    "github-sync": {
+      "id": "github-sync",
+      "signature": "/github-sync verify",
+      "example": "/github-sync push --files=notes.md",
+      "category": "tools",
+      "description": "Mirror research artifacts to GitHub repositories.",
+      "helpText": "/github-sync verify [--repo=<local path>]                      Validate access to the configured research repository.\n/github-sync pull [--repo=<local path>] [--path=subdir]        List files under the research root (alias: list).\n/github-sync push --repo=<local path> --files=a.md,b.md [--branch=name] [--message=\"Commit\"]\n/github-sync upload --repo=<local path> (--files=a.md|--path=repo/file.md --content=\"...\") [--branch=name] [--message=\"Commit\"]\n/github-sync fetch --path=repo/file.md [--ref=sha]             Fetch a single file and print metadata.",
+      "usageExamples": [
+        "/github-sync verify [--repo=<local path>]                      Validate access to the configured research repository.",
+        "/github-sync pull [--repo=<local path>] [--path=subdir]        List files under the research root (alias: list).",
+        "/github-sync push --repo=<local path> --files=a.md,b.md [--branch=name] [--message=\"Commit\"]",
+        "/github-sync upload --repo=<local path> (--files=a.md|--path=repo/file.md --content=\"...\") [--branch=name] [--message=\"Commit\"]",
+        "/github-sync fetch --path=repo/file.md [--ref=sha]             Fetch a single file and print metadata."
+      ],
+      "flags": [
+        {
+          "name": "repo",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "files",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "branch",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "message",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "content",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "ref",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "pull",
+          "description": ""
+        },
+        {
+          "name": "push",
+          "description": ""
+        },
+        {
+          "name": "upload",
+          "description": ""
+        },
+        {
+          "name": "fetch",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "security": {
+      "id": "security",
+      "signature": "/security audit",
+      "example": "/security rotate-keys",
+      "category": "system",
+      "description": "Run security audits and manage rotation policies.",
+      "helpText": "/security [status]  Show CSRF, rate limiting, and validation ranges for research surfaces.",
+      "usageExamples": [
+        "/security [status]  Show CSRF, rate limiting, and validation ranges for research surfaces."
+      ],
+      "flags": [],
+      "subcommands": [],
+      "requiresAuth": true,
+      "requiresPassword": true,
+      "shortcut": null,
+      "aliases": []
+    },
+    "status": {
+      "id": "status",
+      "signature": "/status",
+      "example": "/status",
+      "category": "system",
+      "description": "Display system status, uptime, and provider readiness.",
+      "helpText": "/status - Display your current login status, role, and API key configuration status.",
+      "usageExamples": [
+        "/status - Display your current login status, role, and API key configuration status."
+      ],
+      "flags": [],
+      "subcommands": [],
+      "requiresAuth": false,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "storage": {
+      "id": "storage",
+      "signature": "/storage stats",
+      "example": "/storage cleanup --days-old=30",
+      "category": "system",
+      "description": "Review storage usage and clean up archived artifacts.",
+      "helpText": "/storage list [path] [--ref=branchOrSha] [--json]              List stored research artefacts in GitHub.\n/storage get <path> [--ref=...] [--out=local.md] [--overwrite] Retrieve an artefact (prints or downloads when running on the Web terminal).\n/storage save <path> [--message=\"Commit msg\"] [--branch=name] [--keep]  Upload the cached research result using the provided filename.\n/storage delete <path> [--message=\"Commit msg\"] [--branch=name]         Remove an artefact from GitHub storage.",
+      "usageExamples": [
+        "/storage list [path] [--ref=branchOrSha] [--json]              List stored research artefacts in GitHub.",
+        "/storage get <path> [--ref=...] [--out=local.md] [--overwrite] Retrieve an artefact (prints or downloads when running on the Web terminal).",
+        "/storage save <path> [--message=\"Commit msg\"] [--branch=name] [--keep]  Upload the cached research result using the provided filename.",
+        "/storage delete <path> [--message=\"Commit msg\"] [--branch=name]         Remove an artefact from GitHub storage."
+      ],
+      "flags": [
+        {
+          "name": "ref",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "out",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "overwrite",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "message",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "branch",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "keep",
+          "type": "boolean",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "list",
+          "description": ""
+        },
+        {
+          "name": "get",
+          "description": ""
+        },
+        {
+          "name": "delete",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "terminal": {
+      "id": "terminal",
+      "signature": "/terminal open",
+      "example": "/terminal open research-environment",
+      "category": "system",
+      "description": "Launch the remote terminal environment.",
+      "helpText": "/terminal prefs [--telemetry-panel=true|false] [--memory-panel=true|false] [--model-browser=true|false] [--telemetry-indicator=true|false] [--log-indicator=true|false] [--retain-history=true|false] [--auto-scroll=true|false] [--json]  View or update terminal preferences.\n/terminal prefs --reset  Reset terminal preferences to defaults.\n/terminal reset  Alias for resetting terminal preferences.",
+      "usageExamples": [
+        "/terminal prefs [--telemetry-panel=true|false] [--memory-panel=true|false] [--model-browser=true|false] [--telemetry-indicator=true|false] [--log-indicator=true|false] [--retain-history=true|false] [--auto-scroll=true|false] [--json]  View or update terminal preferences.",
+        "/terminal prefs --reset  Reset terminal preferences to defaults.",
+        "/terminal reset  Alias for resetting terminal preferences."
+      ],
+      "flags": [
+        {
+          "name": "telemetry-panel",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "memory-panel",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "model-browser",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "telemetry-indicator",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "log-indicator",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "retain-history",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "auto-scroll",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "json",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "reset",
+          "type": "boolean",
+          "required": false
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "reset",
+          "description": ""
+        }
+      ],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    },
+    "users": {
+      "id": "users",
+      "signature": "/users list",
+      "example": "/users invite ops@example.com",
+      "category": "system",
+      "description": "Administer user accounts, roles, and invitations.",
+      "helpText": "/users <action> [options] - Admin-only compatibility wrapper.\nActions:\n  list                     List users via the registered directory adapter.\n  create <username>        Create a user when an adapter is installed.\n  delete <username>        Delete a user when an adapter is installed.\nNotes:\n  Single-user deployments print \"User management is disabled in single-user mode. Install an adapter via userManager.registerUserDirectoryAdapter() to enable multi-user operations.\" until an adapter is registered.",
+      "usageExamples": [
+        "/users <action> [options] - Admin-only compatibility wrapper."
+      ],
+      "flags": [],
+      "subcommands": [],
+      "requiresAuth": true,
+      "requiresPassword": false,
+      "shortcut": null,
+      "aliases": []
+    }
+  },
+  "categories": {
+    "chat": [
+      "chat",
+      "chat-history"
+    ],
+    "system": [
+      "diagnose",
+      "keys",
+      "login",
+      "logout",
+      "logs",
+      "password-change",
+      "prompts",
+      "security",
+      "status",
+      "storage",
+      "terminal",
+      "users"
+    ],
+    "tools": [
+      "export",
+      "github-sync"
+    ],
+    "memory": [
+      "memory"
+    ],
+    "missions": [
+      "missions",
+      "research-scheduler"
+    ],
+    "research": [
+      "research",
+      "research-github"
+    ]
+  }
+}

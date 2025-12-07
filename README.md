@@ -46,6 +46,7 @@ This application automates research using AI-driven querying and summarization. 
    - Handles commands (`/research`, `/chat`, `/keys`, etc.) parsed client-side (`app/public/command-processor.js`) and sent to the backend via structured messages (`command`, `chat-message`, `input`).
    - Supports interactive prompts initiated by the backend (for passwords, research parameters, or post-research actions) via `wsPrompt` and the corresponding handlers in `app/public/terminal.js`.
    - Manages distinct interaction modes ('command', 'chat', 'research', 'prompt') so prompts and long-running commands cannot strand the UI. When `RESEARCH_WS_CSRF_REQUIRED=true`, the server also rotates per-session CSRF tokens and rejects commands that omit the latest token.
+   - **Nova IDE Shell:** `app/nova/` hosts the React/Tailwind workspace with resizable surface stages, telemetry footer, and terminal context. Use `pnpm run nova:dev` for local development and `pnpm run nova:build` for production bundles.
 
 3. **Research Engine & Archive**
    - `app/infrastructure/research/research.engine.mjs` coordinates breadth/depth traversal using `app/infrastructure/research/research.path.mjs` while Brave requests run through `app/infrastructure/search/search.providers.mjs` and `app/utils/research.rate-limiter.mjs`.
@@ -184,6 +185,11 @@ app/
       css/                    – Shared styling assets
       style.css               – Terminal styling
       webcomm.js              – WebSocket connection manager
+
+   nova/
+      src/                    – Nova React shell, layouts, stores, views
+      package.json            – Nova workspace manifest and scripts
+      vite.config.ts          – Nova build configuration
 
    tests/
       …                       – Vitest suites for commands, providers, and engine

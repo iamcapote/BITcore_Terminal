@@ -1,0 +1,125 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+@layer base {
+	:root {
+		color-scheme: dark;
+		--radius: 0.875rem;
+		--background: 222 47% 6%;
+		--foreground: 213 31% 91%;
+		--muted: 222 28% 16%;
+		--muted-foreground: 215 20% 65%;
+		--popover: 222 49% 8%;
+		--popover-foreground: 213 31% 91%;
+		--card: 222 49% 8%;
+		--card-foreground: 213 31% 91%;
+		--border: 223 36% 18%;
+		--input: 223 36% 18%;
+		--primary: 221 83% 53%;
+		--primary-foreground: 210 40% 98%;
+		--secondary: 264 83% 62%;
+		--secondary-foreground: 210 40% 98%;
+		--accent: 200 98% 53%;
+		--accent-foreground: 210 40% 98%;
+		--destructive: 0 72% 51%;
+		--destructive-foreground: 210 40% 98%;
+		--ring: 221 83% 53%;
+		--shell-gradient-from: 222 47% 10%;
+		--shell-gradient-via: 222 44% 14%;
+		--shell-gradient-to: 230 45% 6%;
+	}
+
+	[data-nova-theme="dark"] {
+		color-scheme: dark;
+	}
+
+	[data-nova-theme="light"] {
+		color-scheme: light;
+		--background: 210 28% 97%;
+		--foreground: 232 20% 16%;
+		--muted: 210 32% 90%;
+		--muted-foreground: 222 24% 32%;
+		--popover: 0 0% 100%;
+		--popover-foreground: 232 20% 16%;
+		--card: 210 26% 98%;
+		--card-foreground: 232 20% 16%;
+		--border: 214 26% 78%;
+		--input: 214 26% 78%;
+		--primary: 224 78% 56%;
+		--primary-foreground: 210 40% 98%;
+		--secondary: 268 68% 58%;
+		--secondary-foreground: 210 40% 100%;
+		--accent: 198 82% 48%;
+		--accent-foreground: 210 40% 98%;
+		--destructive: 0 72% 46%;
+		--destructive-foreground: 0 0% 100%;
+		--ring: 224 78% 56%;
+		--shell-gradient-from: 210 32% 95%;
+		--shell-gradient-via: 204 38% 91%;
+		--shell-gradient-to: 200 42% 87%;
+	}
+
+	[data-nova-theme="retro"] {
+		color-scheme: light;
+		--background: 0 0% 66%;
+		--foreground: 210 8% 18%;
+		--muted: 0 0% 78%;
+		--muted-foreground: 210 12% 26%;
+		--popover: 0 0% 86%;
+		--popover-foreground: 210 10% 16%;
+		--card: 0 0% 80%;
+		--card-foreground: 210 10% 18%;
+		--border: 0 0% 44%;
+		--input: 0 0% 44%;
+		--primary: 210 100% 28%;
+		--primary-foreground: 210 30% 96%;
+		--secondary: 160 80% 32%;
+		--secondary-foreground: 210 30% 96%;
+		--accent: 190 70% 42%;
+		--accent-foreground: 210 30% 96%;
+		--destructive: 0 82% 34%;
+		--destructive-foreground: 0 0% 96%;
+		--ring: 210 100% 28%;
+		--shell-gradient-from: 0 0% 78%;
+		--shell-gradient-via: 0 0% 72%;
+		--shell-gradient-to: 0 0% 64%;
+	}
+
+	* {
+		border-color: hsl(var(--border));
+	}
+
+	body {
+		background-color: hsl(var(--background));
+		color: hsl(var(--foreground));
+		font-feature-settings: "ss01" on, "cv02" on, "cv03" on;
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
+	}
+
+	::selection {
+		background-color: hsl(var(--primary) / 0.2);
+	}
+
+	:focus-visible {
+		outline: 2px solid hsl(var(--ring));
+		outline-offset: 2px;
+	}
+}
+
+@layer utilities {
+	.text-balance {
+		text-wrap: balance;
+	}
+
+	.is-unwired {
+		border-color: hsl(var(--destructive));
+		box-shadow: 0 0 0 1px hsl(var(--destructive) / 0.6);
+	}
+
+	.is-partial {
+		border-color: hsl(var(--accent));
+		box-shadow: 0 0 0 1px hsl(var(--accent) / 0.45);
+	}
+}

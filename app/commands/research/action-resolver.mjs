@@ -4,14 +4,22 @@
  * How: Recognizes supported subcommands, falls back to run, and preserves remaining arguments.
  */
 
-const SUPPORTED_ACTIONS = Object.freeze(['run', 'list', 'download']);
+const SUPPORTED_ACTIONS = Object.freeze(['run', 'list', 'download', 'preferences']);
+
+const ACTION_ALIASES = Object.freeze({
+  prefs: 'preferences',
+  preference: 'preferences',
+  default: 'preferences',
+  defaults: 'preferences'
+});
 
 function normalizeAction(value, fallback = 'run') {
   if (!value) {
     return fallback;
   }
   const normalized = String(value).trim().toLowerCase();
-  return SUPPORTED_ACTIONS.includes(normalized) ? normalized : fallback;
+  const canonical = ACTION_ALIASES[normalized] || normalized;
+  return SUPPORTED_ACTIONS.includes(canonical) ? canonical : fallback;
 }
 
 export function resolveResearchAction({ positionalArgs = [], flags = {}, defaultAction = 'run' } = {}) {
@@ -47,6 +55,10 @@ export function resolveResearchAction({ positionalArgs = [], flags = {}, default
 
 export function isResearchArchiveAction(action) {
   return action === 'list' || action === 'download';
+}
+
+export function isResearchPreferencesAction(action) {
+  return action === 'preferences';
 }
 
 export function getSupportedResearchActions() {

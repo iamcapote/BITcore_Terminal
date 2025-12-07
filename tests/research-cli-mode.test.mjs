@@ -20,6 +20,13 @@ const validateVisibilityOverrideMock = vi.hoisted(() => vi.fn(() => ({ ok: true,
 const listResearchArchiveMock = vi.hoisted(() => vi.fn(async () => ({ success: true, entries: [] })));
 const downloadResearchArchiveMock = vi.hoisted(() => vi.fn(async () => ({ success: true })));
 const saveResearchArtifactMock = vi.hoisted(() => vi.fn(async () => ({ id: 'test-id', createdAt: new Date().toISOString() })));
+const researchPreferencesSnapshot = vi.hoisted(() => Object.freeze({
+  defaults: Object.freeze({ depth: 2, breadth: 3, isPublic: false }),
+  updatedAt: 1748265600000
+}));
+const getResearchPreferencesMock = vi.hoisted(() => vi.fn(async () => researchPreferencesSnapshot));
+const updateResearchPreferencesMock = vi.hoisted(() => vi.fn(async () => researchPreferencesSnapshot));
+const resetResearchPreferencesMock = vi.hoisted(() => vi.fn(async () => researchPreferencesSnapshot));
 
 vi.mock('../app/infrastructure/research/research.engine.mjs', () => ({
   ResearchEngine: vi.fn(() => ({
@@ -55,6 +62,12 @@ vi.mock('../app/features/research/research.defaults.mjs', () => ({
   validateBreadthOverride: validateBreadthOverrideMock,
   validateVisibilityOverride: validateVisibilityOverrideMock,
   RESEARCH_RANGE_LIMITS: { depth: { min: 1, max: 6 }, breadth: { min: 1, max: 6 } }
+}));
+
+vi.mock('../app/features/preferences/index.mjs', () => ({
+  getResearchPreferences: getResearchPreferencesMock,
+  updateResearchPreferences: updateResearchPreferencesMock,
+  resetResearchPreferences: resetResearchPreferencesMock
 }));
 
 vi.mock('../app/commands/research/memory-context.mjs', () => ({
@@ -129,6 +142,9 @@ beforeEach(() => {
   validateBreadthOverrideMock.mockClear();
   validateVisibilityOverrideMock.mockClear();
   ResearchEngine.mockClear();
+  getResearchPreferencesMock.mockClear().mockResolvedValue(researchPreferencesSnapshot);
+  updateResearchPreferencesMock.mockClear().mockResolvedValue(researchPreferencesSnapshot);
+  resetResearchPreferencesMock.mockClear().mockResolvedValue(researchPreferencesSnapshot);
 });
 
 describe('executeResearch (CLI mode)', () => {
@@ -248,5 +264,69 @@ describe('executeResearch (CLI mode)', () => {
     expect(ResearchEngine).toHaveBeenCalled();
     const engineConfigArg = ResearchEngine.mock.calls.at(-1)?.[0] ?? {};
     expect(engineConfigArg.langChainQueryChainOverride).toBe(false);
+  });
+});
+
+describe('executeResearch preferences subcommand', () => {
+  test('reads current preferences when no flags are provided', async () => {
+    const outputs = [];
+    const errors = [];
+
+    const result = await executeResearch({
+      positionalArgs: ['preferences'],
+      output: (value) => outputs.push(value),
+      error: (value) => errors.push(value),
+      currentUser: { username: 'operator', role: 'admin' }
+    });
+
+    expect(result.success).toBe(true);
+    expect(getResearchPreferencesMock).toHaveBeenCalledTimes(1);
+    expect(updateResearchPreferencesMock).not.toHaveBeenCalled();
+    expect(resetResearchPreferencesMock).not.toHaveBeenCalled();
+    expect(outputs[0]).toContain('Research Defaults');
+    expect(outputs.at(-1)).toEqual({ type: 'output', data: '', keepDisabled: false });
+    expect(errors).toHaveLength(0);
+  });
+
+  test('updates preferences when flags are supplied', async () => {
+    const outputs = [];
+    const errors = [];
+
+    validateDepthOverrideMock.mockReturnValueOnce({ ok: true, provided: true, value: 4 });
+    validateBreadthOverrideMock.mockReturnValueOnce({ ok: true, provided: true, value: 5 });
+    validateVisibilityOverrideMock.mockReturnValueOnce({ ok: true, provided: true, value: true });
+
+    await executeResearch({
+      positionalArgs: ['preferences'],
+      flags: { depth: '4', breadth: '5', public: 'true' },
+      output: (value) => outputs.push(value),
+      error: (value) => errors.push(value),
+      currentUser: { username: 'operator', role: 'admin' }
+    });
+
+    expect(updateResearchPreferencesMock).toHaveBeenCalledWith({ defaults: { depth: 4, breadth: 5, isPublic: true } });
+    expect(getResearchPreferencesMock).not.toHaveBeenCalled();
+    expect(resetResearchPreferencesMock).not.toHaveBeenCalled();
+    expect(outputs.at(-1)).toEqual({ type: 'output', data: '', keepDisabled: false });
+    expect(errors).toHaveLength(0);
+  });
+
+  test('resets preferences when the reset flag is true', async () => {
+    const outputs = [];
+    const errors = [];
+
+    const result = await executeResearch({
+      positionalArgs: ['preferences'],
+      flags: { reset: 'true' },
+      output: (value) => outputs.push(value),
+      error: (value) => errors.push(value),
+      currentUser: { username: 'operator', role: 'admin' }
+    });
+
+    expect(result.success).toBe(true);
+    expect(resetResearchPreferencesMock).toHaveBeenCalledTimes(1);
+    expect(updateResearchPreferencesMock).not.toHaveBeenCalled();
+    expect(outputs.at(-1)).toEqual({ type: 'output', data: '', keepDisabled: false });
+    expect(errors).toHaveLength(0);
   });
 });
