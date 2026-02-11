@@ -28,6 +28,7 @@ import { setupModelBrowserRoutes } from './features/ai/model-browser/index.mjs';
 import { setupChatHistoryRoutes } from './features/chat-history/routes.mjs';
 import { setupLogRoutes } from './features/logs/routes.mjs';
 import { setupChatPersonaRoutes } from './features/chat/chat-persona.routes.mjs';
+import { setupAdminRoutes } from './features/admin/routes.mjs';
 import { getResearchRequestScheduler, getResearchSchedulerConfig } from './features/research/github-sync/index.mjs';
 import { createModuleLogger } from './utils/logger.mjs';
 import { safeSend } from './utils/websocket.utils.mjs';
@@ -61,6 +62,7 @@ setupModelBrowserRoutes(app, { logger: logger.child('routes.model-browser') });
 setupChatHistoryRoutes(app, { logger: logger.child('routes.chat-history') });
 setupLogRoutes(app, { logger: logger.child('routes.logs') });
 setupChatPersonaRoutes(app, { logger: logger.child('routes.chat-persona') });
+setupAdminRoutes(app, { logger: logger.child('routes.admin') });
 
 // --- WebSocket Setup ---
 // Ensure the server object is correctly passed

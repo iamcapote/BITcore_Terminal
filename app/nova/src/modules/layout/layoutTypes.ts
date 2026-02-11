@@ -20,6 +20,7 @@ export type SurfaceGroup =
   | "communication";
 
 export type SurfaceId =
+  | "dashboard"
   | "explorer"
   | "vectors"
   | "databases"
@@ -35,7 +36,9 @@ export type SurfaceId =
   | "prompts"
   | "missions"
   | "githubSync"
-  | "logs";
+  | "logs"
+  | "browser"
+  | "settings";
 
 export interface SurfaceDefinition {
   readonly id: SurfaceId;

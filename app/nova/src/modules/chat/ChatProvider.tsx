@@ -34,6 +34,7 @@ interface ChatContextValue extends ChatState {
 	readonly startChat: (config?: Partial<ChatSessionConfig>) => Promise<void>;
 	readonly sendMessage: (message: string) => Promise<void>;
 	readonly sendCommand: (command: string) => Promise<void>;
+	readonly cancelResponse: () => void;
 	readonly exitChat: () => Promise<void>;
 	readonly resetChat: () => void;
 }
@@ -71,7 +72,7 @@ export function ChatProvider({ children }: PropsWithChildren): JSX.Element {
 				if (!raw) {
 					return;
 				}
-				dispatch({ type: "APPEND_MESSAGE", message: createChatMessage("assistant", raw) });
+				dispatch({ type: "RECEIVE_RESPONSE", content: raw });
 			}),
 			registerWebCommHandler("chat-exit", () => {
 				dispatch({ type: "CHAT_EXIT" });
@@ -130,17 +131,22 @@ export function ChatProvider({ children }: PropsWithChildren): JSX.Element {
 			if (!state.active) {
 				throw new Error("Chat session not active.");
 			}
+			if (state.pendingResponseId) {
+				throw new Error("Wait for the current response to finish.");
+			}
 			const outgoing = createChatMessage("user", trimmed);
 			dispatch({ type: "APPEND_MESSAGE", message: outgoing });
+			dispatch({ type: "START_RESPONSE", message: createChatMessage("assistant", "…", "streaming") });
 			try {
 				await sendChatMessage(trimmed);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				dispatch({ type: "MESSAGE_FAILED", id: outgoing.id, error: message });
+				dispatch({ type: "RESPONSE_FAILED", error: message });
 				throw new Error(message);
 			}
 		},
-		[state.active, sendChatMessage],
+		[state.active, state.pendingResponseId, sendChatMessage],
 	);
 
 	const sendCommand = useCallback(
@@ -166,6 +172,10 @@ export function ChatProvider({ children }: PropsWithChildren): JSX.Element {
 		await sendCommand("/exit");
 	}, [sendCommand]);
 
+	const cancelResponse = useCallback(() => {
+		dispatch({ type: "CANCEL_RESPONSE" });
+	}, []);
+
 	const resetChat = useCallback(() => {
 		dispatch({ type: "RESET" });
 	}, []);
@@ -176,10 +186,11 @@ export function ChatProvider({ children }: PropsWithChildren): JSX.Element {
 			startChat,
 			sendMessage,
 			sendCommand,
+			cancelResponse,
 			exitChat,
 			resetChat,
 		}),
-		[state, startChat, sendMessage, sendCommand, exitChat, resetChat],
+		[state, startChat, sendMessage, sendCommand, cancelResponse, exitChat, resetChat],
 	);
 
 	return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;

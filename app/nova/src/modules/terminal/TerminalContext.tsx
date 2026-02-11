@@ -499,7 +499,7 @@ function isProgressLike(text: string): boolean {
 }
 
 function sanitizeOutput(text: string): string {
-	return text.replace(/^[[]command[]][\s:>\-]*/i, "");
+	return text.replace(/^\[command\][\s:>-]*/i, "");
 }
 
 function createId(): string {

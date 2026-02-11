@@ -8,7 +8,7 @@
 
 export type ChatMessageRole = "system" | "user" | "assistant";
 
-export type ChatMessageStatus = "normal" | "failed";
+export type ChatMessageStatus = "normal" | "failed" | "streaming";
 
 export interface ChatMessage {
   readonly id: string;
@@ -57,6 +57,8 @@ export interface ChatState {
   readonly memoryGithubEnabled: boolean;
   readonly pending: boolean;
   readonly pendingConfig: ChatSessionConfig | null;
+  readonly pendingResponseId: string | null;
+  readonly discardNextResponse: boolean;
   readonly lastConfig: ChatSessionConfig;
   readonly lastError: string | null;
 }

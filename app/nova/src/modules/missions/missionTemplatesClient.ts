@@ -28,8 +28,6 @@ import {
   type MissionDraft,
 } from "@/modules/missions/missionsClient";
 
-const JSON_HEADERS = { "Content-Type": "application/json" } as const;
-
 export interface MissionTemplate {
   readonly slug: string;
   readonly name: string;

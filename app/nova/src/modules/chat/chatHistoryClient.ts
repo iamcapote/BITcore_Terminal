@@ -206,7 +206,7 @@ function normalizeUser(raw: unknown): ChatConversationUser | null {
 	};
 }
 
-async function safeParseJson(response: Response): Promise<any> {
+async function safeParseJson(response: Response): Promise<unknown> {
 	const text = await response.text();
 	if (!text) {
 		return null;

@@ -40,6 +40,8 @@ export const INITIAL_CHAT_STATE: ChatState = {
   memoryGithubEnabled: DEFAULT_CHAT_CONFIG.memoryGithubEnabled,
   pending: false,
   pendingConfig: null,
+  pendingResponseId: null,
+  discardNextResponse: false,
   lastConfig: DEFAULT_CHAT_CONFIG,
   lastError: null,
 };
@@ -48,6 +50,10 @@ export type ChatAction =
   | { readonly type: "REQUEST_START"; readonly config: ChatSessionConfig }
   | { readonly type: "CHAT_READY"; readonly prompt: string; readonly persona: ChatPersona | null; readonly model: string | null }
   | { readonly type: "APPEND_MESSAGE"; readonly message: ChatMessage }
+  | { readonly type: "START_RESPONSE"; readonly message: ChatMessage }
+  | { readonly type: "RECEIVE_RESPONSE"; readonly content: string }
+  | { readonly type: "RESPONSE_FAILED"; readonly error: string }
+  | { readonly type: "CANCEL_RESPONSE"; readonly reason?: string }
   | { readonly type: "MESSAGE_FAILED"; readonly id: string; readonly error: string }
   | { readonly type: "CHAT_EXIT" }
   | { readonly type: "CHAT_ERROR"; readonly error: string }
@@ -63,6 +69,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         active: false,
         pending: true,
         pendingConfig: action.config,
+        pendingResponseId: null,
+        discardNextResponse: false,
         lastConfig: action.config,
         lastError: null,
         history: [],
@@ -76,6 +84,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         active: true,
         pending: false,
         pendingConfig: null,
+        pendingResponseId: null,
+        discardNextResponse: false,
         prompt: action.prompt || DEFAULT_CHAT_PROMPT,
         model: action.model ?? config.model ?? state.model,
         persona: action.persona,
@@ -93,6 +103,87 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return {
         ...state,
         history: nextHistory,
+      };
+    }
+    case "START_RESPONSE": {
+      if (state.pendingResponseId) {
+        return state;
+      }
+      const nextHistory = [...state.history, action.message];
+      if (nextHistory.length > MAX_CHAT_HISTORY) {
+        nextHistory.splice(0, nextHistory.length - MAX_CHAT_HISTORY);
+      }
+      return {
+        ...state,
+        history: nextHistory,
+        pendingResponseId: action.message.id,
+        discardNextResponse: false,
+      };
+    }
+    case "RECEIVE_RESPONSE": {
+      if (state.discardNextResponse) {
+        return {
+          ...state,
+          pendingResponseId: null,
+          discardNextResponse: false,
+        };
+      }
+      if (state.pendingResponseId) {
+        const nextHistory = state.history.map((entry) =>
+          entry.id === state.pendingResponseId
+            ? { ...entry, content: action.content, status: "normal" as ChatMessageStatus, error: undefined }
+            : entry,
+        );
+        return {
+          ...state,
+          history: nextHistory,
+          pendingResponseId: null,
+          discardNextResponse: false,
+        };
+      }
+      const nextHistory = [...state.history, createChatMessage("assistant", action.content)];
+      if (nextHistory.length > MAX_CHAT_HISTORY) {
+        nextHistory.splice(0, nextHistory.length - MAX_CHAT_HISTORY);
+      }
+      return {
+        ...state,
+        history: nextHistory,
+      };
+    }
+    case "RESPONSE_FAILED": {
+      if (!state.pendingResponseId) {
+        return {
+          ...state,
+          lastError: action.error,
+        };
+      }
+      const nextHistory = state.history.map((entry) =>
+        entry.id === state.pendingResponseId
+          ? { ...entry, status: "failed" as ChatMessageStatus, error: action.error }
+          : entry,
+      );
+      return {
+        ...state,
+        history: nextHistory,
+        pendingResponseId: null,
+        discardNextResponse: false,
+        lastError: action.error,
+      };
+    }
+    case "CANCEL_RESPONSE": {
+      if (!state.pendingResponseId) {
+        return state;
+      }
+      const nextHistory = state.history.filter((entry) => entry.id !== state.pendingResponseId);
+      nextHistory.push(createChatMessage("system", action.reason ?? "Response canceled."));
+      if (nextHistory.length > MAX_CHAT_HISTORY) {
+        nextHistory.splice(0, nextHistory.length - MAX_CHAT_HISTORY);
+      }
+      return {
+        ...state,
+        history: nextHistory,
+        pendingResponseId: null,
+        discardNextResponse: true,
       };
     }
     case "MESSAGE_FAILED": {
@@ -113,11 +204,28 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         active: false,
         pending: false,
         pendingConfig: null,
+        pendingResponseId: null,
+        discardNextResponse: false,
         prompt: DEFAULT_CHAT_PROMPT,
         memoryContext: [],
       };
     }
     case "CHAT_ERROR": {
+      if (state.pendingResponseId) {
+        const nextHistory = state.history.map((entry) =>
+          entry.id === state.pendingResponseId
+            ? { ...entry, status: "failed" as ChatMessageStatus, error: action.error }
+            : entry,
+        );
+        return {
+          ...state,
+          pending: false,
+          pendingResponseId: null,
+          discardNextResponse: false,
+          history: nextHistory,
+          lastError: action.error,
+        };
+      }
       return {
         ...state,
         pending: false,
@@ -146,6 +254,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
           prompt: DEFAULT_CHAT_PROMPT,
           pending: false,
           pendingConfig: null,
+          pendingResponseId: null,
+          discardNextResponse: false,
         };
       }
       return state;

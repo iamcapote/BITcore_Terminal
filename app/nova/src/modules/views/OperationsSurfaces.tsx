@@ -35,6 +35,10 @@ import type { Mission } from "@/modules/missions/missionsClient";
 export function InstrumentsSurface() {
   return (
     <div className="flex h-full flex-col gap-3 p-3">
+      <div className="flex items-center gap-2 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+        <AlertCircle className="h-3.5 w-3.5" />
+        Preview mode — instruments backend not yet wired. Showing layout preview.
+      </div>
       <header className="flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Automation Instruments</h2>

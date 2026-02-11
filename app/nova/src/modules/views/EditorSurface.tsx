@@ -36,8 +36,10 @@ export async function bootstrapWorkspace(config) {
 
 export function EditorSurface(): JSX.Element {
 	return (
-		<div className="flex h-full flex-col gap-3 p-4">
-			<header className="flex items-center justify-between">
+		<div className="flex h-full flex-col gap-3 p-4">			<div className="flex items-center gap-2 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+				<Sparkles className="h-3.5 w-3.5" />
+				Preview mode — read-only mock until the Monaco editor bridge lands.
+			</div>			<header className="flex items-center justify-between">
 				<div className="space-y-1">
 					<p className="text-xs uppercase tracking-widest text-muted-foreground">/agents/planner.ts</p>
 					<h1 className="text-lg font-semibold">Planner bootstrap</h1>

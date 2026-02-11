@@ -1,6 +1,7 @@
 /**
  * Application entry point for Nova.
- * Wraps the shell with the terminal provider so surfaces can run commands.
+ * Wraps the shell with global providers: terminal, status, research, memory, notifications.
+ * Overlays: ToastContainer (notification toasts).
  */
 
 import { NovaShell } from "@/modules/layout/NovaShell";
@@ -9,19 +10,24 @@ import { StatusProvider } from "@/modules/status/StatusProvider";
 import { MemoryTelemetryProvider } from "@/modules/memory/MemoryTelemetryProvider";
 import { ResearchPreferencesProvider } from "@/modules/research/ResearchPreferencesProvider";
 import { ResearchProvider } from "@/modules/research/ResearchProvider";
+import { NotificationProvider } from "@/modules/notifications/NotificationProvider";
+import { ToastContainer } from "@/modules/notifications/ToastContainer";
 
 export default function App() {
   return (
-    <TerminalProvider>
-      <StatusProvider>
-        <ResearchProvider>
-          <ResearchPreferencesProvider>
-            <MemoryTelemetryProvider>
-              <NovaShell />
-            </MemoryTelemetryProvider>
-          </ResearchPreferencesProvider>
-        </ResearchProvider>
-      </StatusProvider>
-    </TerminalProvider>
+    <NotificationProvider>
+      <TerminalProvider>
+        <StatusProvider>
+          <ResearchProvider>
+            <ResearchPreferencesProvider>
+              <MemoryTelemetryProvider>
+                <NovaShell />
+                <ToastContainer />
+              </MemoryTelemetryProvider>
+            </ResearchPreferencesProvider>
+          </ResearchProvider>
+        </StatusProvider>
+      </TerminalProvider>
+    </NotificationProvider>
   );
 }
