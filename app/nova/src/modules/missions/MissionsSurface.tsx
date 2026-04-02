@@ -128,10 +128,10 @@ function MissionsContent(): JSX.Element {
   );
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-4">
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-          <Card className="border-border/60 bg-background/70">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
+      <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-4 p-3 sm:p-4">
+        <section className="grid gap-4 grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <Card className="flex min-h-0 flex-col border-border/60 bg-background/70">
             <CardHeader className="flex flex-wrap items-center justify-between gap-3 pb-2">
               <CardTitle className="flex items-center gap-2 text-sm">
                 <AlarmClock className="h-4 w-4" /> Scheduler
@@ -147,7 +147,7 @@ function MissionsContent(): JSX.Element {
                 <InfoBlock label="Active runs" value={scheduler ? scheduler.activeRuns.toString() : "0"} />
                 <InfoBlock label="Telemetry" value={scheduler?.telemetryEnabled ? "Enabled" : "Disabled"} />
               </div>
-              <div className="grid gap-3 md:grid-cols-4">
+              <div className="grid grid-cols-1 gap-3 xs:grid-cols-2 md:grid-cols-4">
                 {totalsSummary.map((entry) => (
                   <InfoBlock key={entry.label} label={entry.label} value={entry.value} />
                 ))}
@@ -156,7 +156,7 @@ function MissionsContent(): JSX.Element {
                 <Button
                   size="sm"
                   variant="secondary"
-                  className="min-w-[140px] justify-center"
+                  className="w-full justify-center sm:w-auto sm:min-w-[140px]"
                   disabled={pendingSchedulerAction === "start" || scheduler?.running === true}
                   onClick={() => startScheduler().catch(() => undefined)}
                 >
@@ -165,7 +165,7 @@ function MissionsContent(): JSX.Element {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="min-w-[140px] justify-center"
+                  className="w-full justify-center sm:w-auto sm:min-w-[140px]"
                   disabled={pendingSchedulerAction === "stop" || scheduler?.running === false}
                   onClick={() => stopScheduler().catch(() => undefined)}
                 >
@@ -174,7 +174,7 @@ function MissionsContent(): JSX.Element {
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="min-w-[140px] justify-center"
+                  className="w-full justify-center sm:w-auto sm:min-w-[140px]"
                   disabled={pendingSchedulerAction === "tick"}
                   onClick={() => triggerScheduler().catch(() => undefined)}
                 >
@@ -189,7 +189,7 @@ function MissionsContent(): JSX.Element {
                       key={action.id}
                       size="sm"
                       variant="ghost"
-                      className="flex-1 min-w-[160px] justify-start font-mono text-[11px] uppercase tracking-[0.2em]"
+                      className="w-full justify-start font-mono text-[10px] uppercase tracking-[0.2em] sm:flex-1 sm:min-w-[160px] sm:text-[11px]"
                       onClick={action.onClick}
                       disabled={action.pending}
                     >
@@ -216,15 +216,15 @@ function MissionsContent(): JSX.Element {
                 {activity.length} entries
               </Badge>
             </CardHeader>
-            <CardContent className="text-sm">
-              <ScrollArea className="h-60 pr-3">
+            <CardContent className="min-h-0 flex-1 text-sm">
+              <ScrollArea className="h-full pr-3">
                 <div className="space-y-2">
                   {activity.length === 0 && !isMissionsLoading ? (
                     <EmptyNotice message="No mission activity recorded yet." />
                   ) : null}
                   {activity.map((entry) => (
                     <div key={entry.id} className="rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-xs">
-                      <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                         <span className="font-semibold text-foreground">{entry.label}</span>
                         <time>{formatTimestamp(entry.timestamp)}</time>
                       </div>
@@ -244,7 +244,7 @@ function MissionsContent(): JSX.Element {
 
         <Separator />
 
-        <section className="grid flex-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid flex-1 gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
           {!hasMissions && !isMissionsLoading ? (
             <StartupPlaceholder onRefresh={handleRefreshAll} />
           ) : (
@@ -275,7 +275,7 @@ function MissionColumnCard({ column, pendingMissionIds, onRun, isLoading }: { co
         </Badge>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col">
-        <ScrollArea className="h-80 pr-3">
+        <ScrollArea className="h-full pr-3">
           <div className="space-y-3">
             {column.missions.map((mission) => (
               <MissionCard key={mission.id} mission={mission} pending={pending.has(mission.id)} onRun={onRun} />

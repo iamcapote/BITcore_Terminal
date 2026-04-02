@@ -8,10 +8,12 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useReducer,
   type PropsWithChildren,
 } from "react";
+import { fetchNotifications, dismissBackendNotification, dismissAllBackendNotifications } from "@/modules/notifications/notificationsClient";
 
 /* ── Types ─────────────────────────────────────────────────────────── */
 
@@ -110,14 +112,56 @@ export function NotificationProvider({ children }: PropsWithChildren): JSX.Eleme
 
   const dismiss = useCallback((id: string) => {
     dispatch({ type: "DISMISS", id });
+    dismissBackendNotification(id).catch(() => { /* backend unavailable */ });
   }, []);
 
   const dismissAll = useCallback(() => {
     dispatch({ type: "DISMISS_ALL" });
+    dismissAllBackendNotifications().catch(() => { /* backend unavailable */ });
   }, []);
 
   const clearHistory = useCallback(() => {
     dispatch({ type: "CLEAR_HISTORY" });
+  }, []);
+
+  /* Sync undismissed backend notifications on mount and every 30s */
+  useEffect(() => {
+    let cancelled = false;
+    const POLL_MS = 30_000;
+    const seenIds = new Set<string>();
+
+    async function syncBackend() {
+      try {
+        const snapshot = await fetchNotifications({ dismissed: false });
+        if (cancelled) return;
+        for (const n of snapshot.queue) {
+          if (!seenIds.has(n.id)) {
+            seenIds.add(n.id);
+            dispatch({
+              type: "ADD",
+              notification: {
+                id: n.id,
+                severity: n.severity,
+                title: n.title,
+                description: n.description ?? undefined,
+                timestamp: n.timestamp,
+                autoDismissMs: n.autoDismissMs ?? (n.severity === "error" ? 8000 : 4000),
+                dismissed: false,
+              },
+            });
+          }
+        }
+      } catch {
+        /* backend unavailable — local queue still works */
+      }
+    }
+
+    syncBackend();
+    const timer = setInterval(syncBackend, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, []);
 
   const value = useMemo<NotificationContextValue>(

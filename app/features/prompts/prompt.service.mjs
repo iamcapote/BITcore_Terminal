@@ -24,6 +24,47 @@ const noopLogger = Object.freeze({
   error: () => {}
 });
 
+const DEFAULT_PROMPT_TEMPLATES = Object.freeze([
+  Object.freeze({
+    id: 'general-assistant',
+    title: 'General Assistant',
+    description: 'Balanced default prompt for day-to-day chat, planning, and coding support.',
+    body: [
+      'You are a practical AI assistant for engineering and operations.',
+      'Be concise, structured, and action-oriented.',
+      'Ask clarifying questions only when necessary.',
+      'When given tasks, provide clear steps and expected outcomes.',
+      'When writing code, prefer minimal, safe, testable changes.'
+    ].join('\n'),
+    tags: ['general', 'assistant', 'starter']
+  }),
+  Object.freeze({
+    id: 'research-brief',
+    title: 'Research Brief',
+    description: 'Template for quick research summaries with decisions and next actions.',
+    body: [
+      'Create a research brief with the following sections:',
+      '1) Objective',
+      '2) Key findings',
+      '3) Risks / unknowns',
+      '4) Recommendation',
+      '5) Next actions (owner + due date)'
+    ].join('\n'),
+    tags: ['research', 'brief', 'starter']
+  }),
+  Object.freeze({
+    id: 'task-breakdown',
+    title: 'Task Breakdown',
+    description: 'Template to convert high-level goals into scoped implementation tasks.',
+    body: [
+      'Break this goal into implementation-ready tasks.',
+      'For each task include: title, scope, dependencies, acceptance criteria, and estimate.',
+      'Prefer small, independently shippable slices.'
+    ].join('\n'),
+    tags: ['tasks', 'planning', 'starter']
+  })
+]);
+
 function normalizeTagsFilter(tagsLike) {
   if (!tagsLike) return Object.freeze([]);
   const array = Array.isArray(tagsLike) ? tagsLike : String(tagsLike).split(',');
@@ -47,7 +88,7 @@ export class PromptService {
     const { tags, limit } = filters;
     const tagFilter = normalizeTagsFilter(tags);
 
-    const summaries = await this.repository.listSummaries();
+    const summaries = await this.#listOrSeedSummaries();
     const filtered = summaries.filter((summary) => {
       if (!tagFilter.length) return true;
       return tagFilter.every((tag) => summary.tags.includes(tag));
@@ -90,7 +131,9 @@ export class PromptService {
     const text = String(query || '').trim().toLowerCase();
     const tagFilter = normalizeTagsFilter(tags);
 
-  const records = includeBody ? await this.repository.listRecords() : await this.repository.listSummaries();
+    const records = includeBody
+      ? await this.#listOrSeedRecords()
+      : await this.#listOrSeedSummaries();
 
     const matches = [];
     for (const record of records) {
@@ -122,6 +165,31 @@ export class PromptService {
       .join(' ')
       .toLowerCase();
     return combined.includes(queryText);
+  }
+
+  async #listOrSeedRecords() {
+    const existing = await this.repository.listRecords();
+    if (existing.length > 0) {
+      return existing;
+    }
+
+    this.#log('info', 'prompt.seed.start', { count: DEFAULT_PROMPT_TEMPLATES.length });
+    for (const template of DEFAULT_PROMPT_TEMPLATES) {
+      await this.repository.save(template);
+    }
+    const seeded = await this.repository.listRecords();
+    this.#log('info', 'prompt.seed.complete', { count: seeded.length });
+    return seeded;
+  }
+
+  async #listOrSeedSummaries() {
+    const existing = await this.repository.listSummaries();
+    if (existing.length > 0) {
+      return existing;
+    }
+
+    await this.#listOrSeedRecords();
+    return this.repository.listSummaries();
   }
 
   #log(level, msg, context) {

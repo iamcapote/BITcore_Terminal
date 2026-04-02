@@ -7,6 +7,7 @@
 import { describe, test, expect } from 'vitest';
 import { getHelpText } from '../app/commands/index.mjs';
 import * as chatCli from '../app/commands/chat.cli.mjs';
+import * as chatWorkbenchCli from '../app/commands/chat-workbench.cli.mjs';
 import * as chatHistoryCli from '../app/commands/chat-history.cli.mjs';
 import * as diagnoseCli from '../app/commands/diagnose.cli.mjs';
 import * as exportCli from '../app/commands/export.cli.mjs';
@@ -16,6 +17,8 @@ import * as logsCli from '../app/commands/logs.cli.mjs';
 import * as loginCli from '../app/commands/login.cli.mjs';
 import * as logoutCli from '../app/commands/logout.cli.mjs';
 import * as memoryCli from '../app/commands/memory.cli.mjs';
+import * as computerCli from '../app/commands/computer.cli.mjs';
+import * as mcpCli from '../app/commands/mcp.cli.mjs';
 import * as missionsCli from '../app/commands/missions.cli.mjs';
 import * as passwordCli from '../app/commands/password.cli.mjs';
 import * as promptsCli from '../app/commands/prompts.cli.mjs';
@@ -24,11 +27,13 @@ import * as researchGitHubCli from '../app/commands/research-github.cli.mjs';
 import * as researchSchedulerCli from '../app/commands/research-scheduler.cli.mjs';
 import * as statusCli from '../app/commands/status.cli.mjs';
 import * as storageCli from '../app/commands/storage.cli.mjs';
+import * as swarmCli from '../app/commands/swarm.cli.mjs';
 import * as terminalCli from '../app/commands/terminal.cli.mjs';
 import * as usersCli from '../app/commands/users.cli.mjs';
 
 const helpProviders = [
   { name: 'chat', getter: chatCli.getChatHelpText },
+  { name: 'chat-workbench', getter: chatWorkbenchCli.getChatWorkbenchHelpText },
   { name: 'chat-history', getter: chatHistoryCli.getChatHistoryHelpText },
   { name: 'diagnose', getter: diagnoseCli.getDiagnoseHelpText },
   { name: 'export', getter: exportCli.getExportHelpText },
@@ -38,6 +43,8 @@ const helpProviders = [
   { name: 'login', getter: loginCli.getLoginHelpText },
   { name: 'logout', getter: logoutCli.getLogoutHelpText },
   { name: 'memory', getter: memoryCli.getMemoryHelpText },
+  { name: 'computer', getter: computerCli.getComputerHelpText },
+  { name: 'mcp', getter: mcpCli.getMcpHelpText },
   { name: 'missions', getter: missionsCli.getMissionsHelpText },
   { name: 'password-change', getter: passwordCli.getPasswordChangeHelpText },
   { name: 'prompts', getter: promptsCli.getPromptsHelpText },
@@ -46,6 +53,7 @@ const helpProviders = [
   { name: 'research-scheduler', getter: researchSchedulerCli.getResearchSchedulerHelpText },
   { name: 'status', getter: statusCli.getStatusHelpText },
   { name: 'storage', getter: storageCli.getStorageHelpText },
+  { name: 'swarm', getter: swarmCli.getSwarmHelpText },
   { name: 'terminal', getter: terminalCli.getTerminalHelpText },
   { name: 'users', getter: usersCli.getUsersHelpText }
 ];

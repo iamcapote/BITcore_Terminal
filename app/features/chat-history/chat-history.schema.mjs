@@ -86,7 +86,38 @@ export function summarizeConversation(conversation) {
     messageCount: Array.isArray(conversation.messages) ? conversation.messages.length : conversation.messageCount ?? 0,
     user: conversation.user ?? null,
     tags: Array.isArray(conversation.tags) ? [...conversation.tags] : [],
-    origin: conversation.origin ?? 'unknown'
+    origin: conversation.origin ?? 'unknown',
+    workspace: normalizeWorkspace(conversation.workspace)
   };
   return Object.freeze(safeConv);
+}
+
+function normalizeWorkspace(workspace) {
+  if (!workspace || typeof workspace !== 'object') {
+    return null;
+  }
+
+  const branchName = typeof workspace.branchName === 'string' && workspace.branchName.trim()
+    ? workspace.branchName.trim()
+    : null;
+  const baseBranch = typeof workspace.baseBranch === 'string' && workspace.baseBranch.trim()
+    ? workspace.baseBranch.trim()
+    : null;
+  const linkedAt = typeof workspace.linkedAt === 'string' && workspace.linkedAt.trim()
+    ? workspace.linkedAt.trim()
+    : null;
+  const snapshotCount = Number.isInteger(workspace.snapshotCount) && workspace.snapshotCount >= 0
+    ? workspace.snapshotCount
+    : 0;
+
+  if (!branchName && !baseBranch && !linkedAt && snapshotCount === 0) {
+    return null;
+  }
+
+  return Object.freeze({
+    branchName,
+    baseBranch,
+    linkedAt,
+    snapshotCount,
+  });
 }

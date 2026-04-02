@@ -2,6 +2,7 @@ import * as researchCli from './research.cli.mjs';
 import * as keysCli from './keys.cli.mjs';
 import * as statusCli from './status.cli.mjs';
 import * as chatCli from './chat.cli.mjs';
+import * as chatWorkbenchCli from './chat-workbench.cli.mjs';
 import * as chatHistoryCli from './chat-history.cli.mjs';
 import * as memoryCli from './memory.cli.mjs';
 import * as diagnoseCli from './diagnose.cli.mjs';
@@ -19,6 +20,11 @@ import * as usersCli from './users.cli.mjs';
 import * as exportCli from './export.cli.mjs';
 import * as storageCli from './storage.cli.mjs';
 import * as securityCli from './security.cli.mjs';
+import * as swarmCli from './swarm.cli.mjs';
+import * as mcpCli from './mcp.cli.mjs';
+import * as computerCli from './computer.cli.mjs';
+import * as vectorsCli from './vectors.cli.mjs';
+import * as notifyCli from './notify.cli.mjs';
 import { createModuleLogger } from '../utils/logger.mjs';
 
 /**
@@ -33,6 +39,7 @@ export const commands = {
     keys: keysCli.executeKeys,
     status: statusCli.executeStatus,
     chat: chatCli.executeChat,
+    'chat-workbench': chatWorkbenchCli.executeChatWorkbench,
     'chat-history': chatHistoryCli.executeChatHistory,
     exitmemory: chatCli.executeExitMemory, // Assuming exitmemory is handled by chat.cli.mjs
     exitresearch: chatCli.executeExitResearch, // Assuming exitresearch is handled by chat.cli.mjs
@@ -52,6 +59,11 @@ export const commands = {
     export: exportCli.executeExport,
     storage: storageCli.executeStorage,
     security: securityCli.executeSecurity,
+    swarm: swarmCli.executeSwarm,
+    mcp: mcpCli.executeMcp,
+    computer: computerCli.executeComputer,
+    vectors: vectorsCli.executeVectors,
+    notify: notifyCli.executeNotify,
     // Add other commands here
 };
 
@@ -131,6 +143,7 @@ export function getHelpText() {
     };
 
     register('chat', chatCli.getChatHelpText);
+    register('chat-workbench', chatWorkbenchCli.getChatWorkbenchHelpText);
     register('chat-history', chatHistoryCli.getChatHistoryHelpText);
     register('diagnose', diagnoseCli.getDiagnoseHelpText);
     register('export', exportCli.getExportHelpText);
@@ -140,6 +153,8 @@ export function getHelpText() {
     register('login', loginCli.getLoginHelpText);
     register('logout', logoutCli.getLogoutHelpText);
     register('memory', memoryCli.getMemoryHelpText);
+    register('mcp', mcpCli.getMcpHelpText);
+    register('computer', computerCli.getComputerHelpText);
     register('missions', missionsCli.getMissionsHelpText);
     register('password-change', passwordCli.getPasswordChangeHelpText);
     register('prompts', promptsCli.getPromptsHelpText);
@@ -148,6 +163,9 @@ export function getHelpText() {
     register('research-scheduler', researchSchedulerCli.getResearchSchedulerHelpText);
     register('status', statusCli.getStatusHelpText);
     register('storage', storageCli.getStorageHelpText);
+    register('swarm', swarmCli.getSwarmHelpText);
+    register('vectors', vectorsCli.getVectorsHelpText);
+    register('notify', notifyCli.getNotifyHelpText);
     register('security', securityCli.getSecurityHelpText);
     register('terminal', terminalCli.getTerminalHelpText);
     register('users', usersCli.getUsersHelpText);

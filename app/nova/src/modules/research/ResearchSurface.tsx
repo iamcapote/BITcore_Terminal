@@ -56,8 +56,8 @@ export function ResearchSurface(): JSX.Element {
   );
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
+      <div className="flex w-full min-h-0 min-w-0 flex-col gap-4 p-3 sm:p-4">
         <header className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -84,7 +84,7 @@ export function ResearchSurface(): JSX.Element {
           </p>
         </header>
 
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+        <section className="grid gap-4 grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
           <Card className="border-border/60 bg-background/70">
             <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
               <CardTitle className="text-sm">Progress</CardTitle>
@@ -95,7 +95,7 @@ export function ResearchSurface(): JSX.Element {
             <CardContent className="space-y-4 text-sm">
               <div className="space-y-2">
                 <ProgressBar value={progressPercent} />
-                <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-4">
+                <div className="grid gap-2 text-xs text-muted-foreground grid-cols-2 sm:grid-cols-4">
                   <Stat label="Stage" value={progressStage || "Idle"} />
                   <Stat label="Depth" value={formatDepth(progress.depth)} />
                   <Stat label="Breadth" value={formatBreadth(progress.breadth)} />
@@ -138,7 +138,7 @@ export function ResearchSurface(): JSX.Element {
           </Card>
         </section>
 
-        <section className="grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
+        <section className="grid min-h-0 gap-4 grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
           <Card className="flex min-h-0 flex-col border-border/60 bg-background/70">
             <CardHeader className="flex items-center justify-between pb-2">
               <CardTitle className="text-sm">Active thoughts</CardTitle>
@@ -147,7 +147,7 @@ export function ResearchSurface(): JSX.Element {
               </Badge>
             </CardHeader>
             <CardContent className="flex min-h-0 flex-1 flex-col">
-              <ScrollArea className="max-h-72 pr-3">
+              <ScrollArea className="h-full pr-3">
                 <div className="space-y-3 text-sm">
                   {thoughts.length === 0 ? (
                     <p className="text-xs text-muted-foreground">No telemetry thoughts yet.</p>

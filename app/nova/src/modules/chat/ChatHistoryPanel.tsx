@@ -19,10 +19,13 @@ import {
 	deleteChatConversation,
 	exportChatConversation,
 	getChatConversation,
+	linkConversationWorkspaceBranch,
+	listConversationWorkspaceSnapshots,
 	listChatConversations,
 	type AsyncStatus,
 	type ChatConversationDetail,
 	type ChatConversationSummary,
+	type ChatWorkspaceSnapshot,
 } from "@/modules/chat/chatHistoryClient";
 
 interface ChatHistoryPanelProps {
@@ -41,6 +44,11 @@ export function ChatHistoryPanel({ active }: ChatHistoryPanelProps): JSX.Element
 	const [detailStatus, setDetailStatus] = useState<AsyncStatus>("idle");
 	const [detailError, setDetailError] = useState<string | null>(null);
 	const [actionMessage, setActionMessage] = useState<string | null>(null);
+	const [workspaceBranchName, setWorkspaceBranchName] = useState("");
+	const [workspaceBaseBranch, setWorkspaceBaseBranch] = useState("");
+	const [snapshots, setSnapshots] = useState<ChatWorkspaceSnapshot[]>([]);
+	const [snapshotStatus, setSnapshotStatus] = useState<AsyncStatus>("idle");
+	const [snapshotError, setSnapshotError] = useState<string | null>(null);
 	const isMountedRef = useRef(true);
 
 	useEffect(() => {
@@ -104,6 +112,8 @@ export function ChatHistoryPanel({ active }: ChatHistoryPanelProps): JSX.Element
 				return;
 			}
 			setDetail(payload);
+			setWorkspaceBranchName(payload.workspace?.branchName ?? "");
+			setWorkspaceBaseBranch(payload.workspace?.baseBranch ?? "");
 			setDetailStatus("success");
 		} catch (error) {
 			if (!isMountedRef.current) {
@@ -112,6 +122,27 @@ export function ChatHistoryPanel({ active }: ChatHistoryPanelProps): JSX.Element
 			const message = error instanceof Error ? error.message : "Failed to load conversation.";
 			setDetailStatus("error");
 			setDetailError(message);
+		}
+	}, []);
+
+	const refreshSnapshots = useCallback(async (conversationId: string) => {
+		setSnapshotStatus("loading");
+		setSnapshotError(null);
+		try {
+			const payload = await listConversationWorkspaceSnapshots(conversationId);
+			if (!isMountedRef.current) {
+				return;
+			}
+			setSnapshots([...payload]);
+			setSnapshotStatus("success");
+		} catch (error) {
+			if (!isMountedRef.current) {
+				return;
+			}
+			const message = error instanceof Error ? error.message : "Failed to load workspace snapshots.";
+			setSnapshotError(message);
+			setSnapshotStatus("error");
+			setSnapshots([]);
 		}
 	}, []);
 
@@ -127,7 +158,8 @@ export function ChatHistoryPanel({ active }: ChatHistoryPanelProps): JSX.Element
 			return;
 		}
 		void loadConversation(selectedId);
-	}, [active, selectedId, loadConversation]);
+		void refreshSnapshots(selectedId);
+	}, [active, selectedId, loadConversation, refreshSnapshots]);
 
 	const handleSelect = useCallback((conversation: ChatConversationSummary) => {
 		setSelectedId(conversation.id);
@@ -192,11 +224,42 @@ export function ChatHistoryPanel({ active }: ChatHistoryPanelProps): JSX.Element
 		}
 	}, [selectedId]);
 
+	const handleLinkWorkspace = useCallback(async () => {
+		if (!selectedId) {
+			return;
+		}
+		const branchName = workspaceBranchName.trim();
+		if (!branchName) {
+			setActionMessage("Workspace branch name is required.");
+			return;
+		}
+		setActionMessage(null);
+		try {
+			await linkConversationWorkspaceBranch(selectedId, {
+				branchName,
+				baseBranch: workspaceBaseBranch.trim() || null,
+				createBranch: true,
+				checkout: true,
+			});
+			if (!isMountedRef.current) {
+				return;
+			}
+			await Promise.all([loadConversation(selectedId), refreshSnapshots(selectedId)]);
+			setActionMessage(`Conversation linked to workspace branch '${branchName}'.`);
+		} catch (error) {
+			if (!isMountedRef.current) {
+				return;
+			}
+			const message = error instanceof Error ? error.message : "Failed to link workspace branch.";
+			setActionMessage(message);
+		}
+	}, [loadConversation, refreshSnapshots, selectedId, workspaceBaseBranch, workspaceBranchName]);
+
 	const listEmpty = listStatus === "success" && filteredConversations.length === 0;
 	const detailReady = detailStatus === "success" && detail;
 
 	return (
-		<div className="flex h-full flex-col gap-4">
+		<div className="flex h-full min-h-0 min-w-0 flex-col gap-4">
 			<Card className="border-border/60 bg-background/70">
 				<CardHeader className="space-y-2">
 					<CardTitle className="text-sm">Chat transcripts</CardTitle>
@@ -314,7 +377,48 @@ export function ChatHistoryPanel({ active }: ChatHistoryPanelProps): JSX.Element
 											<MetadataItem label="Ended" value={formatTimestamp(detail.endedAt)} />
 											<MetadataItem label="Messages" value={String(detail.messages.length)} />
 											<MetadataItem label="Tags" value={detail.tags.length ? detail.tags.join(", ") : "none"} />
+											<MetadataItem label="Workspace branch" value={detail.workspace?.branchName ?? "unlinked"} />
 										</div>
+									</section>
+									<Separator className="my-4" />
+									<section className="space-y-3">
+										<h3 className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">Workspace branching</h3>
+										<div className="grid gap-2 sm:grid-cols-2">
+											<Input
+												value={workspaceBranchName}
+												placeholder="conversation/my-branch"
+												onChange={(event) => setWorkspaceBranchName(event.target.value)}
+												className="h-9 text-sm"
+											/>
+											<Input
+												value={workspaceBaseBranch}
+												placeholder="base branch (optional)"
+												onChange={(event) => setWorkspaceBaseBranch(event.target.value)}
+												className="h-9 text-sm"
+											/>
+										</div>
+										<div className="flex flex-wrap items-center gap-2">
+											<Button variant="secondary" size="sm" onClick={() => void handleLinkWorkspace()} disabled={!selectedId}>
+												Link + checkout branch
+											</Button>
+											<span className="text-[11px] text-muted-foreground">Creates the branch if needed and binds this chat to it.</span>
+										</div>
+										{snapshotStatus === "error" && snapshotError ? (
+											<p className="text-xs text-destructive">{snapshotError}</p>
+										) : null}
+										{snapshots.length > 0 ? (
+											<ul className="space-y-2 rounded-lg border border-border/60 bg-background/70 p-3">
+												{snapshots.slice(0, 8).map((snapshot) => (
+													<li key={snapshot.id} className="text-xs text-muted-foreground">
+														<span className="font-medium text-foreground">{snapshot.type}</span>
+														{snapshot.branchName ? ` • ${snapshot.branchName}` : ""}
+														{snapshot.createdAt ? ` • ${formatTimestamp(snapshot.createdAt)}` : ""}
+													</li>
+												))}
+											</ul>
+										) : (
+											<p className="text-xs text-muted-foreground">No workspace snapshots recorded yet.</p>
+										)}
 									</section>
 									<Separator className="my-4" />
 									<section className="space-y-3">

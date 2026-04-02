@@ -22,6 +22,38 @@
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
 
+async function parseJsonBody(response: Response, action: string): Promise<any> {
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.includes("application/json")) {
+    const raw = await response.text().catch(() => "");
+    const snippet = raw.replace(/\s+/g, " ").slice(0, 80).trim();
+    throw new Error(
+      `Failed to ${action}: expected JSON API response but received non-JSON payload${snippet ? ` (${snippet})` : ""}`,
+    );
+  }
+
+  try {
+    return await response.json();
+  } catch {
+    throw new Error(`Failed to ${action}: invalid JSON response from API`);
+  }
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const payload = await parseJsonBody(response, "read API error");
+    if (payload && typeof payload === "object") {
+      const body = payload as Record<string, unknown>;
+      if (typeof body.error === "string" && body.error.trim().length > 0) {
+        return body.error;
+      }
+    }
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+  return `HTTP ${response.status}`;
+}
+
 export interface PromptSummary {
   readonly id: string;
   readonly title: string;
@@ -81,12 +113,11 @@ export async function listPrompts(options: ListPromptsOptions = {}): Promise<rea
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to list prompts: ${message}`);
   }
 
-  const payload = await response.json();
+  const payload = await parseJsonBody(response, "list prompts");
   const prompts = Array.isArray(payload) ? payload : [];
   return Object.freeze(prompts.map(normalizePromptSummary));
 }
@@ -113,12 +144,11 @@ export async function searchPrompts(options: SearchPromptsOptions = {}): Promise
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to search prompts: ${message}`);
   }
 
-  const payload = await response.json();
+  const payload = await parseJsonBody(response, "search prompts");
   const results = Array.isArray(payload) ? payload : [];
   return Object.freeze(results.map(normalizePromptRecord));
 }
@@ -130,12 +160,11 @@ export async function getPrompt(id: string, signal?: AbortSignal): Promise<Promp
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to get prompt: ${message}`);
   }
 
-  const payload = await response.json();
+  const payload = await parseJsonBody(response, "get prompt");
   return Object.freeze(normalizePromptRecord(payload));
 }
 
@@ -152,12 +181,11 @@ export async function savePrompt(
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to save prompt: ${message}`);
   }
 
-  const payload = await response.json();
+  const payload = await parseJsonBody(response, "save prompt");
   return Object.freeze(normalizePromptRecord(payload));
 }
 
@@ -169,8 +197,7 @@ export async function removePrompt(id: string, signal?: AbortSignal): Promise<vo
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to remove prompt: ${message}`);
   }
 }
@@ -192,12 +219,11 @@ export async function getGitHubStatus(signal?: AbortSignal): Promise<GitHubStatu
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to get GitHub status: ${message}`);
   }
 
-  const payload = await response.json();
+  const payload = await parseJsonBody(response, "get GitHub status");
   return Object.freeze({
     status: isGitHubStatus(payload.status) ? payload.status : "untracked",
     details: typeof payload.details === "object" && payload.details !== null ? payload.details : {},
@@ -213,12 +239,11 @@ export async function pullFromGitHub(signal?: AbortSignal): Promise<GitHubSyncRe
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to pull from GitHub: ${message}`);
   }
 
-  const payload = await response.json();
+  const payload = await parseJsonBody(response, "pull from GitHub");
   return Object.freeze(normalizeGitHubSyncResult(payload, "pull"));
 }
 
@@ -231,12 +256,11 @@ export async function pushToGitHub(signal?: AbortSignal): Promise<GitHubSyncResu
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to push to GitHub: ${message}`);
   }
 
-  const payload = await response.json();
+  const payload = await parseJsonBody(response, "push to GitHub");
   return Object.freeze(normalizeGitHubSyncResult(payload, "push"));
 }
 
@@ -249,12 +273,11 @@ export async function syncWithGitHub(signal?: AbortSignal): Promise<GitHubSyncRe
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: "Unknown error" }));
-    const message = typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+    const message = await readErrorMessage(response);
     throw new Error(`Failed to sync with GitHub: ${message}`);
   }
 
-  const payload = await response.json();
+  const payload = await parseJsonBody(response, "sync with GitHub");
   return Object.freeze(normalizeGitHubSyncResult(payload, "sync"));
 }
 

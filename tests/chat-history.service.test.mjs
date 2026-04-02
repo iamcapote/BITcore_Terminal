@@ -70,4 +70,36 @@ describe('ChatHistoryService', () => {
     expect(ids).toContain(convoA.id);
     expect(ids).not.toContain(convoB.id);
   });
+
+  it('links conversations to workspace branches and records workspace snapshots', async () => {
+    const conversation = await service.startConversation({
+      origin: 'web',
+      workspace: { branchName: 'semantic', baseBranch: 'main' },
+    });
+
+    const workspace = await service.linkWorkspaceBranch(conversation.id, {
+      branchName: 'chat/feature-a',
+      baseBranch: 'semantic',
+    });
+
+    expect(workspace.branchName).toBe('chat/feature-a');
+    expect(workspace.baseBranch).toBe('semantic');
+
+    const snapshot = await service.appendWorkspaceSnapshot(conversation.id, {
+      type: 'branch-linked',
+      branchName: 'chat/feature-a',
+      note: 'Initial link from chat history panel.',
+    });
+
+    expect(snapshot.type).toBe('branch-linked');
+    expect(snapshot.branchName).toBe('chat/feature-a');
+
+    const snapshots = await service.listWorkspaceSnapshots(conversation.id);
+    expect(snapshots.length).toBe(1);
+    expect(snapshots[0].id).toBe(snapshot.id);
+
+    const persisted = await service.getConversation(conversation.id);
+    expect(persisted.workspace.branchName).toBe('chat/feature-a');
+    expect(persisted.workspaceSnapshots.length).toBe(1);
+  });
 });

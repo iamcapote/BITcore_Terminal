@@ -26,24 +26,24 @@ import {
 
 export function DatabaseManagerSurface() {
   return (
-    <Card className="h-full">
+    <Card className="flex h-full min-h-0 flex-col">
       <CardHeader className="py-3">
         <CardTitle className="flex items-center gap-2 text-sm">
           <Database className="h-4 w-4" /> Databases
           <Badge variant="outline" className="ml-auto border-amber-500/40 text-[9px] uppercase text-amber-400"><Construction className="mr-1 h-3 w-3" />preview</Badge>
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex h-[calc(100%-2.5rem)] min-w-0 flex-col">
-        <div className="mb-2 flex items-center gap-2">
+      <CardContent className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
           <Button size="sm">
             <Plus className="mr-1 h-4 w-4" /> Connect
           </Button>
           <Button size="sm" variant="secondary">
             <RefreshCw className="mr-1 h-4 w-4" /> Refresh
           </Button>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <Select defaultValue="postgres">
-              <SelectTrigger className="h-8 w-40">
+              <SelectTrigger className="h-8 w-32 sm:w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -52,16 +52,16 @@ export function DatabaseManagerSurface() {
                 <SelectItem value="duckdb">DuckDB</SelectItem>
               </SelectContent>
             </Select>
-            <Input placeholder="Filter" className="h-8 w-40" />
+            <Input placeholder="Filter" className="h-8 w-28 sm:w-40" />
           </div>
         </div>
-        <div className="grid min-h-0 flex-1 grid-cols-2 gap-3">
-          <Card className="overflow-hidden">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2">
+          <Card className="flex min-h-0 flex-col overflow-hidden">
             <CardHeader className="py-2">
               <CardTitle className="text-xs">Connections</CardTitle>
             </CardHeader>
-            <CardContent className="min-w-0 p-0">
-              <div className="overflow-x-auto">
+            <CardContent className="min-h-0 min-w-0 flex-1 p-0">
+              <div className="h-full overflow-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>

@@ -102,4 +102,25 @@ describe('PromptService', () => {
 
     expect(repository.delete).toHaveBeenCalledWith('status-update');
   });
+
+  it('seeds starter templates when repository is empty', async () => {
+    repository.listSummaries.mockResolvedValueOnce([]);
+    repository.listRecords.mockResolvedValueOnce([]);
+    repository.save.mockImplementation(async (payload) => ({ ...payload }));
+    repository.listRecords.mockResolvedValueOnce([
+      createRecord({ id: 'general-assistant', title: 'General Assistant', body: 'x', tags: ['starter'] }),
+      createRecord({ id: 'research-brief', title: 'Research Brief', body: 'x', tags: ['starter'] }),
+      createRecord({ id: 'task-breakdown', title: 'Task Breakdown', body: 'x', tags: ['starter'] })
+    ]);
+    repository.listSummaries.mockResolvedValueOnce([
+      { id: 'general-assistant', title: 'General Assistant', tags: ['starter'], description: '', version: 1, updatedAt: '2024-06-01T00:00:00.000Z' },
+      { id: 'research-brief', title: 'Research Brief', tags: ['starter'], description: '', version: 1, updatedAt: '2024-06-01T00:00:00.000Z' },
+      { id: 'task-breakdown', title: 'Task Breakdown', tags: ['starter'], description: '', version: 1, updatedAt: '2024-06-01T00:00:00.000Z' }
+    ]);
+
+    const summaries = await service.listSummaries();
+
+    expect(repository.save).toHaveBeenCalledTimes(3);
+    expect(summaries).toHaveLength(3);
+  });
 });

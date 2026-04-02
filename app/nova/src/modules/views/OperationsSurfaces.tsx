@@ -2,7 +2,7 @@
  * @license INTERNAL ONLY — Operations surfaces
  *
  * Why: Present mission control, task orchestration, and terminal supervision inside the Nova dock with live terminal wiring.
- * What: Renders automation instruments, a mission-backed kanban, and a command console bound to the WebComm-backed terminal context.
+ * What: Renders automation skills, a mission-backed kanban, and a command console bound to the WebComm-backed terminal context.
  * How: Read instrument metadata from mock scaffolding, project real missions into kanban columns via MissionsProvider, and stream terminal events through the terminal context.
  */
 
@@ -34,18 +34,18 @@ import type { Mission } from "@/modules/missions/missionsClient";
 
 export function InstrumentsSurface() {
   return (
-    <div className="flex h-full flex-col gap-3 p-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-2 overflow-hidden p-2 sm:gap-3 sm:p-3">
       <div className="flex items-center gap-2 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
         <AlertCircle className="h-3.5 w-3.5" />
-        Preview mode — instruments backend not yet wired. Showing layout preview.
+        Preview mode — skills backend not yet wired. Showing layout preview.
       </div>
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Automation Instruments</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Automation Skills</h2>
           <p className="text-xs text-muted-foreground/80">Compose reusable task chains and run them directly from the dock.</p>
         </div>
         <Button size="sm" variant="secondary">
-          <ClipboardList className="mr-1 h-4 w-4" /> New instrument
+          <ClipboardList className="mr-1 h-4 w-4" /> New skill
         </Button>
       </header>
       <ScrollArea className="grow rounded-xl border border-border/60 bg-background/40 p-3">
@@ -53,7 +53,7 @@ export function InstrumentsSurface() {
           {instruments.map((instrument) => (
             <Card key={instrument.id} className="border-border/60 bg-background/80">
               <CardHeader className="space-y-1 pb-2">
-                <CardTitle className="flex items-center justify-between text-sm">
+                <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm">
                   <span>{instrument.name}</span>
                   <Badge variant="outline" className="text-[10px] uppercase tracking-widest">Ready</Badge>
                 </CardTitle>
@@ -62,9 +62,9 @@ export function InstrumentsSurface() {
               <CardContent>
                 <code className="rounded-md bg-muted px-2 py-1 text-xs">{instrument.command}</code>
               </CardContent>
-              <CardFooter className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+              <CardFooter className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>Authed runners • dry-run enforced</span>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button size="sm" variant="secondary">
                     <ArrowRight className="mr-1 h-4 w-4" /> Queue
                   </Button>
@@ -107,13 +107,13 @@ function TasksContent(): JSX.Element {
     : null;
 
   return (
-    <div className="flex h-full flex-col gap-3 p-3">
-      <header className="flex items-center justify-between">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-2 p-2 sm:gap-3 sm:p-3">
+      <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Mission Tasks</h2>
           <p className="text-xs text-muted-foreground/80">Track mission readiness, dispatch runs, and surface items requiring attention.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {lastUpdatedLabel ? (
             <Badge variant="outline" className="text-[10px] uppercase tracking-widest">
               Updated {lastUpdatedLabel}
@@ -129,7 +129,7 @@ function TasksContent(): JSX.Element {
           <AlertCircle className="h-3.5 w-3.5" /> {missionsError}
         </div>
       ) : null}
-      <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {columns.map((column) => (
           <TaskColumn
             key={column.id}
@@ -148,13 +148,13 @@ export function TerminalSurface() {
   const { timeline } = useStatus();
 
   return (
-    <div className="flex h-full flex-col gap-3 p-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-2 p-2 sm:gap-3 sm:p-3">
       <header className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">Command Console</h2>
           <p className="text-xs text-muted-foreground/80">Run Bitcore tasks, observe guardrails, and inspect the live stream.</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <TerminalSquare className="h-3.5 w-3.5" /> {timeline.branch}
           </span>
@@ -174,13 +174,13 @@ function TaskColumn({ column, pendingMissionIds, onRun, isLoading }: { column: M
   return (
     <Card className="flex min-h-0 flex-col border-border/60 bg-background/60">
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center justify-between text-sm uppercase tracking-[0.2em]">
+        <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-sm uppercase tracking-[0.2em]">
           <span>{column.title}</span>
           <Badge variant="outline" className="text-[10px] uppercase tracking-[0.2em]">{column.missions.length}</Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1">
-        <ScrollArea className="h-80 pr-2">
+        <ScrollArea className="h-full pr-2">
           <div className="space-y-2">
             {column.missions.map((mission) => (
               <TaskCard key={mission.id} mission={mission} pending={pendingMissionIds.has(mission.id)} onRun={onRun} />

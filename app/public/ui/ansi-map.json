@@ -1,0 +1,332 @@
+{
+  "hacker": {
+    "bg-primary": {
+      "hex": "#0D0D0D",
+      "rgb": [
+        13,
+        13,
+        13
+      ],
+      "ansi256": 16
+    },
+    "bg-secondary": {
+      "hex": "#121212",
+      "rgb": [
+        18,
+        18,
+        18
+      ],
+      "ansi256": 16
+    },
+    "bg-tertiary": {
+      "hex": "#1A1A1A",
+      "rgb": [
+        26,
+        26,
+        26
+      ],
+      "ansi256": 59
+    },
+    "fg-primary": {
+      "hex": "#E8E8E8",
+      "rgb": [
+        232,
+        232,
+        232
+      ],
+      "ansi256": 231
+    },
+    "fg-secondary": {
+      "hex": "#A0A0A0",
+      "rgb": [
+        160,
+        160,
+        160
+      ],
+      "ansi256": 145
+    },
+    "fg-muted": {
+      "hex": "#606060",
+      "rgb": [
+        96,
+        96,
+        96
+      ],
+      "ansi256": 102
+    },
+    "accent-primary": {
+      "hex": "#14F1FF",
+      "rgb": [
+        20,
+        241,
+        255
+      ],
+      "ansi256": 51
+    },
+    "accent-secondary": {
+      "hex": "#00FF88",
+      "rgb": [
+        0,
+        255,
+        136
+      ],
+      "ansi256": 49
+    },
+    "accent-warning": {
+      "hex": "#FFB800",
+      "rgb": [
+        255,
+        184,
+        0
+      ],
+      "ansi256": 220
+    },
+    "accent-danger": {
+      "hex": "#FF4455",
+      "rgb": [
+        255,
+        68,
+        85
+      ],
+      "ansi256": 204
+    },
+    "border-primary": {
+      "hex": "#2A2A2A",
+      "rgb": [
+        42,
+        42,
+        42
+      ],
+      "ansi256": 59
+    },
+    "border-accent": {
+      "hex": "#14F1FF",
+      "rgb": [
+        20,
+        241,
+        255
+      ],
+      "ansi256": 51
+    }
+  },
+  "modern": {
+    "bg-primary": {
+      "hex": "#18181B",
+      "rgb": [
+        24,
+        24,
+        27
+      ],
+      "ansi256": 17
+    },
+    "bg-secondary": {
+      "hex": "#1E1E21",
+      "rgb": [
+        30,
+        30,
+        33
+      ],
+      "ansi256": 59
+    },
+    "bg-tertiary": {
+      "hex": "#27272A",
+      "rgb": [
+        39,
+        39,
+        42
+      ],
+      "ansi256": 59
+    },
+    "fg-primary": {
+      "hex": "#FAFAFA",
+      "rgb": [
+        250,
+        250,
+        250
+      ],
+      "ansi256": 231
+    },
+    "fg-secondary": {
+      "hex": "#A1A1AA",
+      "rgb": [
+        161,
+        161,
+        170
+      ],
+      "ansi256": 145
+    },
+    "fg-muted": {
+      "hex": "#71717A",
+      "rgb": [
+        113,
+        113,
+        122
+      ],
+      "ansi256": 102
+    },
+    "accent-primary": {
+      "hex": "#6366F1",
+      "rgb": [
+        99,
+        102,
+        241
+      ],
+      "ansi256": 105
+    },
+    "accent-secondary": {
+      "hex": "#8B5CF6",
+      "rgb": [
+        139,
+        92,
+        246
+      ],
+      "ansi256": 141
+    },
+    "accent-warning": {
+      "hex": "#F59E0B",
+      "rgb": [
+        245,
+        158,
+        11
+      ],
+      "ansi256": 214
+    },
+    "accent-danger": {
+      "hex": "#EF4444",
+      "rgb": [
+        239,
+        68,
+        68
+      ],
+      "ansi256": 203
+    },
+    "border-primary": {
+      "hex": "#3F3F46",
+      "rgb": [
+        63,
+        63,
+        70
+      ],
+      "ansi256": 59
+    },
+    "border-accent": {
+      "hex": "#6366F1",
+      "rgb": [
+        99,
+        102,
+        241
+      ],
+      "ansi256": 105
+    }
+  },
+  "retro": {
+    "bg-primary": {
+      "hex": "#000080",
+      "rgb": [
+        0,
+        0,
+        128
+      ],
+      "ansi256": 19
+    },
+    "bg-secondary": {
+      "hex": "#0000AA",
+      "rgb": [
+        0,
+        0,
+        170
+      ],
+      "ansi256": 19
+    },
+    "bg-tertiary": {
+      "hex": "#0000CC",
+      "rgb": [
+        0,
+        0,
+        204
+      ],
+      "ansi256": 20
+    },
+    "fg-primary": {
+      "hex": "#FFFFFF",
+      "rgb": [
+        255,
+        255,
+        255
+      ],
+      "ansi256": 231
+    },
+    "fg-secondary": {
+      "hex": "#C0C0C0",
+      "rgb": [
+        192,
+        192,
+        192
+      ],
+      "ansi256": 188
+    },
+    "fg-muted": {
+      "hex": "#808080",
+      "rgb": [
+        128,
+        128,
+        128
+      ],
+      "ansi256": 145
+    },
+    "accent-primary": {
+      "hex": "#FFFF00",
+      "rgb": [
+        255,
+        255,
+        0
+      ],
+      "ansi256": 226
+    },
+    "accent-secondary": {
+      "hex": "#00FFFF",
+      "rgb": [
+        0,
+        255,
+        255
+      ],
+      "ansi256": 51
+    },
+    "accent-warning": {
+      "hex": "#FF8000",
+      "rgb": [
+        255,
+        128,
+        0
+      ],
+      "ansi256": 214
+    },
+    "accent-danger": {
+      "hex": "#FF0000",
+      "rgb": [
+        255,
+        0,
+        0
+      ],
+      "ansi256": 196
+    },
+    "border-primary": {
+      "hex": "#808080",
+      "rgb": [
+        128,
+        128,
+        128
+      ],
+      "ansi256": 145
+    },
+    "border-accent": {
+      "hex": "#FFFF00",
+      "rgb": [
+        255,
+        255,
+        0
+      ],
+      "ansi256": 226
+    }
+  }
+}

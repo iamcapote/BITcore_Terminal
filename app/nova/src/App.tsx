@@ -12,6 +12,7 @@ import { ResearchPreferencesProvider } from "@/modules/research/ResearchPreferen
 import { ResearchProvider } from "@/modules/research/ResearchProvider";
 import { NotificationProvider } from "@/modules/notifications/NotificationProvider";
 import { ToastContainer } from "@/modules/notifications/ToastContainer";
+import { LocalizationProvider } from "@/modules/settings/LocalizationProvider";
 
 export default function App() {
   return (
@@ -21,8 +22,10 @@ export default function App() {
           <ResearchProvider>
             <ResearchPreferencesProvider>
               <MemoryTelemetryProvider>
-                <NovaShell />
-                <ToastContainer />
+                <LocalizationProvider>
+                  <NovaShell />
+                  <ToastContainer />
+                </LocalizationProvider>
               </MemoryTelemetryProvider>
             </ResearchPreferencesProvider>
           </ResearchProvider>

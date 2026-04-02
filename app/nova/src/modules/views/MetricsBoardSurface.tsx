@@ -1,21 +1,99 @@
 /**
  * Why: Workspace health dashboard displaying key operational metrics.
- * What: Card grid with metric value, trend badge, and decorative icon.
- * How: Reads mock workspaceMetrics data; purely presentational until metrics backend wires in.
+ * What: Card grid with live metric value and status badge per service.
+ * How: Fetches /api/status/summary and /api/config on mount; renders four metric cards with real data.
  */
 
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { workspaceMetrics } from "@/modules/data/mockWorkspace";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Activity, Cpu, Globe, HardDrive } from "lucide-react";
+import { fetchStatusSummary, fetchConfig } from "@/modules/admin/adminClient";
+
+/* ── Types ─────────────────────────────────────────────────────────── */
+
+interface MetricCard {
+  id: string;
+  label: string;
+  value: string;
+  status: "ok" | "warn" | "error";
+  icon: typeof Activity;
+}
+
+/* ── Component ─────────────────────────────────────────────────────── */
 
 export function MetricsBoardSurface() {
-  return (
-    <div className="grid h-full grid-cols-2 gap-4">
-      <div className="col-span-2 flex items-center gap-2 rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="8" rx="1"/><path d="M17 14v7"/><path d="M7 14v7"/><path d="M17 3v3"/><path d="M7 3v3"/><path d="M10 14 2.3 6.3"/><path d="M14 6l7.7 7.7"/><path d="M8 6l8 8"/></svg>
-        Preview mode — metrics backend not yet wired. Showing sample data.
+  const [metrics, setMetrics] = useState<MetricCard[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      const results = await Promise.allSettled([fetchStatusSummary(), fetchConfig()]);
+      if (cancelled) return;
+
+      let statusData: Record<string, unknown> = {};
+      let configData: { config: Record<string, unknown> } | null = null;
+      if (results[0].status === "fulfilled") statusData = results[0].value;
+      if (results[1].status === "fulfilled") configData = results[1].value;
+
+      const cfg = (configData?.config ?? {}) as Record<string, Record<string, unknown>>;
+      const hasVenice = Boolean(cfg?.venice?.apiKey);
+      const hasBrave = Boolean(cfg?.brave?.apiKey);
+      const uptimeMin = statusData?.uptime ? Math.round(Number(statusData.uptime) / 60) : null;
+      const memMB = statusData?.memoryMB ? Number(statusData.memoryMB) : null;
+
+      setMetrics([
+        {
+          id: "uptime",
+          label: "Server Uptime",
+          value: uptimeMin !== null ? `${uptimeMin}m` : "Running",
+          status: "ok",
+          icon: Activity,
+        },
+        {
+          id: "memory",
+          label: "Memory Usage",
+          value: memMB !== null ? `${memMB} MB` : "N/A",
+          status: memMB !== null && memMB > 800 ? "warn" : "ok",
+          icon: HardDrive,
+        },
+        {
+          id: "venice",
+          label: "Venice AI",
+          value: hasVenice ? "Connected" : "Not configured",
+          status: hasVenice ? "ok" : "warn",
+          icon: Cpu,
+        },
+        {
+          id: "brave",
+          label: "Brave Search",
+          value: hasBrave ? "Connected" : "Not configured",
+          status: hasBrave ? "ok" : "warn",
+          icon: Globe,
+        },
+      ]);
+      setLoading(false);
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="grid h-full grid-cols-1 gap-4 sm:grid-cols-2">
+        {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28" />)}
       </div>
-      {workspaceMetrics.map((metric) => {
+    );
+  }
+
+  return (
+    <div className="grid h-full grid-cols-1 gap-4 sm:grid-cols-2">
+      {metrics.map((metric) => {
         const Icon = metric.icon;
         return (
           <Card
@@ -24,11 +102,16 @@ export function MetricsBoardSurface() {
           >
             <div className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-accent/10" />
             <CardContent className="relative flex h-full flex-col justify-between p-4">
-              <div className="flex items-center justify-between text-xs uppercase tracking-wide text-muted-foreground">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-wide text-muted-foreground">
                 {metric.label}
-                <Badge variant="secondary">{metric.trend}</Badge>
+                <Badge
+                  variant={metric.status === "ok" ? "default" : metric.status === "warn" ? "secondary" : "destructive"}
+                  className="text-[9px]"
+                >
+                  {metric.status}
+                </Badge>
               </div>
-              <div className="mt-4 flex items-end justify-between">
+              <div className="mt-4 flex flex-wrap items-end justify-between gap-2">
                 <span className="text-3xl font-semibold">{metric.value}</span>
                 <Icon className="h-10 w-10 text-muted-foreground" />
               </div>

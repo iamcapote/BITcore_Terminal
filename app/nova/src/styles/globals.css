@@ -62,28 +62,38 @@
 
 	[data-nova-theme="retro"] {
 		color-scheme: light;
-		--background: 0 0% 66%;
-		--foreground: 210 8% 18%;
-		--muted: 0 0% 78%;
-		--muted-foreground: 210 12% 26%;
-		--popover: 0 0% 86%;
-		--popover-foreground: 210 10% 16%;
-		--card: 0 0% 80%;
-		--card-foreground: 210 10% 18%;
-		--border: 0 0% 44%;
-		--input: 0 0% 44%;
-		--primary: 210 100% 28%;
-		--primary-foreground: 210 30% 96%;
-		--secondary: 160 80% 32%;
-		--secondary-foreground: 210 30% 96%;
-		--accent: 190 70% 42%;
-		--accent-foreground: 210 30% 96%;
-		--destructive: 0 82% 34%;
-		--destructive-foreground: 0 0% 96%;
-		--ring: 210 100% 28%;
+		/* Win95 system gray #C0C0C0 = hsl(0 0% 75%) */
+		--background: 0 0% 75%;
+		--foreground: 0 0% 0%;
+		--muted: 0 0% 86%;
+		--muted-foreground: 0 0% 0%;
+		--popover: 0 0% 100%;
+		--popover-foreground: 0 0% 0%;
+		--card: 0 0% 75%;
+		--card-foreground: 0 0% 0%;
+		--border: 0 0% 50%;
+		--input: 0 0% 50%;
+		--primary: 240 100% 25%;
+		--primary-foreground: 0 0% 100%;
+		--secondary: 0 0% 75%;
+		--secondary-foreground: 0 0% 0%;
+		--accent: 240 100% 25%;
+		--accent-foreground: 0 0% 100%;
+		--destructive: 0 100% 50%;
+		--destructive-foreground: 0 0% 100%;
+		--ring: 240 100% 25%;
+		/* Win95 shell gray baseline (teal reserved for optional accents only) */
 		--shell-gradient-from: 0 0% 78%;
-		--shell-gradient-via: 0 0% 72%;
-		--shell-gradient-to: 0 0% 64%;
+		--shell-gradient-via: 0 0% 75%;
+		--shell-gradient-to: 0 0% 72%;
+		/* Win95 bevel tokens */
+		--retro-face: 0 0% 75%;
+		--retro-highlight: 0 0% 100%;
+		--retro-shadow: 0 0% 50%;
+		--retro-dark-shadow: 0 0% 25%;
+		--retro-title: 240 100% 25%;
+		--retro-grid-primary: 0 0% 88%;
+		--retro-grid-secondary: 0 0% 94%;
 	}
 
 	* {
@@ -106,6 +116,166 @@
 		outline: 2px solid hsl(var(--ring));
 		outline-offset: 2px;
 	}
+
+	html[data-nova-theme="retro"] body {
+		font-family: "MS Sans Serif", Tahoma, Arial, sans-serif;
+		font-feature-settings: normal;
+		font-size: 12px;
+		-webkit-font-smoothing: none;
+	}
+
+	/* ── Win95 topbar: system gray, outset bevel ─────────────── */
+	html[data-nova-theme="retro"] .nova-topbar {
+		background: #C0C0C0;
+		border-bottom: none;
+		box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #404040;
+		backdrop-filter: none;
+		border-radius: 0;
+	}
+
+	html[data-nova-theme="retro"] .nova-topbar input {
+		background: #fff;
+		color: #000;
+		border: 2px solid;
+		border-color: #808080 #fff #fff #808080;
+		box-shadow: inset 1px 1px 0 #404040;
+		border-radius: 0;
+	}
+
+	/* ── Retro utility normalization: remove teal translucency ─ */
+	html[data-nova-theme="retro"] [class*="bg-background/"] {
+		background-color: #C0C0C0 !important;
+	}
+
+	html[data-nova-theme="retro"] [class*="bg-muted/"] {
+		background-color: #E8E8E8 !important;
+	}
+
+	html[data-nova-theme="retro"] [class*="bg-primary/"] {
+		background-color: #000080 !important;
+		color: #fff !important;
+	}
+
+	html[data-nova-theme="retro"] [class*="bg-emerald"] {
+		background-color: #E8E8E8 !important;
+		color: #000 !important;
+	}
+
+	html[data-nova-theme="retro"] [class*="text-emerald"] {
+		color: #000 !important;
+	}
+
+	html[data-nova-theme="retro"] [class*="border-emerald"],
+	html[data-nova-theme="retro"] [class*="border-primary/"] {
+		border-color: #808080 !important;
+	}
+
+	html[data-nova-theme="retro"] [class*="shadow-"] {
+		box-shadow: none !important;
+	}
+
+	/* ── Kill all rounded corners in retro mode ──────────────── */
+	html[data-nova-theme="retro"] *,
+	html[data-nova-theme="retro"] button,
+	html[data-nova-theme="retro"] [role="button"],
+	html[data-nova-theme="retro"] input,
+	html[data-nova-theme="retro"] select,
+	html[data-nova-theme="retro"] textarea,
+	html[data-nova-theme="retro"] [class*="rounded"] {
+		border-radius: 0 !important;
+	}
+
+	html[data-nova-theme="retro"] .border-border\/60,
+	html[data-nova-theme="retro"] .border-border\/70,
+	html[data-nova-theme="retro"] .border-border\/80 {
+		border-color: #808080;
+	}
+
+	/* ── Win95 buttons: outset bevel with pressed inset state ── */
+	html[data-nova-theme="retro"] button,
+	html[data-nova-theme="retro"] [role="button"] {
+		background: #C0C0C0;
+		color: #000;
+		border: 2px solid;
+		border-color: #fff #404040 #404040 #fff;
+	}
+
+	html[data-nova-theme="retro"] button:active,
+	html[data-nova-theme="retro"] [role="button"]:active {
+		border-color: #404040 #fff #fff #404040;
+	}
+
+	/* ── Tabs: active = sunken white, inactive = raised gray ─── */
+	html[data-nova-theme="retro"] [role="tab"] {
+		background: #C0C0C0;
+		color: #000;
+		border: 2px solid;
+		border-color: #fff #404040 #404040 #fff;
+		font-weight: 400;
+	}
+
+	html[data-nova-theme="retro"] [role="tab"][data-state="active"] {
+		background: #fff;
+		color: #000;
+		border-color: #404040 #fff #fff #404040;
+		font-weight: 700;
+	}
+
+	/* ── Cards: Win95 window frame with outset bevel ─────────── */
+	html[data-nova-theme="retro"] [class*="border-border"] {
+		border-color: #808080;
+	}
+
+	/* ── Inputs: inset sunken white field ────────────────────── */
+	html[data-nova-theme="retro"] input,
+	html[data-nova-theme="retro"] textarea,
+	html[data-nova-theme="retro"] select {
+		background: #fff;
+		color: #000;
+		border: 2px solid;
+		border-color: #808080 #fff #fff #808080;
+		box-shadow: inset 1px 1px 0 #404040;
+	}
+
+	/* ── Scrollbars: Win95 system scrollbar ──────────────────── */
+	html[data-nova-theme="retro"] *::-webkit-scrollbar {
+		width: 16px;
+		height: 16px;
+	}
+
+	html[data-nova-theme="retro"] *::-webkit-scrollbar-thumb {
+		background: #C0C0C0;
+		border: 2px solid;
+		border-color: #fff #404040 #404040 #fff;
+	}
+
+	html[data-nova-theme="retro"] *::-webkit-scrollbar-track {
+		background: #C0C0C0;
+		border: 1px solid #808080;
+	}
+
+	html[data-nova-theme="retro"] *::-webkit-scrollbar-button {
+		background: #C0C0C0;
+		border: 2px solid;
+		border-color: #fff #404040 #404040 #fff;
+		display: block;
+		height: 16px;
+		width: 16px;
+	}
+
+	/* ── Left rail sidebar: Win95 panel ──────────────────────── */
+	html[data-nova-theme="retro"] nav,
+	html[data-nova-theme="retro"] aside {
+		background: #C0C0C0;
+		border-right: 2px solid;
+		border-color: #fff #404040 #404040 #fff;
+	}
+
+	/* ── Title bars for card headers: navy blue ──────────────── */
+	html[data-nova-theme="retro"] [class*="CardHeader"] {
+		background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+		color: #fff;
+	}
 }
 
 @layer utilities {
@@ -121,5 +291,55 @@
 	.is-partial {
 		border-color: hsl(var(--accent));
 		box-shadow: 0 0 0 1px hsl(var(--accent) / 0.45);
+	}
+
+	/* ── Responsive panel helpers ──────────────────────────────── */
+	/* Ensures content within collapsed panels doesn't overflow    */
+	.panel-transition {
+		transition: width 200ms ease, height 200ms ease, opacity 150ms ease;
+	}
+
+	/* Scrollable surface wrapper that fills its parent panel */
+	.surface-scroll {
+		overflow: auto;
+		min-height: 0;
+		min-width: 0;
+		height: 100%;
+		width: 100%;
+	}
+
+	.retro-bevel-raised {
+		box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #404040;
+		border: 2px solid;
+		border-color: #fff #404040 #404040 #fff;
+	}
+
+	.retro-bevel-sunken {
+		box-shadow: inset 1px 1px 0 #404040, inset -1px -1px 0 #fff;
+		border: 2px solid;
+		border-color: #404040 #fff #fff #404040;
+	}
+
+	.retro-grid-panel {
+		background-color: #fff;
+		background-image:
+			linear-gradient(#e8e8e8 1px, transparent 1px),
+			linear-gradient(90deg, #e8e8e8 1px, transparent 1px);
+		background-size: 32px 32px;
+		background-position: -1px -1px;
+	}
+}
+
+/* ── Small-viewport overrides ──────────────────────────────────── */
+/* When Nova runs in a narrow rail, dock, or small window         */
+
+@media (max-width: 639px) {
+	/* Tighten spacing in cards and panels */
+	.p-4 { padding: 0.5rem; }
+
+	/* Ensure resize handles are still grabbable on touch */
+	[data-panel-resize-handle-id] {
+		min-width: 6px;
+		min-height: 6px;
 	}
 }

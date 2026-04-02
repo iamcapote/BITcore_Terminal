@@ -58,7 +58,7 @@ export class ChatHistoryService {
     this.logger = logger || noopLogger;
   }
 
-  async startConversation({ user, origin = 'unknown', tags = [] } = {}) {
+  async startConversation({ user, origin = 'unknown', tags = [], workspace = null } = {}) {
     const now = isoNow(this.clock);
     const conversation = {
       id: randomUUID(),
@@ -68,6 +68,8 @@ export class ChatHistoryService {
       origin,
       user: user ? this.#stripUser(user) : null,
       tags: Array.isArray(tags) ? [...new Set(tags.map(tag => String(tag).trim().toLowerCase()).filter(Boolean))] : [],
+      workspace: this.#normalizeWorkspace(workspace, now),
+      workspaceSnapshots: [],
       messageCount: 0,
       messages: []
     };
@@ -110,6 +112,50 @@ export class ChatHistoryService {
     return summarizeConversation(conversation);
   }
 
+  async linkWorkspaceBranch(conversationId, { branchName, baseBranch = null, linkedAt = null } = {}) {
+    const conversation = await this.#requireConversation(conversationId);
+    const effectiveLinkedAt = linkedAt || isoNow(this.clock);
+    if (typeof branchName !== 'string' || branchName.trim().length === 0) {
+      throw new TypeError('Workspace branch name is required.');
+    }
+
+    conversation.workspace = {
+      ...(conversation.workspace && typeof conversation.workspace === 'object' ? conversation.workspace : {}),
+      branchName: branchName.trim(),
+      baseBranch: typeof baseBranch === 'string' && baseBranch.trim() ? baseBranch.trim() : null,
+      linkedAt: effectiveLinkedAt,
+      snapshotCount: Array.isArray(conversation.workspaceSnapshots) ? conversation.workspaceSnapshots.length : 0,
+    };
+    conversation.updatedAt = effectiveLinkedAt;
+    await this.repository.saveConversation(conversation);
+    await this.#pruneRetention();
+    return Object.freeze({ ...conversation.workspace });
+  }
+
+  async appendWorkspaceSnapshot(conversationId, snapshot = {}) {
+    const conversation = await this.#requireConversation(conversationId);
+    const nextSnapshot = this.#normalizeWorkspaceSnapshot(snapshot);
+    conversation.workspaceSnapshots = Array.isArray(conversation.workspaceSnapshots) ? conversation.workspaceSnapshots : [];
+    conversation.workspaceSnapshots.push(nextSnapshot);
+    conversation.workspace = {
+      ...(conversation.workspace && typeof conversation.workspace === 'object' ? conversation.workspace : {}),
+      branchName: conversation.workspace?.branchName ?? null,
+      baseBranch: conversation.workspace?.baseBranch ?? null,
+      linkedAt: conversation.workspace?.linkedAt ?? null,
+      snapshotCount: conversation.workspaceSnapshots.length,
+    };
+    conversation.updatedAt = nextSnapshot.createdAt;
+    await this.repository.saveConversation(conversation);
+    await this.#pruneRetention();
+    return Object.freeze({ ...nextSnapshot });
+  }
+
+  async listWorkspaceSnapshots(conversationId) {
+    const conversation = await this.#requireConversation(conversationId);
+    const snapshots = Array.isArray(conversation.workspaceSnapshots) ? conversation.workspaceSnapshots : [];
+    return Object.freeze(snapshots.map((entry) => Object.freeze({ ...entry })));
+  }
+
   async listConversations() {
     const summaries = await this.repository.listConversations();
     return summaries.map(entry => Object.freeze({ ...entry }));
@@ -146,6 +192,54 @@ export class ChatHistoryService {
     const conversation = await this.getConversation(conversationId);
     if (!conversation) return null;
     return JSON.stringify(conversation, null, 2);
+  }
+
+  #normalizeWorkspace(workspace, nowIso) {
+    if (!workspace || typeof workspace !== 'object') {
+      return null;
+    }
+
+    const branchName = typeof workspace.branchName === 'string' && workspace.branchName.trim()
+      ? workspace.branchName.trim()
+      : null;
+    const baseBranch = typeof workspace.baseBranch === 'string' && workspace.baseBranch.trim()
+      ? workspace.baseBranch.trim()
+      : null;
+    const linkedAt = typeof workspace.linkedAt === 'string' && workspace.linkedAt.trim()
+      ? workspace.linkedAt
+      : nowIso;
+
+    if (!branchName && !baseBranch) {
+      return null;
+    }
+
+    return {
+      branchName,
+      baseBranch,
+      linkedAt,
+      snapshotCount: 0,
+    };
+  }
+
+  #normalizeWorkspaceSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') {
+      throw new TypeError('Workspace snapshot payload is required.');
+    }
+
+    const type = typeof snapshot.type === 'string' && snapshot.type.trim() ? snapshot.type.trim() : null;
+    if (!type) {
+      throw new TypeError('Workspace snapshot type is required.');
+    }
+
+    return {
+      id: randomUUID(),
+      type,
+      branchName: typeof snapshot.branchName === 'string' && snapshot.branchName.trim() ? snapshot.branchName.trim() : null,
+      filePath: typeof snapshot.filePath === 'string' && snapshot.filePath.trim() ? snapshot.filePath.trim() : null,
+      commit: typeof snapshot.commit === 'string' && snapshot.commit.trim() ? snapshot.commit.trim() : null,
+      note: typeof snapshot.note === 'string' && snapshot.note.trim() ? snapshot.note.trim() : null,
+      createdAt: typeof snapshot.createdAt === 'string' && snapshot.createdAt.trim() ? snapshot.createdAt : isoNow(this.clock),
+    };
   }
 
   async #requireConversation(conversationId) {

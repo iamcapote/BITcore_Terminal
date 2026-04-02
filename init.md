@@ -16,8 +16,8 @@
 #   - Reference Paths: Treat `$BITCORE_HOME` as the absolute path to the repository root. The
 #     agent should resolve it via `process.cwd()` when started from the project root, or by
 #     walking up the directory tree until `package.json` and `app/start.mjs` are found. The file
-#     `app/current_app_folder_file_tree.md` can be consulted (or regenerated conceptually via
-#     `app/filetree.mjs`) to confirm structure before assuming path correctness.
+#     `app/filetree.mjs` can be run to generate a current file tree; confirm structure before
+#     assuming path correctness.
 #
 #   - Command Execution: "command" entries are candidate shell probes. Equivalent Node.js or
 #     internal inspection methods (e.g., `read_file`, `fs.readdir`) MAY be substituted when they
@@ -222,8 +222,8 @@ INIT_SEQUENCE:
         command: cat $BITCORE_HOME/guides/*.md
         source: SYSTEM_PROMPTS_AND_GUIDES
 
-      - description: Review TODO list and mission file tree for immediate priorities and structure.
-        command: cat $BITCORE_HOME/todo.md && cat $BITCORE_HOME/app/current_app_folder_file_tree.md
+      - description: Review refactor plan and mission file tree for current priorities and structure.
+        command: cat $BITCORE_HOME/refactor-plan/README.md && find $BITCORE_HOME/missions/templates -maxdepth 1 -type f -print
         source: TASK_AND_STRUCTURE_OVERVIEW
 
       - description: Skim prompt templates and mission presets to internalize vocabulary and flows.
@@ -250,7 +250,7 @@ MINIMUM_RUNTIME_CONTEXT_LOAD:
     - Feature index (routes/controllers): from `$BITCORE_HOME/app/features/`
     - Telemetry and log configuration: from `$BITCORE_HOME/app/config/index.mjs`
     - Core directives: `$BITCORE_HOME/AGENTS.md`
-    - Repository roadmap and TODOs: `$BITCORE_HOME/todo.md`
+    - Repository roadmap and status: `$BITCORE_HOME/refactor-plan/README.md`
     - Context guides and research docs: `$BITCORE_HOME/guides/*.md`
     - Prompt library: `$BITCORE_HOME/prompts/`
     - Memory persistence state: `${BITCORE_STORAGE_DIR:-$HOME/.bitcore-terminal}/memory/`

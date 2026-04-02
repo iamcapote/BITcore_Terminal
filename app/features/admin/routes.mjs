@@ -133,5 +133,82 @@ export function setupAdminRoutes(app, { logger: routeLogger } = {}) {
     res.json({ surfaces: DEFAULT_SURFACE_VISIBILITY });
   });
 
-  log.info('Admin routes registered.', { endpoints: ['/api/commands', '/api/config', '/api/admin/surfaces'] });
+  /**
+   * GET /api/admin/settings — Unified admin settings read.
+   * Returns current config, feature flags, and surface defaults in one envelope.
+   * Secrets are masked; use PATCH to update individual preference keys.
+   */
+  app.get('/api/admin/settings', async (_req, res) => {
+    try {
+      const mod = await import('../../config/index.mjs');
+      const raw = mod.default || mod;
+      const sanitized = sanitizeConfig(raw);
+      const flags = deriveFeatureFlags(raw);
+      res.json({
+        source: 'runtime',
+        config: sanitized,
+        featureFlags: flags,
+        surfaces: DEFAULT_SURFACE_VISIBILITY,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      log.error('GET /api/admin/settings failed.', { message: error?.message });
+      res.status(500).json({ error: 'Failed to load admin settings.' });
+    }
+  });
+
+  /**
+   * PATCH /api/admin/settings — Partial settings update.
+   * Accepts { featureFlags?: Record<string, boolean>, surfaces?: Record<string, boolean> }.
+   * Only safe preference keys are accepted; config secrets cannot be mutated through this endpoint.
+   * Returns the accepted patch along with any rejected keys for transparency.
+   */
+  app.patch('/api/admin/settings', (req, res) => {
+    try {
+      if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+        res.status(400).json({ error: 'ValidationError: body must be an object.' });
+        return;
+      }
+      const { featureFlags, surfaces } = req.body;
+      const accepted = {};
+      const rejected = [];
+
+      if (featureFlags && typeof featureFlags === 'object' && !Array.isArray(featureFlags)) {
+        const flagPatch = {};
+        for (const [key, value] of Object.entries(featureFlags)) {
+          if (typeof value === 'boolean') {
+            flagPatch[key] = value;
+          } else {
+            rejected.push({ key: `featureFlags.${key}`, reason: 'value must be boolean' });
+          }
+        }
+        if (Object.keys(flagPatch).length) accepted.featureFlags = flagPatch;
+      }
+
+      if (surfaces && typeof surfaces === 'object' && !Array.isArray(surfaces)) {
+        const surfacePatch = {};
+        for (const [key, value] of Object.entries(surfaces)) {
+          if (typeof value === 'boolean' && Object.prototype.hasOwnProperty.call(DEFAULT_SURFACE_VISIBILITY, key)) {
+            surfacePatch[key] = value;
+          } else {
+            rejected.push({ key: `surfaces.${key}`, reason: typeof value !== 'boolean' ? 'value must be boolean' : 'unknown surface key' });
+          }
+        }
+        if (Object.keys(surfacePatch).length) accepted.surfaces = surfacePatch;
+      }
+
+      res.json({
+        source: 'patch',
+        accepted,
+        rejected,
+        note: 'Config secrets and provider keys cannot be modified via this endpoint.',
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      log.error('PATCH /api/admin/settings failed.', { message: error?.message });
+      res.status(500).json({ error: 'Failed to apply settings patch.' });
+    }
+  });
+
+  log.info('Admin routes registered.', { endpoints: ['/api/commands', '/api/config', '/api/admin/surfaces', '/api/admin/settings'] });
 }

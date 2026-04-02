@@ -14,24 +14,25 @@ export type WiringStatus = "unwired" | "partial" | "wired";
 export type Placement = "primary" | "bottom" | "right" | "hidden";
 
 export type SurfaceGroup =
-  | "workspace"
-  | "knowledge"
-  | "operations"
-  | "communication";
+  | "core"
+  | "agents"
+  | "tools"
+  | "system";
 
 export type SurfaceId =
   | "dashboard"
+  | "schema"
   | "explorer"
   | "vectors"
   | "databases"
-  | "instruments"
+  | "skills"
+  | "computer"
   | "mcp"
   | "memory"
-  | "metrics"
   | "agents"
-  | "tasks"
   | "terminal"
   | "chat"
+  | "workflows"
   | "research"
   | "prompts"
   | "missions"

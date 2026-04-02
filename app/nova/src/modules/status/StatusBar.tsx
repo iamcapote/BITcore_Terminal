@@ -1,7 +1,7 @@
 /**
  * Why: Present consolidated runtime telemetry inside Nova without relying on the legacy UI Next shell.
- * What: Renders research progress, token usage, log health, branch metadata, and a compact mode switcher in the footer bar.
- * How: Consumes live state from StatusProvider, formats aggregates into lightweight badges, and lets operators toggle layout presets.
+ * What: Renders research progress, token usage, log health, branch metadata in the footer bar.
+ * How: Consumes live state from StatusProvider, formats aggregates into lightweight badges.
  */
 
 import { memo, useCallback, useMemo, useState, type MouseEvent } from "react";
@@ -9,19 +9,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ActiveByPlacement, SurfaceState } from "@/modules/layout/layoutTypes";
-import type { LayoutPreset } from "@/stores/uiStore";
 import { useRelativeTime } from "@/hooks/useRelativeTime";
 import { useStatus } from "./StatusProvider";
 import {
   Activity,
   BarChart3,
-  Columns3,
   Cpu,
   Database,
   FolderTree,
   Gauge,
-  LayoutGrid,
-  LayoutPanelLeft,
   RefreshCw,
   PanelBottom,
   Plug,
@@ -34,15 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 interface StatusBarProps {
   readonly active: ActiveByPlacement;
   readonly surfaces: SurfaceState[];
-  readonly layoutPreset: LayoutPreset;
-  readonly onLayoutPresetChange: (preset: LayoutPreset) => void;
 }
-
-const MODE_PRESETS: Array<{ id: LayoutPreset; label: string; icon: typeof LayoutGrid }> = [
-  { id: "studio", label: "Studio", icon: LayoutGrid },
-  { id: "analysis", label: "Analysis", icon: Columns3 },
-  { id: "focus", label: "Focus", icon: LayoutPanelLeft },
-];
 
 const MAX_PROGRESS = 100;
 const TOKEN_DIVISOR = 1_000;
@@ -122,11 +110,11 @@ function LogSummaryBadge({ logs }: { readonly logs: LogsSnapshot }): JSX.Element
   );
 }
 
-function StatusItem({ icon: Icon, label, hint }: { icon: LucideIcon; label: string; hint?: string }) {
+function StatusItem({ icon: Icon, label, hint, className }: { icon: LucideIcon; label: string; hint?: string; className?: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/90">
+        <span className={cn("inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground/90", className)}>
           <Icon className="h-3 w-3" aria-hidden="true" />
           {label}
         </span>
@@ -136,34 +124,7 @@ function StatusItem({ icon: Icon, label, hint }: { icon: LucideIcon; label: stri
   );
 }
 
-function ModeSwitcher({ activePreset, onPresetChange }: { activePreset: LayoutPreset; onPresetChange: (preset: LayoutPreset) => void }) {
-  return (
-    <div className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/60 p-1">
-      {MODE_PRESETS.map((preset) => {
-        const isActive = preset.id === activePreset;
-        return (
-          <Tooltip key={preset.id}>
-            <TooltipTrigger asChild>
-              <Button
-                size="icon"
-                variant={isActive ? "default" : "ghost"}
-                className={cn("h-7 w-7", !isActive && "text-muted-foreground")}
-                onClick={() => onPresetChange(preset.id)}
-                aria-label={`Switch to ${preset.label} mode`}
-                aria-pressed={isActive}
-              >
-                <preset.icon className="h-3 w-3" aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent className="text-xs">{preset.label} mode</TooltipContent>
-          </Tooltip>
-        );
-      })}
-    </div>
-  );
-}
-
-export const StatusBar = memo(function StatusBar({ active, surfaces, layoutPreset, onLayoutPresetChange }: StatusBarProps): JSX.Element {
+export const StatusBar = memo(function StatusBar({ active, surfaces }: StatusBarProps): JSX.Element {
   const { telemetry, tokenUsage, logs, timeline, refresh } = useStatus();
   const dockLabel = useMemo(() => getSurfaceLabel(active.bottom, surfaces), [active.bottom, surfaces]);
   const progress = Math.min(Math.max(Math.round(telemetry.progressPercent), 0), MAX_PROGRESS);
@@ -200,7 +161,7 @@ export const StatusBar = memo(function StatusBar({ active, surfaces, layoutPrese
   );
 
   return (
-    <div className="flex h-9 items-center gap-3 border-t px-3 text-[11px] text-muted-foreground">
+    <div className="flex h-9 min-w-0 items-center gap-1 border-t px-2 text-[10px] text-muted-foreground sm:gap-3 sm:px-3 sm:text-[11px]">
       <TelemetrySummary stage={telemetry.stage} progress={progress} updatedAgo={updatedAgo} />
       <TokenSummary totalTokens={tokenUsage.totalTokens} promptTokens={tokenUsage.promptTokens} completionTokens={tokenUsage.completionTokens} />
       <LogSummaryBadge logs={logs} />
@@ -210,10 +171,10 @@ export const StatusBar = memo(function StatusBar({ active, surfaces, layoutPrese
         <StatusItem icon={Activity} label={timeline.guardrail} hint={timeline.guardrailHint ?? "Research guardrail"} />
       </div>
       <div className="ml-auto flex items-center gap-2">
-        <StatusItem icon={TerminalSquare} label={dockLabel} hint="Active dock surface" />
-        <StatusItem icon={Plug} label={timeline.remote} hint={timeline.remoteHint ?? "Remote sync"} />
-        <StatusItem icon={Cpu} label="Agent runtime" hint="Runtime status" />
-        <StatusItem icon={PanelBottom} label={timeline.gpuStatus} hint={timeline.gpuHint ?? "Compute status"} />
+        <StatusItem icon={TerminalSquare} label={dockLabel} hint="Active dock surface" className="max-w-[120px] truncate" />
+        <StatusItem icon={Plug} label={timeline.remote} hint={timeline.remoteHint ?? "Remote sync"} className="hidden sm:inline-flex" />
+        <StatusItem icon={Cpu} label="Agent runtime" hint="Runtime status" className="hidden md:inline-flex" />
+        <StatusItem icon={PanelBottom} label={timeline.gpuStatus} hint={timeline.gpuHint ?? "Compute status"} className="hidden lg:inline-flex" />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -233,7 +194,6 @@ export const StatusBar = memo(function StatusBar({ active, surfaces, layoutPrese
             <span>Shift+Click to validate GitHub</span>
           </TooltipContent>
         </Tooltip>
-        <ModeSwitcher activePreset={layoutPreset} onPresetChange={onLayoutPresetChange} />
       </div>
     </div>
   );

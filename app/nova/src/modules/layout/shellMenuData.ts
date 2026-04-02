@@ -55,7 +55,7 @@ export const POST_VIEW_MENUS: readonly MenuDescriptor[] = [
       { type: "item", label: "Suggest Refactor" },
       { type: "item", label: "Planner" },
       { type: "item", label: "MCP Servers" },
-      { type: "item", label: "Instruments" },
+      { type: "item", label: "Skills" },
     ],
   },
   {

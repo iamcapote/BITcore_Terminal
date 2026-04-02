@@ -13,17 +13,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   BookOpenCheck,
   ChevronRight,
   Command,
-  Eye,
-  EyeOff,
+  Globe,
   Key,
   Layers,
+  MessageSquare,
   Monitor,
   Palette,
+  Route,
   Save,
   Settings,
   Shield,
@@ -42,8 +44,22 @@ import {
   type FeatureFlag,
   type VeniceModel,
 } from "@/modules/admin/adminClient";
-
-/* ── Surface visibility persistence ────────────────────────────────── */
+import {
+  PROVIDER_ROUTE_MAP,
+  type ProviderRouteId,
+  PreferencesCard,
+  ApiKeyRow,
+  ConfigSection,
+  ThemeCard,
+  InfoRow,
+} from "@/modules/views/SettingsHelpers";
+import { LocalizationSettingsCard } from "@/modules/settings/LocalizationSettingsCard";
+import { CommandRunnerCard } from "@/modules/command-palette/CommandRunnerCard";
+import {
+  loadChatDefaults,
+  saveChatDefaults,
+  type ChatDefaults,
+} from "@/modules/chat/chatDefaults";
 
 const SURFACE_VIS_KEY = "nova.admin.surfaceVisibility";
 
@@ -58,7 +74,7 @@ function saveSurfaceVisibility(vis: Record<string, boolean>) {
   localStorage.setItem(SURFACE_VIS_KEY, JSON.stringify(vis));
 }
 
-/* ── Component ─────────────────────────────────────────────────────── */
+/* ── Surface visibility persistence ────────────────────────────────── */
 
 export function SettingsSurface(): JSX.Element {
   const [tab, setTab] = useState("general");
@@ -73,6 +89,12 @@ export function SettingsSurface(): JSX.Element {
   const [researchPrefs, setResearchPrefs] = useState<Record<string, unknown>>({});
   const [surfaceVis, setSurfaceVis] = useState<Record<string, boolean>>(() => loadSurfaceVisibility());
   const [keyVisibility, setKeyVisibility] = useState<Record<string, boolean>>({});
+  const [activeRouteProvider, setActiveRouteProvider] = useState<ProviderRouteId>("venice");
+  const [activeRouteIndex, setActiveRouteIndex] = useState(0);
+  const [chatDefaults, setChatDefaults] = useState<ChatDefaults>(() => loadChatDefaults());
+
+  const activeProviderRoutes = PROVIDER_ROUTE_MAP[activeRouteProvider] ?? [];
+  const activeRoute = activeProviderRoutes[activeRouteIndex] ?? activeProviderRoutes[0] ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -112,6 +134,12 @@ export function SettingsSurface(): JSX.Element {
     return () => { cancelled = true; };
   }, [notify]);
 
+  useEffect(() => {
+    if (activeRouteIndex >= activeProviderRoutes.length) {
+      setActiveRouteIndex(0);
+    }
+  }, [activeRouteIndex, activeProviderRoutes.length]);
+
   const handleSaveTermPrefs = useCallback(async () => {
     try {
       const updated = await updateTerminalPreferences(termPrefs as Record<string, unknown>);
@@ -140,17 +168,22 @@ export function SettingsSurface(): JSX.Element {
     setKeyVisibility((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
 
+  const handleSaveChatDefaults = useCallback(() => {
+    saveChatDefaults(chatDefaults);
+    notify("success", "Chat defaults saved");
+  }, [chatDefaults, notify]);
+
   const commandList = Object.values(commands);
   const categories = [...new Set(commandList.map(c => c.category))].sort();
   const configSections = Object.entries(configSnapshot).filter(([, v]) => typeof v === "object" && v !== null);
 
   if (loading) {
     return (
-      <div className="flex h-full w-full justify-center p-6">
-        <div className="w-full max-w-4xl space-y-4">
+      <div className="flex h-full w-full justify-center p-4 sm:p-6">
+        <div className="w-full space-y-4">
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-10 w-full" />
-          <div className="grid gap-4 sm:grid-cols-2"><Skeleton className="h-40" /><Skeleton className="h-40" /></div>
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2"><Skeleton className="h-40" /><Skeleton className="h-40" /></div>
           <Skeleton className="h-60 w-full" />
         </div>
       </div>
@@ -158,30 +191,32 @@ export function SettingsSurface(): JSX.Element {
   }
 
   return (
-    <div className="flex h-full w-full justify-center overflow-auto p-4">
-      <div className="w-full max-w-5xl">
+    <div className="flex h-full min-h-0 min-w-0 w-full justify-center overflow-auto p-3 sm:p-4">
+      <div className="flex h-full min-h-0 min-w-0 w-full flex-col">
         <div className="mb-4 flex items-center gap-2">
           <Settings className="h-5 w-5 text-muted-foreground" />
           <h2 className="text-lg font-semibold">Settings</h2>
           <Badge variant="outline" className="border-emerald-500/40 text-[10px] uppercase text-emerald-400">wired</Badge>
         </div>
 
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="mb-4 flex-wrap">
-            <TabsTrigger value="general"><Monitor className="mr-1 h-3.5 w-3.5" />General</TabsTrigger>
-            <TabsTrigger value="keys"><Key className="mr-1 h-3.5 w-3.5" />API Keys</TabsTrigger>
-            <TabsTrigger value="providers"><Layers className="mr-1 h-3.5 w-3.5" />Providers</TabsTrigger>
-            <TabsTrigger value="commands"><Command className="mr-1 h-3.5 w-3.5" />Commands</TabsTrigger>
-            <TabsTrigger value="surfaces"><Monitor className="mr-1 h-3.5 w-3.5" />Surfaces</TabsTrigger>
-            <TabsTrigger value="flags"><ToggleRight className="mr-1 h-3.5 w-3.5" />Flags</TabsTrigger>
-            <TabsTrigger value="theme"><Palette className="mr-1 h-3.5 w-3.5" />Theme</TabsTrigger>
-            <TabsTrigger value="security"><Shield className="mr-1 h-3.5 w-3.5" />Security</TabsTrigger>
-            <TabsTrigger value="about"><BookOpenCheck className="mr-1 h-3.5 w-3.5" />About</TabsTrigger>
+        <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
+          <TabsList className="mb-4 flex-wrap gap-1">
+            <TabsTrigger value="general" className="text-xs sm:text-sm"><Monitor className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">General</span></TabsTrigger>
+            <TabsTrigger value="localization" className="text-xs sm:text-sm"><Globe className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">Localization</span></TabsTrigger>
+            <TabsTrigger value="chat" className="text-xs sm:text-sm"><MessageSquare className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">Chat</span></TabsTrigger>
+            <TabsTrigger value="keys" className="text-xs sm:text-sm"><Key className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">API Keys</span></TabsTrigger>
+            <TabsTrigger value="providers" className="text-xs sm:text-sm"><Layers className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">Providers</span></TabsTrigger>
+            <TabsTrigger value="commands" className="text-xs sm:text-sm"><Command className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">Commands</span></TabsTrigger>
+            <TabsTrigger value="surfaces" className="text-xs sm:text-sm"><Monitor className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">Surfaces</span></TabsTrigger>
+            <TabsTrigger value="flags" className="text-xs sm:text-sm"><ToggleRight className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">Flags</span></TabsTrigger>
+            <TabsTrigger value="theme" className="text-xs sm:text-sm"><Palette className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">Theme</span></TabsTrigger>
+            <TabsTrigger value="security" className="text-xs sm:text-sm"><Shield className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">Security</span></TabsTrigger>
+            <TabsTrigger value="about" className="text-xs sm:text-sm"><BookOpenCheck className="mr-1 h-3.5 w-3.5" /><span className="hidden sm:inline">About</span></TabsTrigger>
           </TabsList>
 
           {/* ── General ──────────────────────────────────────────── */}
-          <TabsContent value="general">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
+          <TabsContent value="general" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
               <div className="space-y-4">
                 <PreferencesCard title="Terminal Preferences" prefs={termPrefs} onChange={setTermPrefs} onSave={handleSaveTermPrefs} />
                 <PreferencesCard title="Research Preferences" prefs={researchPrefs} onChange={setResearchPrefs} onSave={handleSaveResearchPrefs} />
@@ -189,9 +224,77 @@ export function SettingsSurface(): JSX.Element {
             </ScrollArea>
           </TabsContent>
 
+          {/* ── Localization (vendor-inspired: chatgpt-ui i18n + settings ergonomics scaffold) ── */}
+          <TabsContent value="localization" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
+              <div className="space-y-4">
+                <LocalizationSettingsCard />
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          {/* ── Chat defaults (vendor-inspired: chatbot-ui workspace-settings + chatgpt-ui ModelParameters) ── */}
+          <TabsContent value="chat" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader className="py-3"><CardTitle className="flex items-center gap-2 text-sm"><MessageSquare className="h-4 w-4" /> Chat Session Defaults</CardTitle></CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-xs text-muted-foreground">Configure defaults applied to every new chat session. Override per-session in the chat surface.</p>
+                    <Separator />
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Default persona</p>
+                        <Input className="h-9 text-xs" value={chatDefaults.persona} onChange={(e) => setChatDefaults((p) => ({ ...p, persona: e.target.value }))} placeholder="bitcore" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Default model</p>
+                        <Input className="h-9 text-xs" value={chatDefaults.model} onChange={(e) => setChatDefaults((p) => ({ ...p, model: e.target.value }))} placeholder="qwen3-235b" />
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Default temperature</p>
+                        <Input type="number" step="0.1" min="0" max="1" className="h-9 text-xs" value={chatDefaults.temperature} onChange={(e) => setChatDefaults((p) => ({ ...p, temperature: Math.min(1, Math.max(0, Number(e.target.value) || 0.7)) }))} />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Memory depth</p>
+                        <Select value={chatDefaults.memoryDepth} onValueChange={(value) => setChatDefaults((p) => ({ ...p, memoryDepth: value as ChatDefaults["memoryDepth"] }))}>
+                          <SelectTrigger className="h-9 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="short">short</SelectItem>
+                            <SelectItem value="medium">medium</SelectItem>
+                            <SelectItem value="long">long</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/70 px-3 py-2">
+                      <div>
+                        <p className="text-xs font-semibold">Memory enabled by default</p>
+                        <p className="text-[10px] text-muted-foreground">New sessions start with memory recall active.</p>
+                      </div>
+                      <Switch checked={chatDefaults.memoryEnabled} onCheckedChange={(c) => setChatDefaults((p) => ({ ...p, memoryEnabled: c }))} />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/70 px-3 py-2">
+                      <div>
+                        <p className="text-xs font-semibold">GitHub sync by default</p>
+                        <p className="text-[10px] text-muted-foreground">Auto-commit conversation summaries on exit.</p>
+                      </div>
+                      <Switch checked={chatDefaults.githubSync} onCheckedChange={(c) => setChatDefaults((p) => ({ ...p, githubSync: c }))} />
+                    </div>
+                    <div className="flex justify-end pt-2"><Button size="sm" onClick={handleSaveChatDefaults}><Save className="mr-1 h-4 w-4" /> Save chat defaults</Button></div>
+                  </CardContent>
+                </Card>
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
           {/* ── API Keys ─────────────────────────────────────────── */}
-          <TabsContent value="keys">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
+          <TabsContent value="keys" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
               <Card>
                 <CardHeader className="py-3"><CardTitle className="flex items-center gap-2 text-sm"><Key className="h-4 w-4" /> API Key Management</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
@@ -206,32 +309,103 @@ export function SettingsSurface(): JSX.Element {
           </TabsContent>
 
           {/* ── Providers ────────────────────────────────────────── */}
-          <TabsContent value="providers">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
-              <Card>
-                <CardHeader className="py-3"><CardTitle className="text-sm">Venice Models ({models.length})</CardTitle></CardHeader>
-                <CardContent>
-                  {models.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No models loaded. Check Venice API key.</p>
-                  ) : (
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {models.map((m) => (
-                        <div key={m.id} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
-                          <p className="text-sm font-medium">{m.id}</p>
-                          {m.owned_by ? <p className="text-xs text-muted-foreground">{m.owned_by}</p> : null}
-                        </div>
-                      ))}
+          <TabsContent value="providers" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader className="py-3"><CardTitle className="text-sm">Venice Models ({models.length})</CardTitle></CardHeader>
+                  <CardContent>
+                    {models.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No models loaded. Check Venice API key.</p>
+                    ) : (
+                      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {models.map((m) => (
+                          <div key={m.id} className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                            <p className="text-sm font-medium">{m.id}</p>
+                            {m.owned_by ? <p className="text-xs text-muted-foreground">{m.owned_by}</p> : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      <Route className="h-4 w-4" /> Router Provider Routes
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(PROVIDER_ROUTE_MAP) as ProviderRouteId[]).map((providerId) => {
+                        const selected = providerId === activeRouteProvider;
+                        return (
+                          <Button
+                            key={providerId}
+                            type="button"
+                            size="sm"
+                            variant={selected ? "default" : "outline"}
+                            onClick={() => {
+                              setActiveRouteProvider(providerId);
+                              setActiveRouteIndex(0);
+                            }}
+                            className="capitalize"
+                          >
+                            {providerId}
+                          </Button>
+                        );
+                      })}
                     </div>
-                  )}
-                </CardContent>
-              </Card>
+
+                    <div className="grid gap-2">
+                      {activeProviderRoutes.map((route, index) => {
+                        const selected = index === activeRouteIndex;
+                        return (
+                          <button
+                            key={`${route.path}-${route.method}-${index}`}
+                            type="button"
+                            onClick={() => setActiveRouteIndex(index)}
+                            className="flex items-center justify-between rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-left hover:border-primary/40"
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <Badge variant={selected ? "default" : "secondary"} className="h-5 text-[10px]">
+                                {route.method}
+                              </Badge>
+                              <span className="truncate text-sm">{route.label}</span>
+                            </div>
+                            {("streaming" in route && route.streaming) ? <Badge variant="outline" className="text-[10px]">stream</Badge> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {activeRoute ? (
+                      <div className="grid gap-2 rounded-lg border border-border/60 bg-background/60 p-3">
+                        <div className="flex items-center gap-2">
+                          <Globe className="h-4 w-4 text-muted-foreground" />
+                          <p className="text-sm font-medium">Selected route endpoint</p>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Input readOnly value={activeRoute.base} aria-label="API base URL" />
+                          <Input readOnly value={activeRoute.path} aria-label="API path" />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {activeRoute.method} {("streaming" in activeRoute && activeRoute.streaming) ? "• Streaming enabled" : "• Non-streaming"}
+                        </p>
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </div>
             </ScrollArea>
           </TabsContent>
 
           {/* ── Commands ──────────────────────────────────────────── */}
-          <TabsContent value="commands">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
+          <TabsContent value="commands" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
               <div className="space-y-4">
+                <CommandRunnerCard commands={commands} />
                 <p className="text-sm text-muted-foreground">{commandList.length} commands in {categories.length} categories.</p>
                 {categories.map((cat) => (
                   <Card key={cat}>
@@ -271,14 +445,14 @@ export function SettingsSurface(): JSX.Element {
           </TabsContent>
 
           {/* ── Surfaces ──────────────────────────────────────────── */}
-          <TabsContent value="surfaces">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
+          <TabsContent value="surfaces" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
               <Card>
                 <CardHeader className="py-3"><CardTitle className="text-sm">Surface Visibility</CardTitle></CardHeader>
                 <CardContent className="space-y-2">
                   <p className="mb-3 text-xs text-muted-foreground">Toggle surfaces on/off. Persists in browser storage.</p>
                   {Object.entries(surfaceVis).sort(([a], [b]) => a.localeCompare(b)).map(([id, visible]) => (
-                    <div key={id} className="flex items-center justify-between rounded-lg border border-border/60 bg-background/60 px-4 py-2.5">
+                    <div key={id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-background/60 px-4 py-2.5">
                       <span className="text-sm font-medium">{id}</span>
                       <Switch checked={visible} onCheckedChange={() => toggleSurface(id)} />
                     </div>
@@ -289,13 +463,13 @@ export function SettingsSurface(): JSX.Element {
           </TabsContent>
 
           {/* ── Flags ────────────────────────────────────────────── */}
-          <TabsContent value="flags">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
+          <TabsContent value="flags" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
               <Card>
                 <CardHeader className="py-3"><CardTitle className="flex items-center gap-2 text-sm"><ToggleRight className="h-4 w-4" /> Feature Flags ({flags.length})</CardTitle></CardHeader>
                 <CardContent className="space-y-2">
                   {flags.map((flag) => (
-                    <div key={flag.id} className="flex items-center justify-between rounded-lg border border-border/60 bg-background/60 px-4 py-2.5">
+                    <div key={flag.id} className="flex flex-wrap items-center justify-between rounded-lg border border-border/60 bg-background/60 px-4 py-2.5">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium">{flag.label}</span>
@@ -314,8 +488,8 @@ export function SettingsSurface(): JSX.Element {
           </TabsContent>
 
           {/* ── Theme ────────────────────────────────────────────── */}
-          <TabsContent value="theme">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
+          <TabsContent value="theme" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
               <Card>
                 <CardHeader className="py-3"><CardTitle className="flex items-center gap-2 text-sm"><Palette className="h-4 w-4" /> Theme Configuration</CardTitle></CardHeader>
                 <CardContent className="space-y-4">
@@ -330,8 +504,8 @@ export function SettingsSurface(): JSX.Element {
           </TabsContent>
 
           {/* ── Security ──────────────────────────────────────────── */}
-          <TabsContent value="security">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
+          <TabsContent value="security" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
               <Card>
                 <CardHeader className="py-3"><CardTitle className="flex items-center gap-2 text-sm"><Shield className="h-4 w-4" /> Security</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
@@ -342,8 +516,8 @@ export function SettingsSurface(): JSX.Element {
           </TabsContent>
 
           {/* ── About ─────────────────────────────────────────────── */}
-          <TabsContent value="about">
-            <ScrollArea className="h-[calc(100vh-14rem)]">
+          <TabsContent value="about" className="min-h-0 flex-1">
+            <ScrollArea className="h-full">
               <div className="space-y-4">
                 <Card>
                   <CardHeader className="py-3"><CardTitle className="text-sm">System Information</CardTitle></CardHeader>
@@ -369,90 +543,4 @@ export function SettingsSurface(): JSX.Element {
       </div>
     </div>
   );
-}
-
-/* ── Helpers ──────────────────────────────────────────────────────── */
-
-function PreferencesCard({ title, prefs, onChange, onSave }: { title: string; prefs: Record<string, unknown>; onChange: (n: Record<string, unknown>) => void; onSave: () => void }) {
-  const entries = Object.entries(prefs).filter(([k]) => !k.startsWith("_"));
-  return (
-    <Card>
-      <CardHeader className="py-3"><CardTitle className="text-sm">{title}</CardTitle></CardHeader>
-      <CardContent className="space-y-3">
-        {entries.map(([key, value]) => (
-          <div key={key} className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">{key}</span>
-            {typeof value === "boolean" ? (
-              <Switch checked={value} onCheckedChange={(c) => onChange({ ...prefs, [key]: c })} />
-            ) : typeof value === "number" ? (
-              <Input type="number" className="h-8 w-28" value={value} onChange={(e) => onChange({ ...prefs, [key]: Number(e.target.value) })} />
-            ) : typeof value === "string" ? (
-              <Input className="h-8 w-48" value={value} onChange={(e) => onChange({ ...prefs, [key]: e.target.value })} />
-            ) : (
-              <span className="text-xs text-muted-foreground">{JSON.stringify(value)}</span>
-            )}
-          </div>
-        ))}
-        <div className="flex justify-end pt-2"><Button size="sm" onClick={onSave}><Save className="mr-1 h-4 w-4" /> Save</Button></div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ApiKeyRow({ id, label, envVar, configured, keyVisibility, toggleKeyVis }: { id: string; label: string; envVar: string; configured: boolean; keyVisibility: Record<string, boolean>; toggleKeyVis: (id: string) => void }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/60 px-4 py-3">
-      <div className="flex items-center gap-3">
-        <Shield className="h-4 w-4 text-muted-foreground" />
-        <div><div className="text-sm font-medium">{label}</div><div className="text-xs text-muted-foreground">{envVar}</div></div>
-      </div>
-      <div className="flex items-center gap-2">
-        <Badge variant={configured ? "default" : "secondary"}>{configured ? "Configured" : "Not Set"}</Badge>
-        <Input type={keyVisibility[id] ? "text" : "password"} className="h-8 w-48" placeholder={configured ? "••••••••••••" : "Enter key"} readOnly={configured} />
-        <Button size="icon" variant="ghost" onClick={() => toggleKeyVis(id)} aria-label={keyVisibility[id] ? "Hide" : "Show"}>
-          {keyVisibility[id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function ConfigSection({ title, data }: { title: string; data: unknown }) {
-  if (!data || typeof data !== "object") return null;
-  const entries = Object.entries(data as Record<string, unknown>);
-  return (
-    <details className="group rounded-lg border border-border/60">
-      <summary className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-medium">
-        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
-        <span className="capitalize">{title}</span>
-        <Badge variant="outline" className="ml-auto text-[9px]">{entries.length} fields</Badge>
-      </summary>
-      <div className="space-y-1 border-t border-border/40 px-4 py-3">
-        {entries.map(([key, value]) => (
-          <div key={key} className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">{key}</span>
-            <span className="max-w-[60%] truncate font-mono">{typeof value === "object" ? JSON.stringify(value) : String(value)}</span>
-          </div>
-        ))}
-      </div>
-    </details>
-  );
-}
-
-function ThemeCard({ theme }: { theme: "dark" | "light" | "retro" }) {
-  const colors: Record<string, string[]> = {
-    dark: ["bg-zinc-900", "bg-zinc-700", "bg-emerald-500"],
-    light: ["bg-white", "bg-gray-300", "bg-blue-500"],
-    retro: ["bg-amber-900", "bg-amber-600", "bg-green-400"],
-  };
-  return (
-    <button onClick={() => { document.documentElement.setAttribute("data-nova-theme", theme); localStorage.setItem("nova.theme", theme); }} className="rounded-lg border-2 border-border/60 bg-background/60 p-4 text-center transition-colors hover:border-primary" type="button">
-      <div className="mb-2 text-sm font-medium capitalize">{theme}</div>
-      <div className="flex justify-center gap-1">{colors[theme].map((c, i) => (<div key={i} className={`h-4 w-4 rounded-full ${c}`} />))}</div>
-    </button>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (<div className="flex items-center justify-between"><span className="text-muted-foreground">{label}</span><span className="font-mono text-xs">{value}</span></div>);
 }

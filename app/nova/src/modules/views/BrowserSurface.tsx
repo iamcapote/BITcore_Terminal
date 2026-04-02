@@ -105,9 +105,9 @@ export function BrowserSurface(): JSX.Element {
   const isSecure = url.startsWith("https://");
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden">
       {/* ── Navigation bar ───────────────────────────────────────── */}
-      <div className="flex items-center gap-1.5 border-b border-border/60 bg-muted/20 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-border/60 bg-muted/20 px-2 py-2 sm:px-3">
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={goBack} disabled={historyIndex <= 0} aria-label="Back">
           <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
@@ -117,11 +117,11 @@ export function BrowserSurface(): JSX.Element {
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={refresh} aria-label="Refresh">
           {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
         </Button>
-        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={goHome} aria-label="Home">
+        <Button size="icon" variant="ghost" className="h-7 w-7 hidden sm:flex" onClick={goHome} aria-label="Home">
           <Home className="h-3.5 w-3.5" />
         </Button>
 
-        <form onSubmit={handleSubmit} className="flex flex-1 items-center gap-1.5">
+        <form onSubmit={handleSubmit} className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="relative flex-1">
             <div className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center">
               {isSecure ? <Lock className="h-3 w-3 text-emerald-400" /> : <Globe className="h-3 w-3 text-muted-foreground" />}
@@ -134,7 +134,7 @@ export function BrowserSurface(): JSX.Element {
               spellCheck={false}
             />
           </div>
-          <Button type="submit" size="sm" variant="secondary" className="h-8 text-xs">Go</Button>
+          <Button type="submit" size="sm" variant="secondary" className="h-8 shrink-0 text-xs">Go</Button>
         </form>
 
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={openExternal} aria-label="Open externally">
@@ -149,8 +149,8 @@ export function BrowserSurface(): JSX.Element {
       <div className="relative flex flex-1 overflow-hidden">
         {/* History sidebar */}
         {showHistory && (
-          <div className="w-64 shrink-0 border-r border-border/60 bg-muted/10">
-            <div className="flex items-center justify-between px-3 py-2">
+          <div className="absolute inset-y-0 left-0 z-10 w-56 shrink-0 border-r border-border/60 bg-muted/95 backdrop-blur sm:relative sm:w-64 sm:bg-muted/10 sm:backdrop-blur-none">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
               <span className="text-xs font-semibold text-muted-foreground">History</span>
               <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setShowHistory(false)}>
                 <X className="h-3 w-3" />
@@ -194,9 +194,9 @@ export function BrowserSurface(): JSX.Element {
       </div>
 
       {/* ── Status bar ───────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 border-t border-border/60 bg-muted/20 px-3 py-1 text-[10px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-2 border-t border-border/60 bg-muted/20 px-3 py-1 text-[10px] text-muted-foreground">
         {isSecure ? <Shield className="h-3 w-3 text-emerald-400" /> : <Globe className="h-3 w-3" />}
-        <span className="truncate">{url}</span>
+        <span className="min-w-0 flex-1 truncate">{url}</span>
         <Badge variant="outline" className="ml-auto text-[9px]">sandbox</Badge>
         {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
       </div>

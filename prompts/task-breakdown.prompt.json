@@ -1,0 +1,15 @@
+{
+  "id": "task-breakdown",
+  "title": "Task Breakdown",
+  "body": "Break this goal into implementation-ready tasks.\nFor each task include: title, scope, dependencies, acceptance criteria, and estimate.\nPrefer small, independently shippable slices.",
+  "description": "Template to convert high-level goals into scoped implementation tasks.",
+  "tags": [
+    "tasks",
+    "planning",
+    "starter"
+  ],
+  "metadata": {},
+  "version": 1,
+  "createdAt": "2026-02-17T03:17:00.408Z",
+  "updatedAt": "2026-02-17T03:17:00.408Z"
+}

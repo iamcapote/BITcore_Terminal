@@ -88,7 +88,7 @@ export function TerminalConsole({ className, focusInputOnMount = false }: Termin
 	return (
 		<div
 			className={cn(
-				"flex flex-1 flex-col overflow-hidden rounded-lg border border-border/60 bg-background/80",
+				"flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60 bg-background/80",
 				className,
 			)}
 		>
@@ -116,7 +116,7 @@ export function TerminalConsole({ className, focusInputOnMount = false }: Termin
 					</Button>
 				</div>
 			</div>
-			<div className="flex-1 overflow-y-auto px-3 py-2">
+			<div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
 				<div
 					ref={historyContainerRef}
 					aria-live="polite"

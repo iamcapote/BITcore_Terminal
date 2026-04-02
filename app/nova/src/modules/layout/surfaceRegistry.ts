@@ -1,35 +1,36 @@
 /**
  * Why: Surface registry maps surface IDs to their React components and definitions.
  * What: SURFACES array (surface configs) and SURFACE_COMPONENTS map consumed by the shell.
- * How: Import each surface component and pair it with its SurfaceDefinition metadata.
+ * How: Core surfaces loaded eagerly; hidden-by-default surfaces loaded with React.lazy for code splitting.
  */
 
+import { lazy, type ComponentType } from "react";
 import type { SurfaceDefinition, SurfaceId } from "@/modules/layout/layoutTypes";
-import {
-  AgentsSurface,
-  ComputerAsToolSurface,
-} from "@/modules/views/AgentSurfaces";
+
+/* ── Eager imports (initially visible) ─────────────────────────────── */
+
 import { ChatSurface } from "@/modules/chat/ChatSurface";
-import { EditorSurface } from "@/modules/views/EditorSurface";
-import {
-  DatabaseManagerSurface,
-  MemoryManagerSurface,
-  MetricsBoardSurface,
-  VectorManagerSurface,
-} from "@/modules/views/KnowledgeSurfaces";
-import {
-  InstrumentsSurface,
-  TasksSurface,
-  TerminalSurface,
-} from "@/modules/views/OperationsSurfaces";
-import { ResearchSurface } from "@/modules/research/ResearchSurface";
-import { PromptLibrarySurface } from "@/modules/prompts/PromptLibrarySurface";
-import { MissionsSurface } from "@/modules/missions/MissionsSurface";
-import { GithubSyncSurface } from "@/modules/github/GithubSyncSurface";
-import { LogsSurface } from "@/modules/logs/LogsSurface";
-import { SettingsSurface } from "@/modules/views/SettingsSurface";
 import { DashboardSurface } from "@/modules/views/DashboardSurface";
-import { BrowserSurface } from "@/modules/views/BrowserSurface";
+import { SchemaSurface, WorkflowsSurface } from "@/modules/views/WorkflowCoreSurfaces";
+
+/* ── Lazy imports (hidden by default, code-split) ──────────────────── */
+
+const AgentsSurface = lazy(() => import("@/modules/views/AgentSurfaces").then(m => ({ default: m.AgentsSurface })));
+const ComputerAsToolSurface = lazy(() => import("@/modules/views/AgentSurfaces").then(m => ({ default: m.ComputerAsToolSurface })));
+const McpRegistrySurface = lazy(() => import("@/modules/views/AgentSurfaces").then(m => ({ default: m.McpRegistrySurface })));
+const BrowserSurface = lazy(() => import("@/modules/views/BrowserSurface").then(m => ({ default: m.BrowserSurface })));
+const EditorSurface = lazy(() => import("@/modules/views/EditorSurface").then(m => ({ default: m.EditorSurface })));
+const DatabaseManagerSurface = lazy(() => import("@/modules/views/KnowledgeSurfaces").then(m => ({ default: m.DatabaseManagerSurface })));
+const MemoryManagerSurface = lazy(() => import("@/modules/views/KnowledgeSurfaces").then(m => ({ default: m.MemoryManagerSurface })));
+const VectorManagerSurface = lazy(() => import("@/modules/views/KnowledgeSurfaces").then(m => ({ default: m.VectorManagerSurface })));
+const SkillsSurface = lazy(() => import("@/modules/views/OperationsSurfaces").then(m => ({ default: m.InstrumentsSurface })));
+const TerminalSurface = lazy(() => import("@/modules/views/OperationsSurfaces").then(m => ({ default: m.TerminalSurface })));
+const ResearchSurface = lazy(() => import("@/modules/research/ResearchSurface").then(m => ({ default: m.ResearchSurface })));
+const PromptLibrarySurface = lazy(() => import("@/modules/prompts/PromptLibrarySurface").then(m => ({ default: m.PromptLibrarySurface })));
+const MissionsSurface = lazy(() => import("@/modules/missions/MissionsSurface").then(m => ({ default: m.MissionsSurface })));
+const GithubSyncSurface = lazy(() => import("@/modules/github/GithubSyncSurface").then(m => ({ default: m.GithubSyncSurface })));
+const LogsSurface = lazy(() => import("@/modules/logs/LogsSurface").then(m => ({ default: m.LogsSurface })));
+const SettingsSurface = lazy(() => import("@/modules/views/SettingsSurface").then(m => ({ default: m.SettingsSurface })));
 import {
   Bot,
   BookOpenCheck,
@@ -37,64 +38,69 @@ import {
   Chrome,
   Database,
   FolderTree,
-  Gauge,
   GitPullRequest,
   LayoutDashboard,
   Layers,
-  ListChecks,
   MessageSquare,
+  Monitor,
   Plug,
   Rocket,
   ScrollText,
   Search,
   Settings,
   TerminalSquare,
+  Workflow,
   Wrench,
 } from "lucide-react";
 
 /* ── Surface definitions ───────────────────────────────────────────── */
 
 export const SURFACES: SurfaceDefinition[] = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "workspace", defaultPlacement: "primary", initialPlacement: "primary", wiringStatus: "wired" },
-  { id: "explorer", label: "Explorer", icon: FolderTree, group: "workspace", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
-  { id: "vectors", label: "Vector Stores", icon: Layers, group: "knowledge", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
-  { id: "databases", label: "Databases", icon: Database, group: "knowledge", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
-  { id: "memory", label: "Memory", icon: BrainCircuit, group: "knowledge", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "metrics", label: "Metrics", icon: Gauge, group: "knowledge", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
-  { id: "research", label: "Research", icon: Search, group: "knowledge", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "prompts", label: "Prompts", icon: BookOpenCheck, group: "knowledge", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "agents", label: "Agents", icon: Bot, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
-  { id: "instruments", label: "Instruments", icon: Wrench, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
-  { id: "missions", label: "Missions", icon: Rocket, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "tasks", label: "Tasks", icon: ListChecks, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "githubSync", label: "GitHub Sync", icon: GitPullRequest, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "logs", label: "Logs", icon: ScrollText, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "terminal", label: "Terminal", icon: TerminalSquare, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "mcp", label: "MCP", icon: Plug, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
-  { id: "browser", label: "Browser", icon: Chrome, group: "operations", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "settings", label: "Settings", icon: Settings, group: "workspace", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
-  { id: "chat", label: "Chat", icon: MessageSquare, group: "communication", defaultPlacement: "primary", initialPlacement: "primary", wiringStatus: "wired" },
+  /* core — surfaces you open every session */
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "core", defaultPlacement: "primary", initialPlacement: "primary", wiringStatus: "wired" },
+  { id: "chat", label: "Chat", icon: MessageSquare, group: "core", defaultPlacement: "primary", initialPlacement: "primary", wiringStatus: "wired" },
+  { id: "schema", label: "Schema", icon: Workflow, group: "core", defaultPlacement: "primary", initialPlacement: "primary", wiringStatus: "partial" },
+  { id: "workflows", label: "Workflows", icon: Workflow, group: "core", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "partial" },
+  { id: "terminal", label: "Terminal", icon: TerminalSquare, group: "core", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  { id: "research", label: "Research", icon: Search, group: "core", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  { id: "explorer", label: "Explorer", icon: FolderTree, group: "core", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
+  { id: "browser", label: "Browser", icon: Chrome, group: "core", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  /* agents — mission orchestration, skills, and knowledge primitives */
+  { id: "missions", label: "Missions", icon: Rocket, group: "agents", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  { id: "agents", label: "Agents", icon: Bot, group: "agents", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "partial" },
+  { id: "computer", label: "Computer", icon: Monitor, group: "agents", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  { id: "skills", label: "Skills", icon: Wrench, group: "agents", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
+  { id: "memory", label: "Memory", icon: BrainCircuit, group: "agents", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  { id: "prompts", label: "Prompts", icon: BookOpenCheck, group: "agents", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  { id: "vectors", label: "Vector Stores", icon: Layers, group: "agents", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "partial" },
+  { id: "mcp", label: "MCP", icon: Plug, group: "agents", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  /* tools — utilities and integrations */
+  { id: "logs", label: "Logs", icon: ScrollText, group: "tools", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  { id: "githubSync", label: "GitHub Sync", icon: GitPullRequest, group: "tools", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
+  { id: "databases", label: "Databases", icon: Database, group: "tools", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "unwired" },
+  { id: "settings", label: "Settings", icon: Settings, group: "tools", defaultPlacement: "primary", initialPlacement: "hidden", wiringStatus: "wired" },
 ];
 
 /* ── Component map ─────────────────────────────────────────────────── */
 
-export const SURFACE_COMPONENTS: Record<SurfaceId, () => JSX.Element> = {
+export const SURFACE_COMPONENTS: Record<SurfaceId, ComponentType> = {
   dashboard: DashboardSurface,
+  schema: SchemaSurface,
   explorer: EditorSurface,
   vectors: VectorManagerSurface,
   databases: DatabaseManagerSurface,
   memory: MemoryManagerSurface,
-  metrics: MetricsBoardSurface,
   research: ResearchSurface,
   prompts: PromptLibrarySurface,
   agents: AgentsSurface,
-  instruments: InstrumentsSurface,
+  computer: ComputerAsToolSurface,
+  skills: SkillsSurface,
   missions: MissionsSurface,
-  tasks: TasksSurface,
   githubSync: GithubSyncSurface,
   logs: LogsSurface,
   terminal: TerminalSurface,
-  mcp: ComputerAsToolSurface,
+  workflows: WorkflowsSurface,
+  mcp: McpRegistrySurface,
   browser: BrowserSurface,
   settings: SettingsSurface,
   chat: ChatSurface,

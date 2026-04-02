@@ -1,6 +1,6 @@
 /**
  * Why: Landing page that gives operators an at-a-glance view of system health, recent activity, and quick actions.
- * What: Dashboard surface with status cards, onboarding checklist, quick-action buttons, and system vitals.
+ * What: Dashboard surface with status cards, onboarding checklist, quick-action buttons, system vitals, and workspace metrics.
  * How: Fetches /api/status, /api/config, /api/commands on mount; renders cards with live data; links to other surfaces.
  */
 
@@ -19,7 +19,6 @@ import {
   Circle,
   Command,
   GitPullRequest,
-  MessageSquare,
   Rocket,
   Search,
   Settings,
@@ -97,10 +96,10 @@ export function DashboardSurface(): JSX.Element {
 
   if (loading) {
     return (
-      <div className="flex h-full w-full justify-center p-6">
-        <div className="w-full max-w-5xl space-y-4">
+      <div className="flex h-full w-full justify-center p-4 sm:p-6">
+        <div className="w-full space-y-4">
           <Skeleton className="h-8 w-64" />
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
             {Array.from({ length: 4 }).map((_, i) => (<Skeleton key={i} className="h-28" />))}
           </div>
           <Skeleton className="h-48" />
@@ -110,9 +109,9 @@ export function DashboardSurface(): JSX.Element {
   }
 
   return (
-    <div className="flex h-full w-full justify-center overflow-auto p-4">
-      <ScrollArea className="h-full w-full max-w-5xl">
-        <div className="space-y-6">
+    <div className="flex h-full min-h-0 min-w-0 w-full justify-center overflow-auto p-3 sm:p-4">
+      <ScrollArea className="h-full w-full">
+        <div className="space-y-4 sm:space-y-6">
 
           {/* ── Header ───────────────────────────────────────────── */}
           <div>
@@ -124,7 +123,7 @@ export function DashboardSurface(): JSX.Element {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {vitals.map((v) => (
               <Card key={v.label}>
-                <CardContent className="flex items-center justify-between py-4">
+                <CardContent className="flex flex-wrap items-center justify-between gap-2 py-4">
                   <div>
                     <p className="text-xs text-muted-foreground">{v.label}</p>
                     <p className="text-sm font-semibold">{v.value}</p>
@@ -146,9 +145,8 @@ export function DashboardSurface(): JSX.Element {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                <QuickAction icon={MessageSquare} label="New Chat" surface="chat" />
                 <QuickAction icon={Search} label="Research" surface="research" />
-                <QuickAction icon={Rocket} label="Missions" surface="missions" />
+                <QuickAction icon={Rocket} label="Agents" surface="missions" />
                 <QuickAction icon={BookOpenCheck} label="Prompts" surface="prompts" />
                 <QuickAction icon={BrainCircuit} label="Memory" surface="memory" />
                 <QuickAction icon={GitPullRequest} label="GitHub Sync" surface="githubSync" />
@@ -168,11 +166,11 @@ export function DashboardSurface(): JSX.Element {
             </CardHeader>
             <CardContent className="space-y-2">
               {steps.map((step) => (
-                <div key={step.id} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-muted/40">
+                <div key={step.id} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors hover:bg-muted/40">
                   {step.done ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Circle className="h-4 w-4 text-muted-foreground" />}
-                  <span className={step.done ? "text-muted-foreground line-through" : ""}>{step.label}</span>
+                  <span className={step.done ? "min-w-0 flex-1 text-muted-foreground line-through" : "min-w-0 flex-1"}>{step.label}</span>
                   {!step.done && step.surfaceId ? (
-                    <Button size="sm" variant="ghost" className="ml-auto h-6 text-xs"><ArrowRight className="h-3 w-3" /></Button>
+                    <Button size="sm" variant="ghost" className="ml-auto h-6 shrink-0 text-xs"><ArrowRight className="h-3 w-3" /></Button>
                   ) : null}
                 </div>
               ))}

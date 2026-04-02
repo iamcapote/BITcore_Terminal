@@ -137,7 +137,7 @@ app/
 
    features/
       ai/
-         research.providers.mjs – Placeholder shim for query/summarisation prompts (see `guides/gaps.md`)
+         research.providers.mjs – Re-export barrel aggregating query, summarisation, and utility providers
       auth/
          encryption.mjs        – Legacy AES-256-GCM helpers (unused in current single-user mode)
          user-manager.mjs      – Single-user store, API key persistence, feature flags
@@ -212,7 +212,7 @@ app/
    start.mjs                 – Entry point that bootstraps CLI or server mode
 
 docs & ops/
-   README.md, guides/, todo.md, gaps.md, completed.md, websession.md, etc.
+   README.md, guides/, init.md, refactor-plan/, websession.md, etc.
 
 package.json, vitest.config.js, .env (optional), and other project metadata live at the repository root.
 ```

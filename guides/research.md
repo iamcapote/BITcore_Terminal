@@ -14,11 +14,9 @@ For roadmap-level planning of retrieval and RAG enhancements, see [`guides/retri
 | Orchestration | `executeResearch` (CLI command), `prepareMemoryContext`, `enrichResearchQuery` | Guard inputs, pull credentials, enrich the query, and compose the engine configuration. |
 | Engine | `app/infrastructure/research/research.engine.mjs` | Instantiate `ResearchPath` workers, coordinate breadth/depth execution, aggregate results, and format Markdown. |
 | Path worker | `app/infrastructure/research/research.path.mjs` | Run Brave searches, manage follow-up questions, collate learnings/sources. |
-| Providers | `app/features/ai/research.providers.mjs` (currently broken), `app/infrastructure/search/search.providers.mjs`, `app/utils/token-classifier.mjs` | Generate initial queries & summaries with Venice and bridge to Brave search. |
+| Providers | `app/features/ai/research.providers.mjs`, `app/infrastructure/search/search.providers.mjs`, `app/utils/token-classifier.mjs` | Generate initial queries & summaries with Venice and bridge to Brave search. |
 | Output plumbing | `app/utils/research.output-manager.mjs`, `app/utils/websocket.utils.mjs` | Mirror output/progress between CLI stdout and WebSocket clients. |
 | Post-actions | `app/commands/research.github-sync.cli.mjs`, `app/features/research/github-sync/service.mjs` | Handle optional uploads/downloads for completed research artifacts. |
-
-> ⚠️ **Provider status**: `research.providers.mjs` still contains placeholder exports. Everything importing it will fail import analysis until the shim is replaced with the implementation in `research.providers.service.mjs` (see `guides/gaps.md`).
 
 ---
 

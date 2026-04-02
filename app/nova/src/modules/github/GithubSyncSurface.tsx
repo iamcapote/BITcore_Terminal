@@ -77,8 +77,8 @@ function GithubSyncContent(): JSX.Element {
     );
   }
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-4">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
+      <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-4 p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <ShieldCheck className="h-5 w-5" />
@@ -108,7 +108,7 @@ function GithubSyncContent(): JSX.Element {
         </div>
 
         {activityStats && (
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
             <Card className="border-border/60 bg-background/70">
               <CardContent className="pt-6">
                 <div className="text-2xl font-bold">{activityStats.total}</div>

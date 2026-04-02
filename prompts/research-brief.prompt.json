@@ -1,0 +1,15 @@
+{
+  "id": "research-brief",
+  "title": "Research Brief",
+  "body": "Create a research brief with the following sections:\n1) Objective\n2) Key findings\n3) Risks / unknowns\n4) Recommendation\n5) Next actions (owner + due date)",
+  "description": "Template for quick research summaries with decisions and next actions.",
+  "tags": [
+    "research",
+    "brief",
+    "starter"
+  ],
+  "metadata": {},
+  "version": 1,
+  "createdAt": "2026-02-17T03:17:00.408Z",
+  "updatedAt": "2026-02-17T03:17:00.408Z"
+}

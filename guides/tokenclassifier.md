@@ -83,7 +83,7 @@ The research pipeline treats `null` as “classification unavailable” and fall
 - **CLI (`app/commands/research.cli.mjs`)**: Prompts with “Use token classification? (y/n)” unless `--classify` flag present.
 - **WebSocket (`app/features/research/routes.mjs`)**: `wsPrompt` asks the same question during interactive flows; `--classify` flag also supported.
 - **Query enrichment (`app/commands/research/query-classifier.mjs`)**: Calls the classifier and merges the cleaned string into `query.metadata`.
-- **Research Providers (`app/features/ai/research.providers.mjs`)**: Expected to consume the metadata once the placeholder file is replaced; current shim prevents usage (tracked in `guides/gaps.md`).
+- **Research Providers (`app/features/ai/research.providers.mjs`)**: Re-export barrel aggregating query/summarisation providers; consumes classifier metadata via `query.metadata`.
 - **Debug Logging**: Pass a bound logger (e.g., `outputManager.debug`) so classification steps show up in CLI or Web logs.
 
 ---

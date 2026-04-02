@@ -7,6 +7,7 @@
 import { userManager } from '../../features/auth/user-manager.mjs';
 import { getChatHistoryController } from '../../features/chat-history/index.mjs';
 import { getChatPersonaController } from '../../features/chat/index.mjs';
+import { createWorkspaceGitService } from '../../features/files/workspace-git.service.mjs';
 import { MemoryManager } from '../../infrastructure/memory/memory.manager.mjs';
 import { MEMORY_DEPTHS, MEMORY_SETTINGS } from '../../infrastructure/memory/memory.settings.mjs';
 import { ensureValidDepth } from '../../infrastructure/memory/memory.validators.mjs';
@@ -15,6 +16,7 @@ import { createModuleLogger } from '../../utils/logger.mjs';
 import { handlePersonaCommand } from './persona.mjs';
 
 const moduleLogger = createModuleLogger('commands.chat.session');
+const workspaceGitService = createWorkspaceGitService();
 const DEFAULT_MEMORY_DEPTH = MEMORY_DEPTHS.MEDIUM;
 
 function normalizeBooleanFlag(value) {
@@ -162,10 +164,13 @@ export async function executeChat(options = {}) {
     sessionRef.sessionCharacter = personaRecord.slug;
     sessionRef.sessionPersonaName = personaRecord.name;
 
+    const workspaceContext = await resolveWorkspaceConversationContext();
+
     const conversationContext = {
       origin: isWebSocket ? 'web' : 'cli',
       user: currentUser,
       tags: ['chat'],
+      workspace: workspaceContext,
     };
     await initializeChatConversationForSession(sessionRef, conversationContext);
 
@@ -193,6 +198,22 @@ export async function executeChat(options = {}) {
   } catch (err) {
     errorFn(`Failed to start chat: ${err.message}`);
     return { success: false, keepDisabled: false, session: sessionRef };
+  }
+}
+
+async function resolveWorkspaceConversationContext() {
+  try {
+    const status = await workspaceGitService.getStatus();
+    return {
+      branchName: status?.branch ?? null,
+      baseBranch: status?.branch ?? null,
+      linkedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    moduleLogger.debug('Workspace context unavailable for chat conversation.', {
+      error: error?.message || String(error),
+    });
+    return null;
   }
 }
 

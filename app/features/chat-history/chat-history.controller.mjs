@@ -48,4 +48,16 @@ export class ChatHistoryController {
   async clearConversations(options) {
     return this.service.clearConversations(options);
   }
+
+  async linkWorkspaceBranch(conversationId, payload) {
+    return this.service.linkWorkspaceBranch(conversationId, payload);
+  }
+
+  async appendWorkspaceSnapshot(conversationId, payload) {
+    return this.service.appendWorkspaceSnapshot(conversationId, payload);
+  }
+
+  async listWorkspaceSnapshots(conversationId) {
+    return this.service.listWorkspaceSnapshots(conversationId);
+  }
 }

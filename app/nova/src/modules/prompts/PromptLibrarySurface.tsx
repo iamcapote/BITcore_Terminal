@@ -123,20 +123,20 @@ function PromptLibraryContent(): JSX.Element {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-4">
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-muted-foreground" />
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-y-auto">
+      <div className="flex w-full min-h-0 min-w-0 flex-1 flex-col gap-3 p-3 sm:gap-4 sm:p-4">
+        <div className="flex flex-col gap-3 sm:gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
               <Input
                 value={filters.search}
                 onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
                 placeholder="Search prompts"
-                className="w-80"
+                className="w-full max-w-xs sm:max-w-sm"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" onClick={handleRefresh} disabled={loading}>
                 {loading ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

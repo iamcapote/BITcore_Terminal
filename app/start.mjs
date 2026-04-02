@@ -25,10 +25,16 @@ import { setupGithubActivityRoutes } from './features/research/github-activity.r
 import { setupTerminalPreferencesRoutes } from './features/preferences/terminal-preferences.routes.mjs';
 import { setupResearchPreferencesRoutes } from './features/preferences/research-preferences.routes.mjs';
 import { setupModelBrowserRoutes } from './features/ai/model-browser/index.mjs';
+import { setupAgentSwarmRoutes } from './features/ai/swarm/index.mjs';
+import { setupComputerRoutes, setupMcpRoutes } from './features/tools/index.mjs';
+import { setupVectorAdminRoutes } from './features/ai/vector-admin/index.mjs';
 import { setupChatHistoryRoutes } from './features/chat-history/routes.mjs';
 import { setupLogRoutes } from './features/logs/routes.mjs';
 import { setupChatPersonaRoutes } from './features/chat/chat-persona.routes.mjs';
+import { setupChatWorkbenchRoutes } from './features/chat/chat-workbench.routes.mjs';
 import { setupAdminRoutes } from './features/admin/routes.mjs';
+import { setupNotificationRoutes } from './features/status/notifications.routes.mjs';
+import { setupFileRoutes } from './features/files/index.mjs';
 import { getResearchRequestScheduler, getResearchSchedulerConfig } from './features/research/github-sync/index.mjs';
 import { createModuleLogger } from './utils/logger.mjs';
 import { safeSend } from './utils/websocket.utils.mjs';
@@ -54,15 +60,22 @@ setupMemoryRoutes(app);
 setupPromptRoutes(app);
 setupMissionRoutes(app, { logger: logger.child('routes.missions') });
 setupStatusRoutes(app, { logger: logger.child('routes.status') });
+setupNotificationRoutes(app, { logger: logger.child('routes.notifications') });
 setupGithubSyncRoutes(app);
 setupGithubActivityRoutes(app, { logger: logger.child('routes.github-activity') });
 setupTerminalPreferencesRoutes(app, { logger: logger.child('routes.terminal-preferences') });
 setupResearchPreferencesRoutes(app, { logger: logger.child('routes.research-preferences') });
 setupModelBrowserRoutes(app, { logger: logger.child('routes.model-browser') });
+setupAgentSwarmRoutes(app, { logger: logger.child('routes.swarm') });
+setupMcpRoutes(app, { logger: logger.child('routes.mcp') });
+setupComputerRoutes(app, { logger: logger.child('routes.computer') });
+setupVectorAdminRoutes(app, { logger: logger.child('routes.vectors') });
 setupChatHistoryRoutes(app, { logger: logger.child('routes.chat-history') });
 setupLogRoutes(app, { logger: logger.child('routes.logs') });
 setupChatPersonaRoutes(app, { logger: logger.child('routes.chat-persona') });
+setupChatWorkbenchRoutes(app, { logger: logger.child('routes.chat-workbench') });
 setupAdminRoutes(app, { logger: logger.child('routes.admin') });
+setupFileRoutes(app, { logger: logger.child('routes.files') });
 
 // --- WebSocket Setup ---
 // Ensure the server object is correctly passed

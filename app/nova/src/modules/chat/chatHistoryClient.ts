@@ -38,6 +38,24 @@ export interface ChatConversationSummary {
 
 export interface ChatConversationDetail extends ChatConversationSummary {
 	readonly messages: readonly ChatConversationMessage[];
+	readonly workspace: ChatWorkspaceLink | null;
+}
+
+export interface ChatWorkspaceLink {
+	readonly branchName: string | null;
+	readonly baseBranch: string | null;
+	readonly linkedAt: string | null;
+	readonly snapshotCount: number;
+}
+
+export interface ChatWorkspaceSnapshot {
+	readonly id: string;
+	readonly type: string;
+	readonly branchName: string | null;
+	readonly filePath: string | null;
+	readonly commit: string | null;
+	readonly note: string | null;
+	readonly createdAt: string | null;
 }
 
 export interface ChatConversationMessage {
@@ -54,6 +72,13 @@ export interface ChatConversationUser {
 
 export interface ClearChatHistoryOptions {
 	readonly olderThanDays?: number;
+}
+
+export interface LinkChatWorkspaceOptions {
+	readonly branchName: string;
+	readonly baseBranch?: string | null;
+	readonly createBranch?: boolean;
+	readonly checkout?: boolean;
 }
 
 export interface ChatHistoryFetchError extends Error {
@@ -133,6 +158,44 @@ export async function clearChatConversations(options: ClearChatHistoryOptions = 
 	}
 }
 
+export async function linkConversationWorkspaceBranch(
+	conversationId: string,
+	options: LinkChatWorkspaceOptions,
+): Promise<{ workspace: ChatWorkspaceLink | null; snapshot: ChatWorkspaceSnapshot | null }> {
+	const safeId = encodeURIComponent(conversationId);
+	const response = await fetch(`/api/chat/history/${safeId}/workspace/link`, {
+		method: "POST",
+		credentials: "include",
+		headers: JSON_HEADERS,
+		body: JSON.stringify(options),
+	});
+	const body = await safeParseJson(response);
+	if (!response.ok || !isSuccessful(body)) {
+		throw createApiError(response, body, "Failed to link workspace branch");
+	}
+	const payload = body as Record<string, unknown>;
+	return {
+		workspace: normalizeWorkspace(payload.workspace),
+		snapshot: normalizeWorkspaceSnapshot(payload.snapshot),
+	};
+}
+
+export async function listConversationWorkspaceSnapshots(conversationId: string): Promise<readonly ChatWorkspaceSnapshot[]> {
+	const safeId = encodeURIComponent(conversationId);
+	const response = await fetch(`/api/chat/history/${safeId}/workspace/snapshots`, {
+		credentials: "include",
+	});
+	const body = await safeParseJson(response);
+	if (!response.ok || !isSuccessful(body)) {
+		throw createApiError(response, body, "Failed to load workspace snapshots");
+	}
+	const payload = body as Record<string, unknown>;
+	const rawSnapshots = Array.isArray(payload.snapshots) ? payload.snapshots : [];
+	return rawSnapshots
+		.map((entry) => normalizeWorkspaceSnapshot(entry))
+		.filter((entry): entry is ChatWorkspaceSnapshot => Boolean(entry));
+}
+
 function normalizeConversationSummary(raw: unknown): ChatConversationSummary | null {
 	if (!raw || typeof raw !== "object") {
 		return null;
@@ -173,6 +236,7 @@ function normalizeConversationDetail(raw: unknown): ChatConversationDetail {
 			user: normalizeUser(record.user),
 		}),
 		messages,
+		workspace: normalizeWorkspace(record.workspace),
 	};
 }
 
@@ -203,6 +267,47 @@ function normalizeUser(raw: unknown): ChatConversationUser | null {
 	return {
 		id: id ?? null,
 		username: username ?? null,
+	};
+}
+
+function normalizeWorkspace(raw: unknown): ChatWorkspaceLink | null {
+	if (!raw || typeof raw !== "object") {
+		return null;
+	}
+	const record = raw as Record<string, unknown>;
+	const branchName = toString(record.branchName);
+	const baseBranch = toString(record.baseBranch);
+	const linkedAt = toString(record.linkedAt);
+	const snapshotCount = toNumber(record.snapshotCount, 0);
+	if (!branchName && !baseBranch && !linkedAt && snapshotCount === 0) {
+		return null;
+	}
+	return {
+		branchName,
+		baseBranch,
+		linkedAt,
+		snapshotCount,
+	};
+}
+
+function normalizeWorkspaceSnapshot(raw: unknown): ChatWorkspaceSnapshot | null {
+	if (!raw || typeof raw !== "object") {
+		return null;
+	}
+	const record = raw as Record<string, unknown>;
+	const id = toString(record.id);
+	const type = toString(record.type);
+	if (!id || !type) {
+		return null;
+	}
+	return {
+		id,
+		type,
+		branchName: toString(record.branchName),
+		filePath: toString(record.filePath),
+		commit: toString(record.commit),
+		note: toString(record.note),
+		createdAt: toString(record.createdAt),
 	};
 }
 

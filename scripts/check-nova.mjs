@@ -18,7 +18,7 @@ import puppeteer from 'puppeteer';
   try {
   const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
     console.log(`[nav] status ${res?.status()}`);
-    await page.waitForTimeout(1000);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     const content = await page.evaluate(() => document.body.innerText.slice(0, 500));
     console.log(`[body] ${content}`);
   } catch (e) {
